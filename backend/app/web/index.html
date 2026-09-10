@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Research AI</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <a class="brand" href="/">Research <span>AI</span></a>
+        <div id="account" class="account" hidden>
+          <span id="account-name"></span>
+          <button id="logout" class="quiet-button">Sign out</button>
+        </div>
+      </header>
+
+      <section id="auth-screen" class="auth-screen" hidden>
+        <div class="auth-card">
+          <p class="eyebrow">YOUR RESEARCH WORKSPACE</p>
+          <h1>Keep every research decision connected to its evidence.</h1>
+          <p class="lede">Create a project, preserve its questions and methods, and build a reliable research trail.</p>
+          <a id="google-login" class="google-button" href="/api/auth/login" hidden>Continue with Google</a>
+          <form id="password-login" class="dev-login">
+            <label>Email <input type="email" name="email" autocomplete="email" required /></label>
+            <label>Password <input type="password" name="password" autocomplete="current-password" minlength="8" required /></label>
+            <button type="submit">Sign in</button>
+          </form>
+          <button id="show-register" class="quiet-button" type="button">Create account</button>
+          <form id="register-form" class="dev-login" hidden>
+            <label>Name <input type="text" name="display_name" autocomplete="name" required /></label>
+            <label>Email <input type="email" name="email" autocomplete="email" required /></label>
+            <label>Password <input type="password" name="password" autocomplete="new-password" minlength="8" required /></label>
+            <button type="submit">Create account</button>
+          </form>
+          <p id="auth-note" class="helper"></p>
+        </div>
+      </section>
+
+      <section id="workspace" class="workspace" hidden>
+        <aside class="sidebar">
+          <div class="sidebar-heading"><span>MY RESEARCH</span><button id="new-project" aria-label="Create project">+</button></div>
+          <div id="project-list" class="project-list"></div>
+          <p class="sidebar-note">Your projects are private to your account.</p>
+        </aside>
+        <section class="content">
+          <div id="empty-state" class="empty-state">
+            <p class="eyebrow">START HERE</p>
+            <h1>Create your first research project.</h1>
+            <p>Use projects to keep questions, literature, data, analysis, and evidence in one place.</p>
+            <button id="empty-new-project">Create a project</button>
+          </div>
+          <article id="project-view" hidden>
+            <div class="project-header">
+              <div><p class="eyebrow">RESEARCH PROJECT</p><h1 id="project-title"></h1><p id="project-description" class="muted"></p></div>
+              <div class="project-header-actions">
+                <span class="status-badge">Active</span>
+                <button id="delete-project" class="danger-button quiet-button" aria-label="Delete project">Delete project</button>
+              </div>
+            </div>
+            <div class="project-grid">
+              <section class="context-panel panel" aria-labelledby="context-heading">
+                <div class="section-title"><div><p class="eyebrow">RESEARCH MEMORY</p><h2>Structured context</h2></div><button id="add-context">Add context</button></div>
+                <p class="muted">Capture the choices that should guide future research and AI assistance.</p>
+                <div id="context-list" class="context-list"></div>
+              </section>
+              <section class="sources-panel panel" aria-labelledby="sources-heading">
+                <div class="section-title">
+                  <div><p class="eyebrow">EVIDENCE LIBRARY</p><h2 id="sources-heading">Sources</h2></div>
+                </div>
+                <p class="muted">Search your saved article library or add material manually. The agent uses matching evidence to create an APA-formatted literature review.</p>
+                <form id="source-search-form" class="source-form">
+                  <div class="form-actions"><input name="q" minlength="2" maxlength="200" placeholder="Search articles by title, author, DOI, or evidence" aria-label="Search saved articles" /><select name="citation_style" aria-label="Reference format"><option value="APA">APA</option><option value="MLA">MLA</option></select><button type="submit">Search library</button></div>
+                </form>
+                <div id="source-search-results" class="source-list" aria-live="polite"></div>
+                <form id="source-form" class="source-form">
+                  <div class="form-grid">
+                    <label>Source title<input name="title" required maxlength="500" placeholder="e.g. Periodic Labour Force Survey 2023–24" /></label>
+                    <label>DOI <span class="optional">Optional</span><input name="doi" maxlength="255" placeholder="10.1000/xyz123" /></label>
+                    <label>URL <span class="optional">Optional</span><input name="url" type="url" inputmode="url" maxlength="2000" placeholder="https://…" /></label>
+                    <label>Authors <span class="optional">Optional</span><input name="authors" placeholder="Last, F.; Last, F." /></label>
+                    <label>Source type<select name="source_type"><option value="article">Article</option><option value="dataset">Dataset</option><option value="report">Report</option><option value="webpage">Web page</option><option value="book">Book</option><option value="other">Other</option></select></label>
+                    <label>Publication year <span class="optional">Optional</span><input name="year" type="number" min="1000" max="2100" inputmode="numeric" placeholder="2024" /></label>
+                    <label class="full-width">Evidence excerpt / notes <span class="optional">Optional</span><textarea name="evidence_excerpt" maxlength="12000" placeholder="Paste a relevant passage or note why this source matters."></textarea></label>
+                    <label class="full-width">Locator or page <span class="optional">Optional</span><input name="locator" maxlength="255" placeholder="e.g. p. 42, Table 3.1" /></label>
+                  </div>
+                  <div class="form-actions"><p class="helper">Add a DOI and choose APA or MLA to create a reference-ready source record.</p><button type="submit">Add source</button></div>
+                </form>
+                <div id="source-list" class="source-list" aria-live="polite"></div>
+              </section>
+              <section class="claims-panel panel" aria-labelledby="claims-heading">
+                <div class="section-title"><div><p class="eyebrow">EVIDENCE REVIEW</p><h2 id="claims-heading">Claims</h2></div><button id="add-claim">Add claim</button></div>
+                <p class="muted">Track factual claims and link each to supporting or contradicting evidence sources.</p>
+                <div id="claim-list" class="claim-list" aria-live="polite"></div>
+              </section>
+              <section class="analysis-panel panel" aria-labelledby="analysis-heading">
+                <div class="section-title"><div><p class="eyebrow">DATA ANALYSIS</p><h2 id="analysis-heading">Run statistical analysis</h2></div></div>
+                <p class="muted">Upload CSV or Excel data, then describe the analysis you want. The backend uses a safe, allowlisted statistical engine.</p>
+                <form id="dataset-form" class="source-form">
+                  <div class="form-actions"><input name="file" type="file" accept=".csv,.xlsx,.xls" required /><button type="submit">Upload dataset</button></div>
+                </form>
+                <div class="form-grid">
+                  <label class="full-width">Dataset<select id="dataset-select" required></select></label>
+                  <label class="full-width">Analysis prompt<textarea id="analysis-prompt" minlength="3" required placeholder="Examples: Calculate mean, median, quartiles, and outliers for income and hours.&#10;Run OLS regression with outcome=wage and predictors=education,experience.&#10;Run Oaxaca-Blinder with outcome=wage; group=gender; predictors=education,experience."></textarea></label>
+                </div>
+                <div class="form-actions"><button id="analysis-submit" type="button">Run analysis</button></div>
+                <pre id="analysis-result" class="analysis-result" aria-live="polite"></pre>
+              </section>
+              <section id="literature-review" class="literature-panel panel" aria-labelledby="literature-heading">
+                <div class="section-title"><div><p class="eyebrow">LITERATURE REVIEW</p><h2 id="literature-heading">Review research PDFs</h2></div></div>
+                <p class="muted">Upload a selectable-text research paper, enter your research question, and choose the citation style before generating the review.</p>
+                <form id="literature-upload-form" class="source-form">
+                  <div class="form-actions"><input name="file" type="file" accept=".pdf,application/pdf" required /><button type="submit">Upload PDF</button></div>
+                </form>
+                <div class="form-grid">
+                  <label class="full-width">Research question<textarea id="literature-question" minlength="8" maxlength="4000" required placeholder="What question should this literature review answer?"></textarea></label>
+                  <label>Citation style<select id="literature-style" required><option value="">Choose a style before reviewing</option><option value="APA">APA 7th edition</option><option value="MLA">MLA 9th edition</option></select></label>
+                  <label>Uploaded paper<select id="literature-document" required></select></label>
+                </div>
+                <div class="form-actions"><button id="literature-submit" type="button">Generate literature review</button></div>
+                <pre id="literature-result" class="analysis-result" aria-live="polite"></pre>
+              </section>
+              <aside class="next-panel">
+                <p class="eyebrow">NEXT UP</p>
+                <h2>Keep the trail auditable</h2>
+                <p>Each research run is connected to this project's questions, context, and sources. Review its plan and answer before relying on it.</p>
+                <a href="/docs" target="_blank" rel="noopener">View API reference →</a>
+              </aside>
+            </div>
+            <section class="agent-panel panel" aria-labelledby="agent-heading">
+              <div class="section-title agent-title">
+                <div><p class="eyebrow">RESEARCH AGENT</p><h2 id="agent-heading">Ask a research question</h2></div>
+              </div>
+              <p class="muted">The agent uses this project's saved context and sources. It records a plan and answer for every run.</p>
+              <form id="research-form" class="research-form">
+                <label for="research-question">Question<textarea id="research-question" name="question" required minlength="8" maxlength="4000" placeholder="What does the evidence say about…?"></textarea></label>
+                <div class="form-actions"><p class="helper">Research can take a moment. You can safely keep working while a run is in progress.</p><button id="research-submit" type="submit">Run research</button></div>
+              </form>
+              <div class="runs-heading"><div><p class="eyebrow">RUN HISTORY</p><h3>Research runs</h3></div><button id="refresh-runs" type="button" class="quiet-button">Refresh</button></div>
+              <div id="research-runs" class="research-runs" aria-live="polite"></div>
+            </section>
+          </article>
+        </section>
+      </section>
+    </main>
+
+    <dialog id="project-dialog"><form id="project-form" method="dialog"><div class="dialog-heading"><h2>New research project</h2><button type="button" class="close" data-close>×</button></div><label>Project title<input name="title" placeholder="e.g. Gender Wage Inequality in Kerala" required maxlength="200" /></label><label>Description<textarea name="description" placeholder="What do you want to investigate?"></textarea></label><div class="dialog-actions"><button type="button" class="quiet-button" data-close>Cancel</button><button type="submit">Create project</button></div></form></dialog>
+    <dialog id="context-dialog"><form id="context-form" method="dialog"><div class="dialog-heading"><h2>Add research context</h2><button type="button" class="close" data-close>×</button></div><label>Type<select name="kind"><option value="question">Research question</option><option value="objective">Objective</option><option value="hypothesis">Hypothesis</option><option value="methodology">Methodology</option><option value="variable">Variable</option><option value="decision">Research decision</option></select></label><label>Statement<textarea name="content" required placeholder="Write the question, decision, or methodological choice."></textarea></label><label>Why does this matter? <span class="optional">Optional</span><textarea name="rationale" placeholder="Preserve the reasoning behind it."></textarea></label><div class="dialog-actions"><button type="button" class="quiet-button" data-close>Cancel</button><button type="submit">Save context</button></div></form></dialog>
+    <dialog id="claim-dialog"><form id="claim-form" method="dialog"><div class="dialog-heading"><h2>Add a claim</h2><button type="button" class="close" data-close>×</button></div><label>Claim statement<textarea name="text" required placeholder="e.g. The gender wage gap in Kerala narrowed between 2018 and 2023."></textarea></label><label>Status<select name="status"><option value="unclear">Unclear</option><option value="supports">Supported</option><option value="contradicts">Contradicted</option><option value="qualifies">Qualified</option></select></label><div class="dialog-actions"><button type="button" class="quiet-button" data-close>Cancel</button><button type="submit">Save claim</button></div></form></dialog>
+    <div id="toast" class="toast" role="status"></div>
+    <script src="/assets/app.js"></script>
+  </body>
+</html>

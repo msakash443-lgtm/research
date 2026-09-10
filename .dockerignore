@@ -1,0 +1,12 @@
+.git
+.venv
+.pytest_cache
+__pycache__
+*.py[cod]
+*.db
+.env
+node_modules
+.next
+postgres_data
+backend/tests
+README.md
