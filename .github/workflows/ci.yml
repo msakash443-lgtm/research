@@ -2,18 +2,70 @@ name: CI
 
 on:
   push:
+    branches: [ "main" ]
   pull_request:
+    branches: [ "main" ]
 
 jobs:
+
   test:
+
     runs-on: ubuntu-latest
+
+    # Real PostgreSQL for the steps after the main suite (plan X.1.1). Same image as docker-compose.yml.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: research_ai_test
+          POSTGRES_USER: research_ai_test
+          POSTGRES_PASSWORD: research_ai_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U research_ai_test -d research_ai_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    defaults:
+      run:
+        working-directory: research
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: python -m pip install --upgrade pip
-      - run: python -m pip install -r backend/requirements.txt
-      - run: python -m pytest -q
-      - run: python -m compileall -q backend/app backend/migrations
-      - run: docker build -t research-ai:ci .
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        # Matches the runtime image (Dockerfile).
+        python-version: "3.12"
+        cache: pip
+        cache-dependency-path: backend/requirements.txt
+    - name: Install dependencies
+      run: python -m pip install -r backend/requirements.txt
+    - name: Run tests
+      # tests/conftest.py forces an in-memory SQLite database; the Postgres-only tests skip here (no TEST_POSTGRES_URL).
+      run: pytest -q
+    - name: Apply Alembic migrations to PostgreSQL
+      env:
+        DATABASE_URL: postgresql+psycopg://research_ai_test:research_ai_test@localhost:5432/research_ai_test
+      run: |
+        alembic -c alembic.ini upgrade head
+        alembic -c alembic.ini check
+        alembic -c alembic.ini downgrade base
+        alembic -c alembic.ini upgrade head
+    - name: Run the task-queue tests on PostgreSQL
+      # Two workers on separate connections, retry/backoff, lease expiry. The suite wipes this database.
+      env:
+        TEST_POSTGRES_URL: postgresql+psycopg://research_ai_test:research_ai_test@localhost:5432/research_ai_test
+      run: pytest -q backend/tests/test_task_queue_postgres.py
+
+  build:
+
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Build the Docker image
+      # The app (Dockerfile, alembic.ini, backend/) lives at the repo root, which is the build context.
+      run: docker build . --file Dockerfile --tag my-image-name:$(date +%s)

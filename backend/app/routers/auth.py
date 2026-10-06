@@ -1,11 +1,6 @@
 from typing import Any
-import hashlib
-import hmac
-import secrets
 
 from authlib.integrations.starlette_client import OAuth
-import uuid
-
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr, Field
@@ -14,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.database import get_db
-from app.dependencies import current_user
+from app.dependencies import session_user
 from app.models import ExternalIdentity, User
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
@@ -71,42 +66,12 @@ class DevelopmentLogin(BaseModel):
     display_name: str = Field(default="Researcher", min_length=1, max_length=200)
 
 
-class PasswordAuth(BaseModel):
-    email: EmailStr
-    password: str = Field(min_length=8, max_length=128)
-    display_name: str = Field(default="Researcher", min_length=1, max_length=200)
-
-
-def password_hash(password: str, salt: bytes | None = None) -> str:
-    salt = salt or secrets.token_bytes(16)
-    derived = hashlib.scrypt(password.encode("utf-8"), salt=salt, n=2**14, r=8, p=1)
-    return f"scrypt$14$8$1${salt.hex()}${derived.hex()}"
-
-
-def verify_password(password: str, encoded: str | None) -> bool:
-    if not encoded or not encoded.startswith("scrypt$"):
-        return False
-    try:
-        _, log_n, r, p, salt_hex, digest_hex = encoded.split("$")
-        derived = hashlib.scrypt(
-            password.encode("utf-8"),
-            salt=bytes.fromhex(salt_hex),
-            n=2 ** int(log_n),
-            r=int(r),
-            p=int(p),
-        )
-        return hmac.compare_digest(derived.hex(), digest_hex)
-    except (ValueError, TypeError):
-        return False
-
-
 @router.get("/methods")
 def methods() -> dict[str, bool]:
     settings = get_settings()
     return {
         "google_configured": bool(settings.google_client_id and settings.google_client_secret),
         "development_login": settings.environment == "development",
-        "password_login": True,
     }
 
 
@@ -129,15 +94,8 @@ async def callback(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/me")
 def me(request: Request, db: Session = Depends(get_db)):
-    user_id = request.session.get("user_id")
-    if not user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not signed in")
-    try:
-        user = db.get(User, uuid.UUID(user_id))
-    except (TypeError, ValueError):
-        user = None
+    user = session_user(request, db)
     if user is None:
-        request.session.clear()
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not signed in")
     return profile(user)
 
@@ -157,27 +115,5 @@ def development_login(payload: DevelopmentLogin, request: Request, db: Session =
         db.add(user)
         db.commit()
         db.refresh(user)
-    request.session["user_id"] = str(user.id)
-    return profile(user)
-
-
-@router.post("/register")
-def register(payload: PasswordAuth, request: Request, db: Session = Depends(get_db)):
-    email = str(payload.email).lower()
-    if db.scalar(select(User).where(User.email == email)):
-        raise HTTPException(status_code=409, detail="An account with this email already exists.")
-    user = User(email=email, display_name=payload.display_name.strip(), password_hash=password_hash(payload.password))
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    request.session["user_id"] = str(user.id)
-    return profile(user)
-
-
-@router.post("/login")
-def password_login(payload: PasswordAuth, request: Request, db: Session = Depends(get_db)):
-    user = db.scalar(select(User).where(User.email == str(payload.email).lower()))
-    if user is None or not verify_password(payload.password, user.password_hash):
-        raise HTTPException(status_code=401, detail="Invalid email or password.")
     request.session["user_id"] = str(user.id)
     return profile(user)

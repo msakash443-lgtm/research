@@ -1,0 +1,19 @@
+# Example discipline profile: health sciences (clinical and public health evidence synthesis). The values are
+# illustrative defaults to be confirmed (plan Q3). Projects can override any setting.
+name = "health_sciences"
+version = 1
+label = "Health sciences"
+description = "Clinical and public-health evidence synthesis: biomedical databases, PRISMA-style reporting."
+
+[settings]
+citation_style = "vancouver"
+databases = ["pubmed", "europe_pmc", "openalex", "crossref", "unpaywall"]
+methods = [
+  "randomized_controlled_trial",
+  "cohort_study",
+  "case_control_study",
+  "systematic_review",
+  "meta_analysis",
+  "qualitative_study",
+]
+reporting_guideline = "PRISMA-2020"

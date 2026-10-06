@@ -1,33 +1,25 @@
 from __future__ import annotations
 
-import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.agent.executor import execute_research_run
+from app import audit
 from app.config import get_settings
 from app.database import get_db
-from app.dependencies import owned_project
-from app.models import Project, ResearchRun, ResearchRunStatus
+from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_access
+from app.models import Project, ResearchRun, ResearchRunStatus, User, utcnow
 from app.schemas import ResearchRunCreate, ResearchRunRead
+from app.task_queue import enqueue_task
+from app.task_runner import run_one_task
 
 router = APIRouter(prefix="/projects/{project_id}/research-runs", tags=["research runs"])
 
-MAX_RETRY_ATTEMPTS = 3
-
-
-def _get_owned_run(run_id: uuid.UUID, project: Project, db: Session) -> ResearchRun:
-    run = db.scalar(select(ResearchRun).where(ResearchRun.id == run_id, ResearchRun.project_id == project.id))
-    if run is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research run not found")
-    return run
-
 
 @router.get("", response_model=list[ResearchRunRead])
-def list_research_runs(project: Project = Depends(owned_project), db: Session = Depends(get_db)):
+def list_research_runs(project: Project = Depends(project_access(READ_ROLES)), db: Session = Depends(get_db)):
     return db.scalars(
         select(ResearchRun).where(ResearchRun.project_id == project.id).order_by(ResearchRun.created_at.desc()).limit(30)
     ).all()
@@ -36,11 +28,17 @@ def list_research_runs(project: Project = Depends(owned_project), db: Session = 
 @router.post("", response_model=ResearchRunRead, status_code=status.HTTP_202_ACCEPTED)
 def create_research_run(
     payload: ResearchRunCreate,
-    project: Project = Depends(owned_project),
+    project: Project = Depends(project_access(WRITE_ROLES)),
+    user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
     settings = get_settings()
-    since = datetime.now(timezone.utc) - timedelta(days=1)
+    if payload.use_web_retrieval and not settings.arc_retrieval_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Web retrieval is not enabled on this deployment.",
+        )
+    since = utcnow() - timedelta(days=1)
     recent_count = db.scalar(
         select(func.count(ResearchRun.id)).where(ResearchRun.project_id == project.id, ResearchRun.created_at >= since)
     ) or 0
@@ -50,58 +48,32 @@ def create_research_run(
             detail="This project has reached its daily research-run limit. Try again later or raise the configured limit.",
         )
 
-    run = ResearchRun(project_id=project.id, question=payload.question.strip(), status=ResearchRunStatus.queued)
-    project.updated_at = datetime.now(timezone.utc)
+    run = ResearchRun(
+        project_id=project.id,
+        question=payload.question.strip(),
+        status=ResearchRunStatus.queued,
+        use_web_retrieval=payload.use_web_retrieval,
+        created_by=audit.user_actor(user),
+    )
+    project.touch()
     db.add(run)
+    db.flush()
+    audit.record(
+        db, actor=audit.user_actor(user), action="research_run.queued", project_id=project.id,
+        payload={"run_id": str(run.id), "use_web_retrieval": run.use_web_retrieval},
+    )
+    # The run and its task are created together, so neither exists alone.
+    task = enqueue_task(
+        db, project.id, "research_run", {"run_id": str(run.id)}, actor=audit.user_actor(user),
+        idempotency_key=f"research_run:{run.id}",
+    )
     db.commit()
     db.refresh(run)
 
-    # Inline execution is deliberately only a local-development convenience. Production uses app.worker.
+    # Inline mode is a local-development convenience: run *this* task now, in the request, through the
+    # same queue and handler a worker uses (so retries, failures and gates behave identically).
+    # Production uses app.worker. A failing run comes back as a normal `failed` run, never a 500.
     if settings.run_research_inline:
-        execute_research_run(str(run.id))
+        run_one_task(task_id=task.id)
         db.refresh(run)
     return run
-
-
-@router.get("/{run_id}", response_model=ResearchRunRead)
-def get_research_run(
-    run_id: uuid.UUID,
-    project: Project = Depends(owned_project),
-    db: Session = Depends(get_db),
-):
-    return _get_owned_run(run_id, project, db)
-
-
-@router.post("/{run_id}/retry", response_model=ResearchRunRead, status_code=status.HTTP_202_ACCEPTED)
-def retry_research_run(
-    run_id: uuid.UUID,
-    project: Project = Depends(owned_project),
-    db: Session = Depends(get_db),
-):
-    run = _get_owned_run(run_id, project, db)
-    if run.status not in {ResearchRunStatus.failed, ResearchRunStatus.needs_configuration}:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Only failed or needs_configuration runs can be retried.",
-        )
-    if run.attempt_count >= MAX_RETRY_ATTEMPTS:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Run has already been attempted {run.attempt_count} times (max {MAX_RETRY_ATTEMPTS}).",
-        )
-    run.status = ResearchRunStatus.queued
-    run.error_message = None
-    run.answer = None
-    run.completed_at = None
-    project.updated_at = datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(run)
-
-    settings = get_settings()
-    if settings.run_research_inline:
-        execute_research_run(str(run.id))
-        db.refresh(run)
-    return run
-
-
-

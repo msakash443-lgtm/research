@@ -1,12 +1,35 @@
-.git
-.venv
-.pytest_cache
-__pycache__
-*.py[cod]
-*.db
+# The Dockerfile copies only backend/requirements.txt, alembic.ini, backend/migrations and
+# backend/app. Keep local environments, data, and secrets out of the build context.
+
+# Python environments and caches
+.venv/
+venv/
+**/__pycache__/
+**/*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local SQLite databases (development and test data)
+**/*.db
+**/*.db-journal
+**/*.sqlite3
+
+# Secrets and local configuration
 .env
-node_modules
-.next
-postgres_data
-backend/tests
+.env.*
+!.env.example
+
+# Not needed in the image
+backend/tests/
+docs/
 README.md
+docker-compose*.yml
+Dockerfile
+.dockerignore
+.git/
+.github/
+.vscode/
+.idea/

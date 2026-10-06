@@ -2,15 +2,22 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#fcfcfa" />
     <title>Research AI</title>
     <link rel="stylesheet" href="/assets/styles.css" />
   </head>
   <body>
     <main class="shell">
       <header class="topbar">
-        <a class="brand" href="/">Research <span>AI</span></a>
+        <div class="topbar-start">
+          <button id="nav-toggle" class="menu-toggle" type="button" aria-label="Open projects" aria-controls="nav-sidebar" aria-expanded="false" hidden><span></span><span></span><span></span></button>
+          <a class="brand" href="/">Research <span>AI</span></a>
+          <span id="crumb" class="crumb muted"></span>
+        </div>
         <div id="account" class="account" hidden>
+          <span id="role-chip" class="role-chip" hidden></span>
+          <button id="memory-toggle" class="quiet-button" type="button" aria-controls="memory-sidebar" aria-expanded="false" hidden>Memory</button>
           <span id="account-name"></span>
           <button id="logout" class="quiet-button">Sign out</button>
         </div>
@@ -22,133 +29,148 @@
           <h1>Keep every research decision connected to its evidence.</h1>
           <p class="lede">Create a project, preserve its questions and methods, and build a reliable research trail.</p>
           <a id="google-login" class="google-button" href="/api/auth/login" hidden>Continue with Google</a>
-          <form id="password-login" class="dev-login">
-            <label>Email <input type="email" name="email" autocomplete="email" required /></label>
-            <label>Password <input type="password" name="password" autocomplete="current-password" minlength="8" required /></label>
-            <button type="submit">Sign in</button>
-          </form>
-          <button id="show-register" class="quiet-button" type="button">Create account</button>
-          <form id="register-form" class="dev-login" hidden>
-            <label>Name <input type="text" name="display_name" autocomplete="name" required /></label>
-            <label>Email <input type="email" name="email" autocomplete="email" required /></label>
-            <label>Password <input type="password" name="password" autocomplete="new-password" minlength="8" required /></label>
-            <button type="submit">Create account</button>
+          <form id="development-login" class="dev-login" hidden>
+            <label>Email <input type="email" name="email" value="researcher@example.com" required /></label>
+            <label>Name <input type="text" name="display_name" value="Researcher" required /></label>
+            <button type="submit">Use local development account</button>
           </form>
           <p id="auth-note" class="helper"></p>
         </div>
       </section>
 
       <section id="workspace" class="workspace" hidden>
-        <aside class="sidebar">
+        <div id="nav-backdrop" class="sidebar-backdrop"></div>
+        <div id="memory-backdrop" class="sidebar-backdrop"></div>
+        <aside id="nav-sidebar" class="sidebar" aria-label="Projects and steps">
           <div class="sidebar-heading"><span>MY RESEARCH</span><button id="new-project" aria-label="Create project">+</button></div>
           <div id="project-list" class="project-list"></div>
+          <div id="progress-block" class="progress-block" hidden>
+            <p id="stage-progress-label" class="muted small"></p>
+            <progress id="stage-progress" max="18" value="0"></progress>
+          </div>
+          <nav id="step-rail" class="step-rail" aria-label="Project steps"></nav>
+          <details id="later-stages" class="later-stages" hidden>
+            <summary>Later stages · not built yet</summary>
+            <ul id="later-stages-list"></ul>
+          </details>
           <p class="sidebar-note">Your projects are private to your account.</p>
         </aside>
-        <section class="content">
+        <main id="step-view" class="content">
           <div id="empty-state" class="empty-state">
             <p class="eyebrow">START HERE</p>
             <h1>Create your first research project.</h1>
             <p>Use projects to keep questions, literature, data, analysis, and evidence in one place.</p>
             <button id="empty-new-project">Create a project</button>
           </div>
-          <article id="project-view" hidden>
-            <div class="project-header">
-              <div><p class="eyebrow">RESEARCH PROJECT</p><h1 id="project-title"></h1><p id="project-description" class="muted"></p></div>
-              <div class="project-header-actions">
-                <span class="status-badge">Active</span>
-                <button id="delete-project" class="danger-button quiet-button" aria-label="Delete project">Delete project</button>
+          <article id="step-content" hidden>
+            <div class="step-header">
+              <div>
+                <p id="step-group" class="eyebrow"></p>
+                <h1 id="step-title"></h1>
+                <p id="step-purpose" class="muted"></p>
               </div>
+              <button type="button" id="guide-button" class="guide-button quiet-button" popovertarget="guide-popover" aria-label="How this step works">?</button>
             </div>
-            <div class="project-grid">
-              <section class="context-panel panel" aria-labelledby="context-heading">
-                <div class="section-title"><div><p class="eyebrow">RESEARCH MEMORY</p><h2>Structured context</h2></div><button id="add-context">Add context</button></div>
-                <p class="muted">Capture the choices that should guide future research and AI assistance.</p>
-                <div id="context-list" class="context-list"></div>
-              </section>
-              <section class="sources-panel panel" aria-labelledby="sources-heading">
-                <div class="section-title">
-                  <div><p class="eyebrow">EVIDENCE LIBRARY</p><h2 id="sources-heading">Sources</h2></div>
-                </div>
-                <p class="muted">Search your saved article library or add material manually. The agent uses matching evidence to create an APA-formatted literature review.</p>
-                <form id="source-search-form" class="source-form">
-                  <div class="form-actions"><input name="q" minlength="2" maxlength="200" placeholder="Search articles by title, author, DOI, or evidence" aria-label="Search saved articles" /><select name="citation_style" aria-label="Reference format"><option value="APA">APA</option><option value="MLA">MLA</option></select><button type="submit">Search library</button></div>
-                </form>
-                <div id="source-search-results" class="source-list" aria-live="polite"></div>
-                <form id="source-form" class="source-form">
-                  <div class="form-grid">
-                    <label>Source title<input name="title" required maxlength="500" placeholder="e.g. Periodic Labour Force Survey 2023–24" /></label>
-                    <label>DOI <span class="optional">Optional</span><input name="doi" maxlength="255" placeholder="10.1000/xyz123" /></label>
-                    <label>URL <span class="optional">Optional</span><input name="url" type="url" inputmode="url" maxlength="2000" placeholder="https://…" /></label>
-                    <label>Authors <span class="optional">Optional</span><input name="authors" placeholder="Last, F.; Last, F." /></label>
-                    <label>Source type<select name="source_type"><option value="article">Article</option><option value="dataset">Dataset</option><option value="report">Report</option><option value="webpage">Web page</option><option value="book">Book</option><option value="other">Other</option></select></label>
-                    <label>Publication year <span class="optional">Optional</span><input name="year" type="number" min="1000" max="2100" inputmode="numeric" placeholder="2024" /></label>
-                    <label class="full-width">Evidence excerpt / notes <span class="optional">Optional</span><textarea name="evidence_excerpt" maxlength="12000" placeholder="Paste a relevant passage or note why this source matters."></textarea></label>
-                    <label class="full-width">Locator or page <span class="optional">Optional</span><input name="locator" maxlength="255" placeholder="e.g. p. 42, Table 3.1" /></label>
-                  </div>
-                  <div class="form-actions"><p class="helper">Add a DOI and choose APA or MLA to create a reference-ready source record.</p><button type="submit">Add source</button></div>
-                </form>
-                <div id="source-list" class="source-list" aria-live="polite"></div>
-              </section>
-              <section class="claims-panel panel" aria-labelledby="claims-heading">
-                <div class="section-title"><div><p class="eyebrow">EVIDENCE REVIEW</p><h2 id="claims-heading">Claims</h2></div><button id="add-claim">Add claim</button></div>
-                <p class="muted">Track factual claims and link each to supporting or contradicting evidence sources.</p>
-                <div id="claim-list" class="claim-list" aria-live="polite"></div>
-              </section>
-              <section class="analysis-panel panel" aria-labelledby="analysis-heading">
-                <div class="section-title"><div><p class="eyebrow">DATA ANALYSIS</p><h2 id="analysis-heading">Run statistical analysis</h2></div></div>
-                <p class="muted">Upload CSV or Excel data, then describe the analysis you want. The backend uses a safe, allowlisted statistical engine.</p>
-                <form id="dataset-form" class="source-form">
-                  <div class="form-actions"><input name="file" type="file" accept=".csv,.xlsx,.xls" required /><button type="submit">Upload dataset</button></div>
-                </form>
-                <div class="form-grid">
-                  <label class="full-width">Dataset<select id="dataset-select" required></select></label>
-                  <label class="full-width">Analysis prompt<textarea id="analysis-prompt" minlength="3" required placeholder="Examples: Calculate mean, median, quartiles, and outliers for income and hours.&#10;Run OLS regression with outcome=wage and predictors=education,experience.&#10;Run Oaxaca-Blinder with outcome=wage; group=gender; predictors=education,experience."></textarea></label>
-                </div>
-                <div class="form-actions"><button id="analysis-submit" type="button">Run analysis</button></div>
-                <pre id="analysis-result" class="analysis-result" aria-live="polite"></pre>
-              </section>
-              <section id="literature-review" class="literature-panel panel" aria-labelledby="literature-heading">
-                <div class="section-title"><div><p class="eyebrow">LITERATURE REVIEW</p><h2 id="literature-heading">Review research PDFs</h2></div></div>
-                <p class="muted">Upload a selectable-text research paper, enter your research question, and choose the citation style before generating the review.</p>
-                <form id="literature-upload-form" class="source-form">
-                  <div class="form-actions"><input name="file" type="file" accept=".pdf,application/pdf" required /><button type="submit">Upload PDF</button></div>
-                </form>
-                <div class="form-grid">
-                  <label class="full-width">Research question<textarea id="literature-question" minlength="8" maxlength="4000" required placeholder="What question should this literature review answer?"></textarea></label>
-                  <label>Citation style<select id="literature-style" required><option value="">Choose a style before reviewing</option><option value="APA">APA 7th edition</option><option value="MLA">MLA 9th edition</option></select></label>
-                  <label>Uploaded paper<select id="literature-document" required></select></label>
-                </div>
-                <div class="form-actions"><button id="literature-submit" type="button">Generate literature review</button></div>
-                <pre id="literature-result" class="analysis-result" aria-live="polite"></pre>
-              </section>
-              <aside class="next-panel">
-                <p class="eyebrow">NEXT UP</p>
-                <h2>Keep the trail auditable</h2>
-                <p>Each research run is connected to this project's questions, context, and sources. Review its plan and answer before relying on it.</p>
-                <a href="/docs" target="_blank" rel="noopener">View API reference →</a>
-              </aside>
-            </div>
-            <section class="agent-panel panel" aria-labelledby="agent-heading">
-              <div class="section-title agent-title">
-                <div><p class="eyebrow">RESEARCH AGENT</p><h2 id="agent-heading">Ask a research question</h2></div>
-              </div>
-              <p class="muted">The agent uses this project's saved context and sources. It records a plan and answer for every run.</p>
-              <form id="research-form" class="research-form">
-                <label for="research-question">Question<textarea id="research-question" name="question" required minlength="8" maxlength="4000" placeholder="What does the evidence say about…?"></textarea></label>
-                <div class="form-actions"><p class="helper">Research can take a moment. You can safely keep working while a run is in progress.</p><button id="research-submit" type="submit">Run research</button></div>
-              </form>
-              <div class="runs-heading"><div><p class="eyebrow">RUN HISTORY</p><h3>Research runs</h3></div><button id="refresh-runs" type="button" class="quiet-button">Refresh</button></div>
-              <div id="research-runs" class="research-runs" aria-live="polite"></div>
-            </section>
+            <div id="step-body"></div>
           </article>
-        </section>
+        </main>
+        <aside id="memory-sidebar" class="sidebar memory-sidebar" aria-label="Research memory" hidden>
+          <div class="sidebar-heading"><span>RESEARCH MEMORY</span></div>
+          <div id="memory-body"></div>
+        </aside>
       </section>
     </main>
 
+    <div id="guide-popover" class="popover" popover="auto">
+      <h3 id="guide-what"></h3>
+      <p id="guide-why" class="muted"></p>
+      <p id="guide-approval" class="muted small"></p>
+    </div>
+
+    <button id="idea-button" class="idea-fab" type="button" popovertarget="idea-popover" hidden>Idea</button>
+    <div id="idea-popover" class="popover" popover="auto">
+      <form id="idea-form">
+        <h3>Quick idea</h3>
+        <textarea name="content" required maxlength="2000" placeholder="Jot an idea, hunch or lead…"></textarea>
+        <p class="helper">Ideas stay in research memory and are never sent to the agent. Promote one when it matures.</p>
+        <div class="dialog-actions"><button type="submit">Save idea</button></div>
+      </form>
+    </div>
+
     <dialog id="project-dialog"><form id="project-form" method="dialog"><div class="dialog-heading"><h2>New research project</h2><button type="button" class="close" data-close>×</button></div><label>Project title<input name="title" placeholder="e.g. Gender Wage Inequality in Kerala" required maxlength="200" /></label><label>Description<textarea name="description" placeholder="What do you want to investigate?"></textarea></label><div class="dialog-actions"><button type="button" class="quiet-button" data-close>Cancel</button><button type="submit">Create project</button></div></form></dialog>
+
     <dialog id="context-dialog"><form id="context-form" method="dialog"><div class="dialog-heading"><h2>Add research context</h2><button type="button" class="close" data-close>×</button></div><label>Type<select name="kind"><option value="question">Research question</option><option value="objective">Objective</option><option value="hypothesis">Hypothesis</option><option value="methodology">Methodology</option><option value="variable">Variable</option><option value="decision">Research decision</option></select></label><label>Statement<textarea name="content" required placeholder="Write the question, decision, or methodological choice."></textarea></label><label>Why does this matter? <span class="optional">Optional</span><textarea name="rationale" placeholder="Preserve the reasoning behind it."></textarea></label><div class="dialog-actions"><button type="button" class="quiet-button" data-close>Cancel</button><button type="submit">Save context</button></div></form></dialog>
-    <dialog id="claim-dialog"><form id="claim-form" method="dialog"><div class="dialog-heading"><h2>Add a claim</h2><button type="button" class="close" data-close>×</button></div><label>Claim statement<textarea name="text" required placeholder="e.g. The gender wage gap in Kerala narrowed between 2018 and 2023."></textarea></label><label>Status<select name="status"><option value="unclear">Unclear</option><option value="supports">Supported</option><option value="contradicts">Contradicted</option><option value="qualifies">Qualified</option></select></label><div class="dialog-actions"><button type="button" class="quiet-button" data-close>Cancel</button><button type="submit">Save claim</button></div></form></dialog>
+
+    <dialog id="source-dialog" class="wide-dialog"><form id="source-form" method="dialog"><div class="dialog-heading"><h2>Add evidence source</h2><button type="button" class="close" data-close>×</button></div>
+      <div class="form-grid">
+        <label>Source title<input name="title" required maxlength="500" placeholder="e.g. Periodic Labour Force Survey 2023–24" /></label>
+        <label>URL <span class="optional">Optional</span><input name="url" type="url" inputmode="url" maxlength="2000" placeholder="https://…" /></label>
+        <label>Source type<select name="source_type"><option value="article">Article</option><option value="dataset">Dataset</option><option value="report">Report</option><option value="webpage">Web page</option><option value="book">Book</option><option value="other">Other</option></select></label>
+        <label>Publication year <span class="optional">Optional</span><input name="year" type="number" min="1000" max="2100" inputmode="numeric" placeholder="2024" /></label>
+        <label class="full-width">Evidence excerpt / notes <span class="optional">Optional</span><textarea name="evidence_excerpt" maxlength="12000" placeholder="Paste a relevant passage or note why this source matters."></textarea></label>
+        <label class="full-width">Locator or page <span class="optional">Optional</span><input name="locator" maxlength="255" placeholder="e.g. p. 42, Table 3.1" /></label>
+      </div>
+      <p class="helper">Only add sources you have permission to share.</p>
+      <div class="dialog-actions"><button type="button" class="quiet-button" data-close>Cancel</button><button type="submit">Add source</button></div>
+    </form></dialog>
+
+    <dialog id="criteria-dialog" class="wide-dialog"><form id="criteria-form"><div class="dialog-heading"><h2>Edit screening criteria</h2><button type="button" class="close" data-close>×</button></div>
+      <label>Framework<select name="framework"><option value="pico">PICO</option><option value="picoc">PICOC</option><option value="spider">SPIDER</option><option value="custom">Custom</option></select></label>
+      <ul id="criteria-rows" class="criteria-rows"></ul>
+      <div class="dialog-actions-start"><button type="button" id="criteria-add-include" class="quiet-button">Add inclusion</button><button type="button" id="criteria-add-exclude" class="quiet-button">Add exclusion</button></div>
+      <div class="dialog-actions"><button type="button" class="quiet-button" data-close>Cancel</button><button type="submit">Save criteria</button></div>
+    </form></dialog>
+
+    <dialog id="seed-dialog"><form id="seed-form"><div class="dialog-heading"><h2>Add seed paper</h2><button type="button" class="close" data-close>×</button></div>
+      <label>Title<input name="title" required minlength="3" maxlength="500" /></label>
+      <label>DOI <span class="optional">Optional</span><input name="doi" maxlength="300" /></label>
+      <label>Year <span class="optional">Optional</span><input name="year" type="number" min="1000" max="2200" /></label>
+      <label>Authors <span class="optional">Optional, comma-separated</span><input name="authors" placeholder="Jane Doe, John Smith" /></label>
+      <label>Note <span class="optional">Optional</span><textarea name="note" maxlength="1000"></textarea></label>
+      <div class="dialog-actions"><button type="button" class="quiet-button" data-close>Cancel</button><button type="submit">Add seed</button></div>
+    </form></dialog>
+
+    <dialog id="search-dialog" class="wide-dialog"><form id="search-form"><div class="dialog-heading"><h2>New search</h2><button type="button" class="close" data-close>×</button></div>
+      <label>Database<select name="database"></select></label>
+      <ul id="search-blocks" class="concept-blocks"></ul>
+      <div class="dialog-actions-start"><button type="button" id="search-add-concept" class="quiet-button">Add concept</button></div>
+      <div class="form-grid">
+        <label>Year from <span class="optional">Optional</span><input name="year_from" pattern="\d{4}" maxlength="4" /></label>
+        <label>Year to <span class="optional">Optional</span><input name="year_to" pattern="\d{4}" maxlength="4" /></label>
+        <label>Max results<input name="max_results" type="number" min="1" max="2000" value="500" /></label>
+      </div>
+      <div class="dialog-actions"><button type="button" class="quiet-button" data-close>Cancel</button><button type="submit">Queue search</button></div>
+    </form></dialog>
+
+    <dialog id="merge-dialog"><form id="merge-form"><div class="dialog-heading"><h2>Merge sources</h2><button type="button" class="close" data-close>×</button></div>
+      <p class="helper">Choose which to keep. The others are hidden, not deleted; excerpts and verification are kept.</p>
+      <div id="merge-keep-list"></div>
+      <div class="dialog-actions"><button type="button" class="quiet-button" data-close>Cancel</button><button type="submit">Merge</button></div>
+    </form></dialog>
+
+    <dialog id="reject-dialog"><form id="reject-form"><div class="dialog-heading"><h2>Reject gate</h2><button type="button" class="close" data-close>×</button></div>
+      <p id="reject-gate-label" class="muted"></p>
+      <label>Reason <span class="optional">Required</span><textarea name="note" required maxlength="4000"></textarea></label>
+      <div class="dialog-actions"><button type="button" class="quiet-button" data-close>Cancel</button><button type="submit">Reject</button></div>
+    </form></dialog>
+
+    <dialog id="reenter-dialog"><form id="reenter-form"><div class="dialog-heading"><h2>Go back to an earlier stage</h2><button type="button" class="close" data-close>×</button></div>
+      <label>Stage<select name="stage"></select></label>
+      <label>Reason<textarea name="reason" required maxlength="1000"></textarea></label>
+      <p class="helper">Gates of the stages being redone return to pending; later results are marked stale.</p>
+      <div class="dialog-actions"><button type="button" class="quiet-button" data-close>Cancel</button><button type="submit">Go back</button></div>
+    </form></dialog>
+
+    <dialog id="invite-dialog"><form id="invite-form"><div class="dialog-heading"><h2>Invite member</h2><button type="button" class="close" data-close>×</button></div>
+      <label>Email<input name="email" type="email" required /></label>
+      <label>Role<select name="role"><option value="co_author" selected>Co-author</option><option value="owner">Owner</option><option value="supervisor">Supervisor</option><option value="reviewer">Reviewer</option></select></label>
+      <p class="helper">They must have signed in to Research AI once.</p>
+      <div class="dialog-actions"><button type="button" class="quiet-button" data-close>Cancel</button><button type="submit">Invite</button></div>
+    </form></dialog>
+
+    <dialog id="confirm-dialog"><div class="dialog-heading"><h2 id="confirm-title"></h2><button type="button" class="close" data-close>×</button></div><p id="confirm-message"></p><div class="dialog-actions"><button type="button" class="quiet-button" data-close>Cancel</button><button type="button" id="confirm-ok">Confirm</button></div></dialog>
+
     <div id="toast" class="toast" role="status"></div>
-    <script src="/assets/app.js"></script>
+    <script type="module" src="/assets/app.js"></script>
   </body>
 </html>

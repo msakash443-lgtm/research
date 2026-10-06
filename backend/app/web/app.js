@@ -1,297 +1,460 @@
-﻿const state = { user: null, projects: [], activeProject: null, pollTimer: null };
-const $ = (selector) => document.querySelector(selector);
+import { $, el, toast, saveOnce, label } from "./js/dom.js";
+import { errorCard } from "./js/steps/common.js";
+import { request, projectApi } from "./js/api.js";
+import { STAGES, STEPS, GROUPS, GUIDES, STEP_IDS, stepStatus } from "./js/workflow.js";
+import { renderMemory } from "./js/memory.js";
 
-async function request(path, options = {}) {
-  const response = await fetch(path, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    ...options,
-  });
-  if (response.status === 204) return null;
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.detail || "Something went wrong.");
-  return body;
+import overview from "./js/steps/overview.js";
+import scope from "./js/steps/scope.js";
+import criteria from "./js/steps/criteria.js";
+import search from "./js/steps/search.js";
+import results from "./js/steps/results.js";
+import sources from "./js/steps/sources.js";
+import ask from "./js/steps/ask.js";
+import approvals from "./js/steps/approvals.js";
+import team from "./js/steps/team.js";
+import activity from "./js/steps/activity.js";
+
+const STEP_MODULES = { overview, scope, criteria, search, results, sources, ask, approvals, team, activity };
+
+const state = {
+  user: null,
+  projects: [],
+  activeProject: null,
+  role: null,
+  currentStep: "overview",
+  summary: {},
+  cache: { profiles: null, connectors: null },
+  pollTimer: null,
+};
+
+function buildCtx() {
+  const role = state.role;
+  return {
+    project: state.activeProject,
+    user: state.user,
+    role,
+    canWrite: role === "owner" || role === "co_author",
+    isOwner: role === "owner",
+    summary: state.summary,
+    cache: state.cache,
+    refresh,
+    navigate,
+  };
 }
 
-function toast(message) {
-  const node = $("#toast");
-  node.textContent = message;
-  node.classList.add("show");
-  window.setTimeout(() => node.classList.remove("show"), 3200);
+function navigate(stepId) {
+  if (!state.activeProject) return;
+  window.location.hash = `#/p/${state.activeProject.id}/${stepId}`;
 }
 
-function label(value) { return String(value).replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()); }
-
-function el(tag, options = {}) {
-  const node = document.createElement(tag);
-  if (options.className) node.className = options.className;
-  if (options.text !== undefined) node.textContent = options.text;
-  if (options.type) node.type = options.type;
-  if (options.href) node.href = options.href;
-  if (options.target) node.target = options.target;
-  if (options.rel) node.rel = options.rel;
-  if (options.title) node.title = options.title;
-  return node;
+function parseHash() {
+  const match = window.location.hash.match(/^#\/p\/([^/]+)\/([^/]+)$/);
+  if (!match) return null;
+  return { projectId: match[1], stepId: match[2] };
 }
 
-function emptyCard(title, description) {
-  const card = el("div", { className: "empty-card" });
-  card.append(el("h3", { text: title }), el("p", { text: description }));
-  return card;
+function memberRole() {
+  const members = state.summary.members || [];
+  const mine = members.find((m) => m.user_id === state.user?.id);
+  return mine?.role || null;
 }
 
-function formatDate(value) {
-  if (!value) return "";
-  const date = new Date(value);
-  return Number.isNaN(date.valueOf()) ? "" : date.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+// On phones/tablets the project rail and research memory are off-canvas drawers opened from the
+// top bar; on wider screens the memory sidebar can instead be collapsed to a two-column layout.
+// Only one drawer is open at a time; the rest of the page is inert while one is open.
+function setDrawer(name) {
+  const wasOpen = document.body.classList.contains("nav-open") ? "nav" : document.body.classList.contains("memory-open") ? "memory" : null;
+  document.body.classList.remove("nav-open", "memory-open");
+  $(".topbar").inert = false;
+  $("#step-view").inert = false;
+  $("#nav-toggle").setAttribute("aria-expanded", String(name === "nav"));
+  $("#memory-toggle").setAttribute("aria-expanded", String(name === "memory"));
+  if (name) {
+    document.body.classList.add(`${name}-open`);
+    $(".topbar").inert = true;
+    $("#step-view").inert = true;
+    (name === "nav" ? $("#new-project") : $("#memory-sidebar")).focus();
+  } else if (wasOpen) {
+    (wasOpen === "nav" ? $("#nav-toggle") : $("#memory-toggle")).focus();
+  }
 }
 
-async function loadProjects() {
-  state.projects = await request("/api/projects");
-  renderProjects();
-  if (!state.activeProject && state.projects.length) await selectProject(state.projects[0].id);
-  if (!state.projects.length) showEmpty();
+function stepLink(step) {
+  const { status, count } = stepStatus(step.id, state.summary);
+  const classes = ["step-link", `step-status-${status}`];
+  if (state.currentStep === step.id) classes.push("active");
+  const a = el("a", { className: classes.join(" "), href: `#/p/${state.activeProject.id}/${step.id}` });
+  const glyph = status === "done" ? "✓" : status === "attention" ? "!" : status === "todo" ? "○" : "";
+  a.append(el("span", { children: [el("span", { className: "step-glyph", text: glyph }), document.createTextNode(` ${step.title}`)] }));
+  if (count) a.append(el("span", { className: "step-count", text: String(count) }));
+  a.addEventListener("click", () => setDrawer(null));
+  return a;
 }
 
-function renderProjects() {
+function renderProjectList() {
   const list = $("#project-list");
-  list.replaceChildren(...state.projects.map((project) => {
-    const button = el("button", { className: `project-item ${state.activeProject?.id === project.id ? "active" : ""}`, text: project.title });
-    button.onclick = () => selectProject(project.id);
-    return button;
-  }));
+  const focusedId = list.contains(document.activeElement) ? document.activeElement.dataset.projectId : null;
+  const items = state.projects.map((project) => {
+    const active = state.activeProject?.id === project.id;
+    const a = el("a", { className: `project-item${active ? " active" : ""}`, text: project.title, href: `#/p/${project.id}/overview` });
+    a.dataset.projectId = project.id;
+    a.addEventListener("click", () => setDrawer(null));
+    return a;
+  });
+  list.replaceChildren(...items);
+  const toFocus = items.find((item) => item.dataset.projectId === focusedId);
+  if (toFocus) toFocus.focus();
+}
+
+function renderShell() {
+  renderProjectList();
+  $("#idea-button").hidden = !(state.activeProject && (state.role === "owner" || state.role === "co_author"));
+  $("#memory-toggle").hidden = !state.activeProject;
+  if (!state.activeProject) {
+    $("#role-chip").hidden = true;
+    return;
+  }
+  $("#crumb").textContent = state.activeProject.title;
+  $("#role-chip").hidden = !state.role;
+  if (state.role) {
+    $("#role-chip").textContent = label(state.role);
+    $("#role-chip").title = ["supervisor", "reviewer"].includes(state.role)
+      ? "You can view everything; supervisors approve gates. Editing is for owners and co-authors."
+      : "";
+  }
+  const stageName = state.summary.stage?.stage;
+  const idx = STAGES.findIndex(([name]) => name === stageName);
+  $("#progress-block").hidden = false;
+  $("#stage-progress-label").textContent = `Stage ${idx + 1} of ${STAGES.length} · ${label(stageName || "")}`;
+  $("#stage-progress").value = idx >= 0 ? idx : 0;
+
+  const rail = $("#step-rail");
+  rail.replaceChildren(stepLink(STEPS.find((s) => s.id === "overview")));
+  GROUPS.forEach((group) => {
+    rail.append(el("p", { className: "step-group-label", text: group.toUpperCase() }));
+    STEPS.filter((s) => s.group === group).forEach((step) => rail.append(stepLink(step)));
+  });
+
+  const laterList = $("#later-stages-list");
+  laterList.replaceChildren();
+  const fromIndex = STAGES.findIndex(([name]) => name === "retrieved");
+  STAGES.slice(fromIndex).forEach(([name, gate]) => {
+    laterList.append(el("li", { text: gate ? `${label(name)} (${gate})` : label(name) }));
+  });
+  $("#later-stages").hidden = false;
+}
+
+const STEP_DEPENDENCIES = {
+  overview: ["stage", "gates"],
+  scope: ["context", "gates", "stage"],
+  criteria: ["criteria", "seeds"],
+  search: ["searches", "gates", "stage"],
+  results: ["prisma", "knownItems", "seeds"],
+  sources: ["sources"],
+  ask: ["runs"],
+  approvals: ["stage", "gates", "staleArtifacts"],
+  team: ["members"],
+  activity: [],
+};
+
+async function renderStep(stepId) {
+  const step = STEPS.find((s) => s.id === stepId) || STEPS[0];
+  $("#step-group").textContent = step.group || "Project";
+  $("#step-title").textContent = step.title;
+  $("#step-purpose").textContent = GUIDES[stepId]?.what || "";
+  const body = $("#step-body");
+  const failedKey = (STEP_DEPENDENCIES[stepId] || []).find((key) => state.summary.errors?.[key]);
+  if (failedKey) {
+    body.replaceChildren(errorCard(state.summary.errors[failedKey], refresh));
+  } else {
+    await STEP_MODULES[stepId].render(body, buildCtx());
+  }
+  $("#memory-sidebar").hidden = false;
+  renderMemory($("#memory-body"), buildCtx());
+  updatePoll();
+}
+
+async function loadSummary() {
+  if (!state.activeProject) return;
+  const projectId = state.activeProject.id;
+  const endpoints = {
+    stage: "/stage", gates: "/gates", context: "/context", criteria: "/criteria", seeds: "/seeds",
+    searches: "/searches", sources: "/sources", runs: "/research-runs", members: "/members",
+    knownItems: "/known-items", prisma: "/prisma", staleArtifacts: "/artifacts?status=stale",
+  };
+  const keys = Object.keys(endpoints);
+  const settled = await Promise.allSettled(keys.map((key) => request(projectApi(projectId, endpoints[key]))));
+  if (!state.activeProject || state.activeProject.id !== projectId) return;
+  const summary = { errors: {} };
+  keys.forEach((key, index) => {
+    const result = settled[index];
+    if (result.status === "fulfilled") summary[key] = result.value;
+    else {
+      summary[key] = key === "staleArtifacts" || key === "gates" || key === "context" || key === "seeds" || key === "sources" || key === "members" ? [] : null;
+      summary.errors[key] = result.reason.message;
+    }
+  });
+  state.summary = summary;
+}
+
+async function refresh() {
+  await loadSummary();
+  state.role = memberRole();
+  renderShell();
+  await renderStep(state.currentStep);
+}
+
+function shouldPoll() {
+  const runs = state.summary.runs || [];
+  const activeRun = runs.some((r) => r.status === "queued" || r.status === "running");
+  const pending = state.summary.searches?.pending || [];
+  const activeSearch = pending.some((p) => p.status === "queued" || p.status === "running");
+  return activeRun || activeSearch;
+}
+
+function updatePoll() {
+  window.clearTimeout(state.pollTimer);
+  if (shouldPoll()) state.pollTimer = window.setTimeout(pollTick, 2500);
+}
+
+async function pollTick() {
+  const projectId = state.activeProject?.id;
+  const wasActive = shouldPoll();
+  await loadSummary();
+  // The project may have changed or been cleared (logout, switch) while this tick was in flight;
+  // the new state already scheduled its own poll, so this stale tick must not touch the DOM.
+  if (state.activeProject?.id !== projectId) return;
+  state.role = memberRole();
+  renderShell();
+  if (wasActive && !shouldPoll()) {
+    // Something just finished (e.g. a search or a run that adds sources): a full re-render
+    // picks up the new data everywhere, not just the polled list.
+    await renderStep(state.currentStep);
+    return;
+  }
+  const mod = STEP_MODULES[state.currentStep];
+  if (mod.update) mod.update($("#step-body"), buildCtx());
+  renderMemory($("#memory-body"), buildCtx());
+  updatePoll();
+}
+
+async function setStep(stepId, updateHash) {
+  state.currentStep = STEP_IDS.has(stepId) ? stepId : "overview";
+  if (updateHash) window.location.hash = `#/p/${state.activeProject.id}/${state.currentStep}`;
+  renderShell();
+  await renderStep(state.currentStep);
+  setDrawer(null);
 }
 
 function showEmpty() {
   state.activeProject = null;
+  state.role = null;
+  state.summary = {};
   window.clearTimeout(state.pollTimer);
   $("#empty-state").hidden = false;
-  $("#project-view").hidden = true;
-  renderProjects();
+  $("#step-content").hidden = true;
+  $("#progress-block").hidden = true;
+  $("#step-rail").replaceChildren();
+  $("#later-stages").hidden = true;
+  $("#memory-sidebar").hidden = true;
+  $("#crumb").textContent = "";
+  $("#role-chip").hidden = true;
+  $("#idea-button").hidden = true;
+  $("#memory-toggle").hidden = true;
+  renderProjectList();
 }
 
-async function selectProject(id) {
+async function selectProject(id, stepId = "overview") {
   window.clearTimeout(state.pollTimer);
-  state.activeProject = await request(`/api/projects/${id}`);
+  try {
+    state.activeProject = await request(`/api/projects/${id}`);
+  } catch (error) {
+    toast(error.message);
+    if (state.projects.some((p) => p.id !== id) && state.projects.length) {
+      await selectProject(state.projects.find((p) => p.id !== id).id, "overview");
+    } else {
+      showEmpty();
+    }
+    return;
+  }
   $("#empty-state").hidden = true;
-  $("#project-view").hidden = false;
-  $("#project-title").textContent = state.activeProject.title;
-  $("#project-description").textContent = state.activeProject.description || "No description yet.";
-  renderProjects();
-  await Promise.all([loadContext(), loadSources(), loadClaims(), loadResearchRuns(), loadDatasets(), loadLiteratureDocuments()]);
+  $("#step-content").hidden = false;
+  await loadSummary();
+  state.role = memberRole();
+  await setStep(stepId, false);
 }
 
-// ---------------------------------------------------------------------------
-// Context
-// ---------------------------------------------------------------------------
-async function loadContext() {
-  const items = await request(`/api/projects/${state.activeProject.id}/context`);
-  const list = $("#context-list");
-  if (!items.length) {
-    list.replaceChildren(emptyCard("Capture your first research decision", "Add a question, objective, or methodological choice to make this project easier to continue later."));
-    return;
+async function loadProjects() {
+  state.projects = await request("/api/projects");
+  renderProjectList();
+  const parsed = parseHash();
+  if (parsed && state.projects.some((p) => p.id === parsed.projectId)) {
+    await selectProject(parsed.projectId, parsed.stepId);
+  } else if (state.projects.length) {
+    await selectProject(state.projects[0].id, "overview");
+  } else {
+    showEmpty();
   }
-  list.replaceChildren(...items.map((item) => {
-    const card = el("article", { className: "context-card" });
-    const heading = el("div", { className: "card-heading" });
-    heading.append(el("span", { className: "context-kind", text: label(item.kind) }));
-    const deleteBtn = el("button", { className: "icon-button", text: "×", title: "Delete" });
-    deleteBtn.onclick = async () => {
-      if (!confirm("Delete this context item?")) return;
-      try {
-        await request(`/api/projects/${state.activeProject.id}/context/${item.id}`, { method: "DELETE" });
-        await loadContext();
-        toast("Context item removed.");
-      } catch (error) { toast(error.message); }
-    };
-    heading.append(deleteBtn);
-    card.append(heading, el("h3", { text: item.content }));
-    card.append(el("p", { text: item.rationale ? `Reason: ${item.rationale}` : "Saved to this project's structured research memory." }));
-    return card;
-  }));
 }
 
-// ---------------------------------------------------------------------------
-// Sources
-// ---------------------------------------------------------------------------
-async function loadSources() {
-  const sources = await request(`/api/projects/${state.activeProject.id}/sources`);
-  const list = $("#source-list");
-  if (!sources.length) {
-    list.replaceChildren(emptyCard("No evidence sources yet", "Add a primary source and a short excerpt, statistic, or data note before asking the agent for a synthesis."));
+window.addEventListener("hashchange", () => {
+  const parsed = parseHash();
+  if (!parsed || !state.user) return;
+  if (!state.activeProject || state.activeProject.id !== parsed.projectId) {
+    if (state.projects.some((p) => p.id === parsed.projectId)) selectProject(parsed.projectId, parsed.stepId);
     return;
   }
+  if (parsed.stepId !== state.currentStep) setStep(parsed.stepId, false);
+});
 
-  list.replaceChildren(...sources.map((source) => {
-    const card = el("article", { className: "source-card" });
-    const meta = [label(source.source_type), source.year].filter(Boolean).join(" · ");
-    const heading = el("div", { className: "card-heading" });
-    heading.append(el("span", { className: "context-kind", text: meta || "Source" }));
-    const deleteBtn = el("button", { className: "icon-button", text: "×", title: "Delete source" });
-    deleteBtn.onclick = async () => {
-      if (!confirm(`Delete "${source.title}"?`)) return;
-      try {
-        await request(`/api/projects/${state.activeProject.id}/sources/${source.id}`, { method: "DELETE" });
-        await loadSources();
-        toast("Source removed.");
-      } catch (error) { toast(error.message); }
-    };
-    heading.append(deleteBtn);
-    card.append(heading);
-    if (source.url) {
-      card.append(el("a", { className: "source-title", text: source.title, href: source.url, target: "_blank", rel: "noopener noreferrer" }));
-    } else {
-      card.append(el("h3", { text: source.title }));
+if (localStorage.getItem("ra.memoryCollapsed") === "1") document.body.classList.add("memory-collapsed");
+
+$("#nav-toggle").addEventListener("click", () => setDrawer(document.body.classList.contains("nav-open") ? null : "nav"));
+$("#memory-toggle").addEventListener("click", () => {
+  if (window.matchMedia("(min-width: 1280px)").matches) {
+    document.body.classList.toggle("memory-collapsed");
+    localStorage.setItem("ra.memoryCollapsed", document.body.classList.contains("memory-collapsed") ? "1" : "0");
+  } else {
+    setDrawer(document.body.classList.contains("memory-open") ? null : "memory");
+  }
+});
+$("#nav-backdrop").addEventListener("click", () => setDrawer(null));
+$("#memory-backdrop").addEventListener("click", () => setDrawer(null));
+window.matchMedia("(max-width: 760px)").addEventListener("change", () => setDrawer(null));
+window.matchMedia("(max-width: 1279px)").addEventListener("change", () => setDrawer(null));
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    if (document.body.classList.contains("nav-open") || document.body.classList.contains("memory-open")) setDrawer(null);
+    return;
+  }
+  if (event.altKey && event.code === "KeyI" && state.activeProject && !document.querySelector("dialog[open]")) {
+    event.preventDefault();
+    $("#idea-popover").showPopover();
+    $("#idea-form textarea").focus();
+  }
+});
+
+$("#guide-popover").addEventListener("beforetoggle", (event) => {
+  if (event.newState !== "open") return;
+  const guide = GUIDES[state.currentStep] || {};
+  $("#guide-what").textContent = guide.what || "";
+  $("#guide-why").textContent = guide.why || "";
+  $("#guide-approval").textContent = guide.approval || "";
+});
+
+$("#new-project").addEventListener("click", () => {
+  setDrawer(null);
+  $("#project-dialog").showModal();
+});
+$("#empty-new-project").addEventListener("click", () => $("#project-dialog").showModal());
+document.querySelectorAll("[data-close]").forEach((button) => button.addEventListener("click", () => button.closest("dialog").close()));
+
+$("#project-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  saveOnce(form, async () => {
+    const data = Object.fromEntries(new FormData(form));
+    try {
+      const project = await request("/api/projects", { method: "POST", body: JSON.stringify(data) });
+      form.reset();
+      $("#project-dialog").close();
+      state.projects = await request("/api/projects");
+      toast("Project created.");
+      window.location.hash = `#/p/${project.id}/overview`;
+    } catch (error) {
+      toast(error.message);
     }
+  });
+});
 
-    if (source.evidence_excerpt) {
-      card.append(el("p", { className: "evidence-excerpt", text: source.evidence_excerpt }));
-      if (source.excerpt_locator) card.append(el("p", { className: "source-locator", text: `Location: ${source.excerpt_locator}` }));
-    } else {
-      card.append(el("p", { className: "source-locator", text: "No evidence excerpt saved yet; the agent will not use this source for factual claims." }));
+$("#context-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  saveOnce(form, async () => {
+    const data = Object.fromEntries(new FormData(form));
+    if (!data.rationale) delete data.rationale;
+    try {
+      await request(projectApi(state.activeProject.id, "/context"), { method: "POST", body: JSON.stringify(data) });
+      form.reset();
+      $("#context-dialog").close();
+      toast("Research context saved.");
+      await refresh();
+    } catch (error) {
+      toast(error.message);
     }
+  });
+});
 
-    return card;
-  }));
-}
-
-function renderSourceResults(sources) {
-  const list = $("#source-search-results");
-  const style = $("#source-search-form select[name='citation_style']").value;
-  if (!sources.length) {
-    list.replaceChildren(emptyCard("No matching articles", "Try another title, author, DOI, keyword, or evidence phrase."));
-    return;
-  }
-  list.replaceChildren(...sources.map((source) => {
-    const card = el("article", { className: "source-card" });
-    card.append(el("h3", { text: source.title }));
-    card.append(el("p", { className: "source-locator", text: style === "MLA" ? source.mla_citation : source.apa_citation }));
-    card.append(el("p", { className: "source-locator", text: `Format: ${style}` }));
-    if (source.doi) card.append(el("p", { className: "source-locator", text: `DOI: ${source.doi}` }));
-    if (source.evidence_excerpt) card.append(el("p", { className: "evidence-excerpt", text: source.evidence_excerpt }));
-    return card;
-  }));
-}
-
-async function loadDatasets() {
-  const datasets = await request(`/api/projects/${state.activeProject.id}/analysis/datasets`);
-  const select = $("#dataset-select");
-  select.replaceChildren(...datasets.map((dataset) => {
-    const option = el("option", { text: `${dataset.name} (${dataset.row_count} rows)` });
-    option.value = dataset.id;
-    return option;
-  }));
-  if (!datasets.length) select.append(el("option", { text: "Upload a dataset first" }));
-}
-
-async function loadLiteratureDocuments() {
-  const documents = await request(`/api/projects/${state.activeProject.id}/literature-review/documents`);
-  const select = $("#literature-document");
-  select.replaceChildren(...documents.map((document) => {
-    const option = el("option", { text: `${document.filename} (${document.page_count} pages)` });
-    option.value = document.id;
-    return option;
-  }));
-  if (!documents.length) select.append(el("option", { text: "Upload a PDF first" }));
-}
-
-// ---------------------------------------------------------------------------
-// Claims
-// ---------------------------------------------------------------------------
-const STATUS_LABELS = { supports: "Supported", contradicts: "Contradicted", qualifies: "Qualifies", unclear: "Unclear" };
-
-async function loadClaims() {
-  const claims = await request(`/api/projects/${state.activeProject.id}/claims`);
-  const list = $("#claim-list");
-  if (!claims.length) {
-    list.replaceChildren(emptyCard("No claims yet", "Add factual claims and link each to a source that supports, contradicts, or qualifies it."));
-    return;
-  }
-  list.replaceChildren(...claims.map((claim) => {
-    const card = el("article", { className: `claim-card claim-${claim.status}` });
-    const heading = el("div", { className: "card-heading" });
-    heading.append(el("span", { className: "claim-status", text: STATUS_LABELS[claim.status] || label(claim.status) }));
-    const deleteBtn = el("button", { className: "icon-button", text: "×", title: "Delete claim" });
-    deleteBtn.onclick = async () => {
-      if (!confirm("Delete this claim and all its linked evidence?")) return;
-      try {
-        await request(`/api/projects/${state.activeProject.id}/claims/${claim.id}`, { method: "DELETE" });
-        await loadClaims();
-        toast("Claim removed.");
-      } catch (error) { toast(error.message); }
-    };
-    heading.append(deleteBtn);
-    card.append(heading, el("p", { className: "claim-text", text: claim.text }));
-    if (claim.evidence && claim.evidence.length) {
-      const evidenceList = el("ul", { className: "claim-evidence-list" });
-      claim.evidence.forEach((ev) => {
-        const item = el("li", { className: "claim-evidence-item" });
-        item.append(el("span", { className: `evidence-rel evidence-${ev.relationship}`, text: STATUS_LABELS[ev.relationship] }));
-        if (ev.excerpt) item.append(el("span", { className: "evidence-excerpt-inline", text: ` "${ev.excerpt}"` }));
-        evidenceList.append(item);
-      });
-      card.append(evidenceList);
+$("#source-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const data = Object.fromEntries(new FormData(form));
+  ["url", "year", "evidence_excerpt", "locator"].forEach((key) => {
+    if (!data[key]) delete data[key];
+  });
+  if (data.year) data.year = Number(data.year);
+  saveOnce(form, async () => {
+    try {
+      await request(projectApi(state.activeProject.id, "/sources"), { method: "POST", body: JSON.stringify(data) });
+      form.reset();
+      $("#source-dialog").close();
+      toast("Evidence source saved.");
+      await refresh();
+    } catch (error) {
+      toast(error.message);
     }
-    return card;
-  }));
-}
+  });
+});
 
-// ---------------------------------------------------------------------------
-// Research runs
-// ---------------------------------------------------------------------------
-function renderResearchRun(run) {
-  const card = el("article", { className: `run-card status-${run.status}` });
-  const header = el("div", { className: "run-heading" });
-  header.append(el("span", { className: "run-status", text: label(run.status) }), el("time", { text: formatDate(run.created_at) }));
-  // Retry button for failed/needs_configuration runs with attempts left
-  if ((run.status === "failed" || run.status === "needs_configuration") && run.attempt_count < 3) {
-    const retryBtn = el("button", { className: "quiet-button retry-button", text: "Retry" });
-    retryBtn.onclick = async () => {
-      retryBtn.disabled = true;
-      try {
-        await request(`/api/projects/${state.activeProject.id}/research-runs/${run.id}/retry`, { method: "POST" });
-        await loadResearchRuns(true);
-        toast("Run requeued.");
-      } catch (error) { toast(error.message); retryBtn.disabled = false; }
-    };
-    header.append(retryBtn);
-  }
-  card.append(header, el("h3", { text: run.question }));
-  if (Array.isArray(run.research_plan) && run.research_plan.length) {
-    const plan = el("ol", { className: "research-plan" });
-    run.research_plan.forEach((step) => plan.append(el("li", { text: step })));
-    card.append(plan);
-  }
-  if (run.answer) card.append(el("p", { className: "run-answer", text: run.answer }));
-  if (run.error_message) card.append(el("p", { className: "run-error", text: run.error_message }));
-  return card;
-}
+$("#idea-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  saveOnce(form, async () => {
+    const content = form.elements.content.value;
+    try {
+      await request(projectApi(state.activeProject.id, "/context"), { method: "POST", body: JSON.stringify({ kind: "idea", content }) });
+      form.reset();
+      $("#idea-popover").hidePopover();
+      toast("Idea saved to research memory.");
+      await refresh();
+    } catch (error) {
+      toast(error.message);
+    }
+  });
+});
 
-async function loadResearchRuns(poll = true) {
-  if (!state.activeProject) return;
-  const projectId = state.activeProject.id;
-  const runs = await request(`/api/projects/${projectId}/research-runs`);
-  if (!state.activeProject || state.activeProject.id !== projectId) return;
-  const list = $("#research-runs");
-  if (!runs.length) {
-    list.replaceChildren(emptyCard("No research runs yet", "Ask a focused question after saving evidence notes. The run will retain the source snapshot used for its response."));
-    return;
-  }
-  list.replaceChildren(...runs.map(renderResearchRun));
-  if (poll && runs.some((run) => run.status === "queued" || run.status === "running")) {
-    window.clearTimeout(state.pollTimer);
-    state.pollTimer = window.setTimeout(() => loadResearchRuns(true).catch((error) => toast(error.message)), 2500);
-  }
-}
+$("#reject-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const dialog = $("#reject-dialog");
+  const code = dialog.dataset.gateCode;
+  saveOnce(form, async () => {
+    const note = form.elements.note.value.trim();
+    try {
+      await request(projectApi(state.activeProject.id, `/gates/${code}/reject`), { method: "POST", body: JSON.stringify({ note }) });
+      form.reset();
+      dialog.close();
+      toast(`${code} rejected.`);
+      await refresh();
+    } catch (error) {
+      toast(error.message);
+    }
+  });
+});
 
-// ---------------------------------------------------------------------------
-// Auth
-// ---------------------------------------------------------------------------
 async function authenticate() {
-  try { state.user = await request("/api/auth/me"); } catch { state.user = null; }
+  try {
+    state.user = await request("/api/auth/me");
+  } catch {
+    state.user = null;
+  }
   if (state.user) {
     $("#auth-screen").hidden = true;
     $("#workspace").hidden = false;
     $("#account").hidden = false;
+    $("#nav-toggle").hidden = false;
     $("#account-name").textContent = state.user.display_name || state.user.email;
     await loadProjects();
     return;
@@ -300,201 +463,32 @@ async function authenticate() {
   $("#auth-screen").hidden = false;
   $("#workspace").hidden = true;
   $("#google-login").hidden = !methods.google_configured;
-  $("#password-login").hidden = !methods.password_login;
+  $("#development-login").hidden = !methods.development_login;
   $("#auth-note").textContent = methods.google_configured
-    ? "Sign in with your local account or Google."
-    : "Create a local account to access your private research workspace.";
+    ? "Sign in securely to access your research."
+    : "Google login can be enabled later. This local account is only available while developing the app.";
 }
 
-// ---------------------------------------------------------------------------
-// Event listeners
-// ---------------------------------------------------------------------------
-$("#password-login").addEventListener("submit", async (event) => {
+$("#development-login").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
   try {
-    await request("/api/auth/login", { method: "POST", body: JSON.stringify(Object.fromEntries(form)) });
+    await request("/api/auth/development/login", { method: "POST", body: JSON.stringify(Object.fromEntries(form)) });
+    toast("Development account ready.");
     await authenticate();
-  } catch (error) { toast(error.message); }
+  } catch (error) {
+    toast(error.message);
+  }
 });
 
-$("#show-register").onclick = () => { $("#register-form").hidden = !$("#register-form").hidden; };
-
-$("#register-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const form = new FormData(event.currentTarget);
-  try {
-    await request("/api/auth/register", { method: "POST", body: JSON.stringify(Object.fromEntries(form)) });
-    toast("Account created.");
-    await authenticate();
-  } catch (error) { toast(error.message); }
-});
-
-$("#logout").onclick = async () => {
+$("#logout").addEventListener("click", async () => {
   await request("/api/auth/logout", { method: "POST" });
   state.user = null;
   showEmpty();
+  setDrawer(null);
   $("#account").hidden = true;
+  $("#nav-toggle").hidden = true;
   authenticate();
-};
-
-$("#new-project").onclick = () => $("#project-dialog").showModal();
-$("#empty-new-project").onclick = () => $("#project-dialog").showModal();
-$("#add-context").onclick = () => $("#context-dialog").showModal();
-$("#add-claim").onclick = () => $("#claim-dialog").showModal();
-$("#refresh-runs").onclick = () => loadResearchRuns(true).catch((error) => toast(error.message));
-document.querySelectorAll("[data-close]").forEach((button) => { button.onclick = () => button.closest("dialog").close(); });
-
-$("#delete-project").onclick = async () => {
-  if (!state.activeProject) return;
-  if (!confirm(`Permanently delete "${state.activeProject.title}" and all its data?`)) return;
-  try {
-    await request(`/api/projects/${state.activeProject.id}`, { method: "DELETE" });
-    state.activeProject = null;
-    toast("Project deleted.");
-    await loadProjects();
-  } catch (error) { toast(error.message); }
-};
-
-$("#project-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const data = Object.fromEntries(new FormData(event.currentTarget));
-  try {
-    const project = await request("/api/projects", { method: "POST", body: JSON.stringify(data) });
-    event.currentTarget.reset();
-    $("#project-dialog").close();
-    state.activeProject = null;
-    await loadProjects();
-    await selectProject(project.id);
-    toast("Project created.");
-  } catch (error) { toast(error.message); }
-});
-
-$("#context-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const data = Object.fromEntries(new FormData(event.currentTarget));
-  if (!data.rationale) delete data.rationale;
-  try {
-    await request(`/api/projects/${state.activeProject.id}/context`, { method: "POST", body: JSON.stringify(data) });
-    event.currentTarget.reset();
-    $("#context-dialog").close();
-    await loadContext();
-    toast("Research context saved.");
-  } catch (error) { toast(error.message); }
-});
-
-$("#source-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const data = Object.fromEntries(new FormData(event.currentTarget));
-  ["url", "doi", "year", "evidence_excerpt", "locator", "authors"].forEach((key) => { if (!data[key]) delete data[key]; });
-  if (data.authors) data.authors = data.authors.split(";").map((author) => author.trim()).filter(Boolean);
-  if (data.year) data.year = Number(data.year);
-  try {
-    await request(`/api/projects/${state.activeProject.id}/sources`, { method: "POST", body: JSON.stringify(data) });
-    event.currentTarget.reset();
-    await loadSources();
-    toast("Evidence source saved.");
-  } catch (error) { toast(error.message); }
-});
-
-$("#source-search-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const query = new FormData(event.currentTarget).get("q").toString().trim();
-  try {
-    const results = await request(`/api/projects/${state.activeProject.id}/sources/search?q=${encodeURIComponent(query)}`);
-    renderSourceResults(results);
-  } catch (error) { toast(error.message); }
-});
-
-$("#dataset-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const file = new FormData(event.currentTarget).get("file");
-  if (!file || !file.name) return;
-  try {
-    const response = await fetch(`/api/projects/${state.activeProject.id}/analysis/datasets`, { method: "POST", body: new FormData(event.currentTarget) });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(body.detail || "Dataset upload failed.");
-    event.currentTarget.reset();
-    await loadDatasets();
-    toast("Dataset uploaded.");
-  } catch (error) { toast(error.message); }
-});
-
-$("#analysis-submit").addEventListener("click", async () => {
-  const datasetId = $("#dataset-select").value;
-  const prompt = $("#analysis-prompt").value.trim();
-  if (!datasetId || !prompt) return toast("Choose a dataset and enter an analysis prompt.");
-  const button = $("#analysis-submit");
-  button.disabled = true;
-  try {
-    const response = await request(`/api/projects/${state.activeProject.id}/analysis/runs`, { method: "POST", body: JSON.stringify({ dataset_id: datasetId, prompt }) });
-    $("#analysis-result").textContent = JSON.stringify(response.result, null, 2);
-    toast("Analysis completed.");
-  } catch (error) { toast(error.message); }
-  finally { button.disabled = false; }
-});
-
-$("#literature-upload-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const file = new FormData(event.currentTarget).get("file");
-  if (!file || !file.name) return;
-  try {
-    const response = await fetch(`/api/projects/${state.activeProject.id}/literature-review/documents`, {
-      method: "POST",
-      body: new FormData(event.currentTarget),
-    });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(body.detail || "PDF upload failed.");
-    event.currentTarget.reset();
-    await loadLiteratureDocuments();
-    toast("PDF uploaded and text extracted.");
-  } catch (error) { toast(error.message); }
-});
-
-$("#literature-submit").addEventListener("click", async () => {
-  const documentId = $("#literature-document").value;
-  const question = $("#literature-question").value.trim();
-  const citationStyle = $("#literature-style").value;
-  if (!documentId || !question) return toast("Upload a PDF and enter a research question.");
-  if (!citationStyle) return toast("Choose APA or MLA before generating the review.");
-  const button = $("#literature-submit");
-  button.disabled = true;
-  try {
-    const result = await request(`/api/projects/${state.activeProject.id}/literature-review/generate`, {
-      method: "POST",
-      body: JSON.stringify({ document_id: documentId, research_question: question, citation_style: citationStyle }),
-    });
-    $("#literature-result").textContent = result.review;
-    toast(`${citationStyle} literature review generated.`);
-  } catch (error) { toast(error.message); }
-  finally { button.disabled = false; }
-});
-
-$("#claim-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const data = Object.fromEntries(new FormData(event.currentTarget));
-  try {
-    await request(`/api/projects/${state.activeProject.id}/claims`, { method: "POST", body: JSON.stringify(data) });
-    event.currentTarget.reset();
-    $("#claim-dialog").close();
-    await loadClaims();
-    toast("Claim saved.");
-  } catch (error) { toast(error.message); }
-});
-
-$("#research-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const button = $("#research-submit");
-  const question = $("#research-question").value.trim();
-  button.disabled = true;
-  button.textContent = "Starting…";
-  try {
-    await request(`/api/projects/${state.activeProject.id}/research-runs`, { method: "POST", body: JSON.stringify({ question }) });
-    $("#research-question").value = "";
-    await loadResearchRuns(true);
-    toast("Research run started.");
-  } catch (error) { toast(error.message); }
-  finally { button.disabled = false; button.textContent = "Run research"; }
 });
 
 authenticate().catch((error) => toast(error.message));

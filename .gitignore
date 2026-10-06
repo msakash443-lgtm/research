@@ -1,11 +1,13 @@
-.env
-.venv/
-.test-venv/
-__pycache__/
-*.py[cod]
-.pytest_cache/
-.coverage
-node_modules/
-.next/
-postgres_data/
+# Databases
 *.db
+*.db.bak
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv*/
+venv/
+
+# Secrets
+.env

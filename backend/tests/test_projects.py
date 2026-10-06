@@ -1,10 +1,11 @@
 import uuid
+from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
 from app.database import SessionLocal
 from app.main import app
-from app.models import Project, User
+from app.models import ContextKind, Project, ResearchContextItem, User
 
 
 def create_user() -> User:
@@ -33,6 +34,24 @@ def test_project_context_is_owned_and_persistent():
     assert context.status_code == 201
     listed = client.get(f"/api/projects/{project['id']}/context", headers=headers)
     assert [item["content"] for item in listed.json()] == ["How does gender affect wages in Kerala?"]
+
+
+def test_context_is_listed_oldest_first():
+    user = create_user()
+    db = SessionLocal()
+    project = Project(owner_id=user.id, title="Ordering")
+    db.add(project)
+    db.flush()
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    # Inserted newest first, so insertion order differs from creation order.
+    for minutes, content in [(2, "third"), (0, "first"), (1, "second")]:
+        db.add(ResearchContextItem(project_id=project.id, kind=ContextKind.question, content=content, created_at=start + timedelta(minutes=minutes)))
+    db.commit()
+    project_id = project.id
+    db.close()
+
+    listed = TestClient(app).get(f"/api/projects/{project_id}/context", headers={"X-User-Id": str(user.id)})
+    assert [item["content"] for item in listed.json()] == ["first", "second", "third"]
 
 
 def test_other_user_cannot_read_project():

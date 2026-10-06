@@ -1,47 +1,24 @@
 from __future__ import annotations
 
-import hashlib
 import uuid
-from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
+from app import audit
 from app.database import get_db
-from app.dependencies import owned_project
-from app.models import Project, Source, SourceExcerpt
-from app.schemas import ExcerptCreate, ExcerptRead, SourceCreate, SourceRead, SourceUpdate
+from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_access
+from app.connectors.factory import enabled_lookup_names
+from app.models import Project, Source, SourceExcerpt, Task, TaskStatus, User, excerpt_hash, utcnow
+from app.task_handlers import SOURCE_CHECK
+from app.task_queue import enqueue_task
+from app.schemas import SourceCreate, SourceMerge, SourceRead
+from app.source_merge import SourceMergeError, merge_sources
 
+_OPEN = {TaskStatus.queued, TaskStatus.running, TaskStatus.blocked, TaskStatus.paused}
 router = APIRouter(prefix="/projects/{project_id}/sources", tags=["sources"])
-
-def apa_citation(source: Source) -> str:
-    authors = source.authors or []
-    if authors:
-        author_text = ", ".join(str(author).strip() for author in authors if str(author).strip())
-    else:
-        author_text = source.title
-    year = f"({source.year or 'n.d.'})"
-    title = source.title.rstrip(".")
-    if source.source_type == "article":
-        citation = f"{author_text} {year}. {title}."
-    else:
-        citation = f"{author_text} {year}. {title}."
-    link = source.url or (f"https://doi.org/{source.doi}" if source.doi else "")
-    return f"{citation} {link}".strip()
-
-
-def mla_citation(source: Source) -> str:
-    authors = ", ".join(str(author).strip() for author in (source.authors or []) if str(author).strip()) or source.title
-    link = source.url or (f"https://doi.org/{source.doi}" if source.doi else "")
-    year = str(source.year) if source.year else "n.d."
-    return f'{authors}. "{source.title.rstrip(".")}". {year}. {link}'.strip()
-
-
-def _load_excerpts(source: Source, db: Session) -> None:
-    source.excerpts = db.scalars(
-        select(SourceExcerpt).where(SourceExcerpt.source_id == source.id).order_by(SourceExcerpt.created_at.asc())
-    ).all()
 
 
 def source_response(source: Source) -> SourceRead:
@@ -49,69 +26,57 @@ def source_response(source: Source) -> SourceRead:
     return SourceRead(
         id=source.id,
         title=source.title,
-        url=source.url,
         doi=source.doi,
+        url=source.url,
         authors=source.authors,
         year=source.year,
         source_type=source.source_type,
         metadata_verified=source.metadata_verified,
+        verification_method=(source.verification_method or "human") if source.metadata_verified else None,
+        verified_at=source.verified_at,
+        verification=source.verification,
+        origin=source.origin,
+        is_automated=source.is_automated,
+        created_by=source.created_by,
+        venue=source.venue,
+        abstract=source.abstract,
+        oa_url=source.oa_url,
+        source_ids=source.source_ids,
+        fulltext_path=source.fulltext_path,
+        quality_flags=source.quality_flags,
         evidence_excerpt=excerpt.content if excerpt else None,
         excerpt_locator=excerpt.locator if excerpt else None,
-        apa_citation=apa_citation(source),
-        mla_citation=mla_citation(source),
         created_at=source.created_at,
     )
 
 
-def _get_owned_source(source_id: uuid.UUID, project: Project, db: Session) -> Source:
-    source = db.scalar(select(Source).where(Source.id == source_id, Source.project_id == project.id))
-    if source is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
-    _load_excerpts(source, db)
-    return source
+def _load_source(db: Session, source_id: uuid.UUID) -> Source:
+    """Re-read a source and its excerpts from the database after a commit."""
+    return db.scalars(
+        select(Source).where(Source.id == source_id).options(selectinload(Source.excerpts)).execution_options(populate_existing=True)
+    ).one()
 
 
 @router.get("", response_model=list[SourceRead])
-def list_sources(project: Project = Depends(owned_project), db: Session = Depends(get_db)):
-    sources = db.scalars(select(Source).where(Source.project_id == project.id).order_by(Source.created_at.desc())).all()
-    for source in sources:
-        _load_excerpts(source, db)
+def list_sources(project: Project = Depends(project_access(READ_ROLES)), db: Session = Depends(get_db)):
+    sources = db.scalars(
+        select(Source)
+        .where(Source.project_id == project.id, Source.merged_into.is_(None))
+        .options(selectinload(Source.excerpts))
+        .order_by(Source.created_at.desc())
+    ).all()
     return [source_response(source) for source in sources]
 
 
-@router.get("/search", response_model=list[SourceRead])
-def search_sources(
-    q: str = Query(min_length=2, max_length=200),
-    project: Project = Depends(owned_project),
+@router.post("", response_model=SourceRead, status_code=status.HTTP_201_CREATED)
+def create_source(
+    payload: SourceCreate,
+    project: Project = Depends(project_access(WRITE_ROLES)),
+    user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    """Search the project's saved article/source library by metadata and evidence."""
-    terms = [term.lower() for term in q.split() if term.strip()]
-    sources = db.scalars(select(Source).where(Source.project_id == project.id)).all()
-    ranked: list[tuple[int, Source]] = []
-    for source in sources:
-        _load_excerpts(source, db)
-        haystack = " ".join(
-            [
-                source.title,
-                source.source_type,
-                source.doi or "",
-                source.url or "",
-                " ".join(str(author) for author in (source.authors or [])),
-                " ".join(excerpt.content for excerpt in source.excerpts),
-            ]
-        ).lower()
-        score = sum(haystack.count(term) for term in terms)
-        if score:
-            ranked.append((score, source))
-    ranked.sort(key=lambda item: (-item[0], item[1].created_at), reverse=False)
-    return [source_response(source) for _, source in ranked[:50]]
-
-
-@router.post("", response_model=SourceRead, status_code=status.HTTP_201_CREATED)
-def create_source(payload: SourceCreate, project: Project = Depends(owned_project), db: Session = Depends(get_db)):
     data = payload.model_dump(exclude={"evidence_excerpt", "locator"}, mode="json")
-    source = Source(project_id=project.id, **data)
+    source = Source(project_id=project.id, created_by=audit.user_actor(user), **data)
     db.add(source)
     db.flush()
     if payload.evidence_excerpt:
@@ -121,91 +86,91 @@ def create_source(payload: SourceCreate, project: Project = Depends(owned_projec
                 source_id=source.id,
                 content=content,
                 locator=payload.locator.strip() if payload.locator else None,
-                content_hash=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                content_hash=excerpt_hash(content),
+                created_by=audit.user_actor(user),
             )
         )
-    project.updated_at = datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(source)
-    _load_excerpts(source, db)
-    return source_response(source)
-
-
-@router.get("/{source_id}", response_model=SourceRead)
-def get_source(
-    source_id: uuid.UUID,
-    project: Project = Depends(owned_project),
-    db: Session = Depends(get_db),
-):
-    source = _get_owned_source(source_id, project, db)
-    return source_response(source)
-
-
-@router.patch("/{source_id}", response_model=SourceRead)
-def update_source(
-    source_id: uuid.UUID,
-    payload: SourceUpdate,
-    project: Project = Depends(owned_project),
-    db: Session = Depends(get_db),
-):
-    source = _get_owned_source(source_id, project, db)
-    updates = payload.model_dump(exclude_unset=True, mode="json")
-    for field, value in updates.items():
-        setattr(source, field, value)
-    project.updated_at = datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(source)
-    _load_excerpts(source, db)
-    return source_response(source)
-
-
-@router.delete("/{source_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_source(
-    source_id: uuid.UUID,
-    project: Project = Depends(owned_project),
-    db: Session = Depends(get_db),
-):
-    source = db.scalar(select(Source).where(Source.id == source_id, Source.project_id == project.id))
-    if source is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
-    db.delete(source)
-    project.updated_at = datetime.now(timezone.utc)
-    db.commit()
-
-
-# ---------------------------------------------------------------------------
-# Excerpts sub-resource
-# ---------------------------------------------------------------------------
-
-@router.get("/{source_id}/excerpts", response_model=list[ExcerptRead])
-def list_excerpts(
-    source_id: uuid.UUID,
-    project: Project = Depends(owned_project),
-    db: Session = Depends(get_db),
-):
-    source = _get_owned_source(source_id, project, db)
-    return source.excerpts
-
-
-@router.post("/{source_id}/excerpts", response_model=ExcerptRead, status_code=status.HTTP_201_CREATED)
-def add_excerpt(
-    source_id: uuid.UUID,
-    payload: ExcerptCreate,
-    project: Project = Depends(owned_project),
-    db: Session = Depends(get_db),
-):
-    source = db.scalar(select(Source).where(Source.id == source_id, Source.project_id == project.id))
-    if source is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
-    content = payload.content.strip()
-    excerpt = SourceExcerpt(
-        source_id=source.id,
-        content=content,
-        locator=payload.locator,
-        content_hash=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+    audit.record(
+        db, actor=audit.user_actor(user), action="source.created", project_id=project.id,
+        payload={"source_id": str(source.id), "has_excerpt": bool(payload.evidence_excerpt)},
     )
-    db.add(excerpt)
-    project.updated_at = datetime.now(timezone.utc)
+    project.touch()
     db.commit()
-    db.refresh(excerpt)
-    return excerpt
+    return source_response(_load_source(db, source.id))
+
+
+@router.post("/{source_id}/verify", response_model=SourceRead)
+def mark_source_verified(
+    source_id: uuid.UUID,
+    project: Project = Depends(project_access(WRITE_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """A signed-in person confirms the source's metadata. Never callable by the agent or worker.
+
+    The acting user is recorded as a `source.verified` audit event.
+    """
+    source = db.scalar(select(Source).where(Source.id == source_id, Source.project_id == project.id, Source.merged_into.is_(None)))
+    if source is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
+    if not source.reviewed_by_person:
+        upgraded = bool(source.metadata_verified)  # an automatic check a person now confirms
+        source.metadata_verified = True
+        source.verification_method = "human"
+        source.verified_at = utcnow()
+        source.verified_by = audit.user_actor(user)
+        audit.record(
+            db, actor=audit.user_actor(user), action="source.verified", project_id=project.id,
+            payload={"source_id": str(source.id), "method": "human", "confirmed_automatic_check": upgraded},
+        )
+        project.touch()
+        db.commit()
+    return source_response(_load_source(db, source.id))
+
+
+@router.post("/merge", response_model=SourceRead)
+def merge_duplicate_sources(
+    body: SourceMerge,
+    project: Project = Depends(project_access(WRITE_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """A person merges sources that are the same work into one; the others are hidden, not deleted."""
+    try:
+        kept = merge_sources(db, project=project, source_ids=body.source_ids, actor=audit.user_actor(user), keep=body.keep)
+    except SourceMergeError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    db.commit()
+    return source_response(_load_source(db, kept.id))
+
+
+class SourceCheckQueued(BaseModel):
+    task_id: uuid.UUID
+    status: str
+
+
+@router.post("/{source_id}/check", response_model=SourceCheckQueued, status_code=status.HTTP_202_ACCEPTED)
+def queue_source_check(
+    source_id: uuid.UUID,
+    project: Project = Depends(project_access(WRITE_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Queue an automatic metadata check (title, authors, year, DOI against scholarly services).
+
+    The result appears on the source (`verification`, and `metadata_verified` only if it matched).
+    """
+    source = db.scalar(select(Source).where(Source.id == source_id, Source.project_id == project.id, Source.merged_into.is_(None)))
+    if source is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
+    if not enabled_lookup_names():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No lookup connector is enabled on this server")
+    for task in db.scalars(select(Task).where(Task.project_id == project.id, Task.type == SOURCE_CHECK)):
+        if task.status in _OPEN and (task.payload or {}).get("source_id") == str(source_id):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A check for this source is already waiting or running")
+    actor = audit.user_actor(user)
+    task = enqueue_task(db, project.id, SOURCE_CHECK, payload={"project_id": str(project.id), "source_id": str(source_id), "requested_by": actor}, actor=actor)
+    audit.record(db, actor=actor, action="source.check_requested", project_id=project.id, payload={"source_id": str(source_id), "task_id": str(task.id)})
+    db.commit()
+    return SourceCheckQueued(task_id=task.id, status=task.status.value)

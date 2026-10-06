@@ -12,7 +12,11 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from app.database import Base, engine
 from app.config import get_settings
 from app.middleware import ContentLengthLimitMiddleware
-from app.routers import analysis, auth, claims, literature_review, projects, research_runs, sources
+from app.routers import audit, auth, connectors, criteria, gates, members, prisma, profile, projects, research_runs, screening, searches, seeds, sources, stage
+
+# Production settings (session secret, HTTPS, Postgres, ...) are validated in Settings.
+settings = get_settings()
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
@@ -22,9 +26,6 @@ async def lifespan(_: FastAPI):
     yield
 
 
-settings = get_settings()
-if settings.environment == "production" and settings.session_secret.get_secret_value() == "development-only-change-me":
-    raise RuntimeError("SESSION_SECRET must be configured in production")
 
 app = FastAPI(
     title="Research AI Platform",
@@ -47,16 +48,25 @@ if settings.cors_origins:
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_credentials=True,
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "DELETE"],
         allow_headers=["Content-Type"],
     )
 app.include_router(auth.router, prefix="/api")
 app.include_router(projects.router, prefix="/api")
+app.include_router(audit.router, prefix="/api")
+app.include_router(gates.router, prefix="/api")
+app.include_router(stage.router, prefix="/api")
+app.include_router(profile.router, prefix="/api")
+app.include_router(profile.catalogue, prefix="/api")
+app.include_router(connectors.router, prefix="/api")
+app.include_router(criteria.router, prefix="/api")
+app.include_router(screening.router, prefix="/api")
+app.include_router(prisma.router, prefix="/api")
+app.include_router(searches.router, prefix="/api")
+app.include_router(seeds.router, prefix="/api")
+app.include_router(members.router, prefix="/api")
 app.include_router(sources.router, prefix="/api")
-app.include_router(claims.router, prefix="/api")
 app.include_router(research_runs.router, prefix="/api")
-app.include_router(analysis.router, prefix="/api")
-app.include_router(literature_review.router, prefix="/api")
 
 
 @app.middleware("http")
@@ -72,6 +82,10 @@ async def security_headers(request, call_next):
             "Content-Security-Policy",
             "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; connect-src 'self'; style-src 'self'; script-src 'self'",
         )
+    # The page and its assets are unversioned, so browsers must revalidate them on every load (unchanged files
+    # cost a 304); otherwise a new index.html can run against a cached old styles.css/app.js after a deploy.
+    if request.url.path == "/" or request.url.path.startswith("/assets/"):
+        response.headers.setdefault("Cache-Control", "no-cache")
     return response
 
 
