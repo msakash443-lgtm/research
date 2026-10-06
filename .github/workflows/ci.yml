@@ -30,7 +30,7 @@ jobs:
 
     defaults:
       run:
-        working-directory: research
+        working-directory: ./
 
     steps:
     - uses: actions/checkout@v4
