@@ -27,6 +27,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import or_, select, update
+from sqlalchemy.exc import IntegrityError
 
 from app import audit
 from app.config import get_settings
@@ -74,8 +75,20 @@ def enqueue_task(
         blocked_by_gate=gate if waiting else None,
         idempotency_key=idempotency_key,
     )
-    db.add(task)
-    db.flush()
+    try:
+        # The lookup above is only an optimization: another request can insert the same
+        # key before this one reaches the database. Keep that unique-index conflict inside
+        # a savepoint so the caller's transaction stays usable.
+        with db.begin_nested():
+            db.add(task)
+            db.flush()
+    except IntegrityError:
+        if idempotency_key is None:
+            raise
+        existing = db.scalar(select(Task).where(Task.project_id == project_id, Task.idempotency_key == idempotency_key))
+        if existing is None:
+            raise
+        return existing
     if waiting:
         audit.record(
             db, actor=actor, action="task.blocked", project_id=project_id,

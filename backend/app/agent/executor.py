@@ -7,7 +7,8 @@ import re
 import uuid
 from typing import Any
 
-from sqlalchemy import case, select
+from sqlalchemy import case, select, text as _text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from app import audit
@@ -178,19 +179,39 @@ def _ingest_arc_sources(db, project: Project, run: ResearchRun, settings) -> dic
             metadata_verified=False,
             created_by=audit.AGENT_ARC_RETRIEVAL,
         )
-        db.add(source)
-        db.flush()
-        if item.excerpt:
-            content = _compact(item.excerpt, MAX_EXCERPT_CHARS_PER_SOURCE)
-            db.add(
-                SourceExcerpt(
-                    source_id=source.id,
-                    content=content,
-                    locator=item.locator,
-                    content_hash=excerpt_hash(content),
-                    created_by=audit.AGENT_ARC_RETRIEVAL,
+        sp = f"arc_ingest_{new_sources}"
+        db.execute(_text(f"SAVEPOINT {sp}"))
+        try:
+            db.add(source)
+            db.flush()
+            if item.excerpt:
+                content = _compact(item.excerpt, MAX_EXCERPT_CHARS_PER_SOURCE)
+                db.add(
+                    SourceExcerpt(
+                        source_id=source.id,
+                        content=content,
+                        locator=item.locator,
+                        content_hash=excerpt_hash(content),
+                        created_by=audit.AGENT_ARC_RETRIEVAL,
+                    )
                 )
+                db.flush()
+            db.execute(_text(f"RELEASE SAVEPOINT {sp}"))
+        except IntegrityError:
+            db.execute(_text(f"ROLLBACK TO SAVEPOINT {sp}"))
+            db.execute(_text(f"RELEASE SAVEPOINT {sp}"))
+            existing = db.scalar(
+                select(Source).where(Source.project_id == project.id, Source.ingest_key == ingest_key)
             )
+            if existing is None:
+                raise
+            if existing.url:
+                existing_urls.add(existing.url)
+            if existing.doi:
+                existing_dois.add(existing.doi)
+            existing_keys.add(ingest_key)
+            added += 1
+            continue
         if item.url:
             existing_urls.add(item.url)
         if item.doi:
