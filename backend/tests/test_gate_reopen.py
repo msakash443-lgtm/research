@@ -232,3 +232,39 @@ def test_reopening_leaves_tasks_of_other_gates_and_other_projects_alone(team, g2
     with SessionLocal() as db:
         assert db.get(Task, theirs_id).status == TaskStatus.queued
         assert db.get(Task, ungated_id).status == TaskStatus.queued
+
+
+# ---- serialisation (M0.5.13) -----------------------------------------------------------------------
+
+@pytest.mark.parametrize("verb, code, setup", [
+    ("approve", "G2", ("G1",)),
+    ("reject", "G2", ("G1",)),
+    ("reopen", "G2", ("G1", "G2")),
+])
+def test_every_gate_change_locks_the_project_before_reading_the_gates(team, monkeypatch, verb, code, setup):
+    """Decide and reopen both check *other* gates (ordering / later approvals), so each must hold the
+    project row lock before that read; otherwise, on PostgreSQL, a reopen of G1 and an approval of G2
+    can both commit and leave G2 approved behind a pending G1. SQLite ignores FOR UPDATE, so this
+    checks the order of calls rather than racing two connections."""
+    from sqlalchemy.orm import Session
+
+    from app.routers import gates as gates_router
+
+    _approve(team, *setup)
+    events = []
+    real_refresh, real_ensure = Session.refresh, gates_router.ensure_gates
+
+    def refresh(self, instance, *args, **kwargs):
+        if isinstance(instance, Project) and kwargs.get("with_for_update"):
+            events.append("lock")
+        return real_refresh(self, instance, *args, **kwargs)
+
+    def ensure(db, project):
+        events.append("read gates")
+        return real_ensure(db, project)
+
+    monkeypatch.setattr(Session, "refresh", refresh)
+    monkeypatch.setattr(gates_router, "ensure_gates", ensure)
+    body = {"reason": "Scope changed"} if verb == "reopen" else {"note": "Not yet"}
+    assert _post(team, "owner", code, verb, body).status_code == 200
+    assert events[:2] == ["lock", "read gates"]

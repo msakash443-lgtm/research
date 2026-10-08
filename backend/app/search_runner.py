@@ -42,6 +42,7 @@ from app.models import Project, SearchQuery
 from app.search_query import BooleanQuery
 from app.search_limits import DEFAULT_MAX_RESULTS, HARD_MAX_RESULTS
 from app.search_query_adapters import adapt
+from app.search_rerun import rerun_refusal
 
 PAGE_SIZE = 100
 
@@ -63,17 +64,24 @@ def _check(connector: Connector, max_results: int) -> None:
 
 
 def _collect(connector: Connector, text: str, filters: dict[str, Any], max_results: int):
-    """Page through results. Returns (records, reported_total, truncated)."""
+    """Page through results. Returns (records, reported_total, truncated).
+
+    A connector whose `search` is relevance-only may offer `boolean_search`, which applies the
+    adapter's Boolean string as written (Semantic Scholar bulk search, M1.5.5); it is used when present.
+    """
+    search = getattr(connector, "boolean_search", None) or connector.search
     records: list[PaperRecord] = []
     cursor: str | None = None
     total: int | None = None
     while True:
-        page = connector.search(
+        page = search(
             SearchRequest(query=text, limit=min(PAGE_SIZE, max_results - len(records)), cursor=cursor, filters=filters)
         )
         if total is None:
             total = page.total
         records.extend(page.records)
+        if len(records) > max_results:  # a page may hold more than asked for (S2 bulk pages hold 1,000)
+            return records[:max_results], total, True
         if not page.records or page.next_cursor is None:
             return records, total, False
         if len(records) >= max_results:
@@ -224,6 +232,9 @@ def rerun_search(
         raise SearchError("Unknown search")
     if latest.database != connector.name:
         raise SearchError(f"Search was run on '{latest.database}', not '{connector.name}'")
+    refusal = rerun_refusal(latest)
+    if refusal:
+        raise SearchError(refusal)
     return _execute(
         db,
         project=project,

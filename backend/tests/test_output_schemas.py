@@ -29,6 +29,7 @@ def test_an_abstention_with_a_reason_and_no_answer_is_accepted():
     {**OK, "confidence": 1.5},
     {**OK, "answer": ""},
     {**OK, "answer": None},
+    {**OK, "answer": "  \n\t "},
     {**OK, "insufficient_evidence": {"insufficient": False, "reason": "but unsure"}},
     {**ABSTAIN, "insufficient_evidence": {"insufficient": True, "reason": "   "}},
     {**ABSTAIN, "answer": "I think it helped anyway."},

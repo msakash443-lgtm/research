@@ -18,7 +18,11 @@ yet, which is why wildcard use is flagged for the services where it is not clear
 * arxiv            `search_query=` accepts `all:"phrase"` terms with AND / OR and parentheses.
 * pubmed           `"phrase"[tiab]` field-tagged terms (title/abstract) with AND / OR; the tag
                    stops PubMed's automatic term mapping from widening the search.
-* semantic_scholar `/paper/search` is plain-text relevance search with no operators.
+* core             `q=` accepts uppercase AND / OR with quotes and parentheses, but searches full
+                   text as well as title and abstract, so it matches more widely (caveat).
+* semantic_scholar bulk search (`/paper/search/bulk`) over title and abstract: `+` AND, `|` OR,
+                   quoted phrases, `*` prefix. (Its relevance search has no operators; searches
+                   use the bulk endpoint, `SemanticScholarConnector.boolean_search`.)
 * crossref         `query=` is free text relevance search with no operators.
 
 Filters (year, document type, ...) are not part of the string; they travel in
@@ -81,13 +85,22 @@ def pubmed(query: BooleanQuery) -> AdaptedQuery:
     return AdaptedQuery("pubmed", _join(query, lambda t: _quoted(t) + "[tiab]"), exact=True)
 
 
+CORE_FULLTEXT = (
+    "CORE searches the full text as well as titles and abstracts, so a term found anywhere in a paper "
+    "matches; expect more, and less focused, results than a title/abstract search."
+)
+
+
+def core(query: BooleanQuery) -> AdaptedQuery:
+    caveats = (CORE_FULLTEXT,) + ((WILDCARD_UNVERIFIED.replace("this database", "CORE"),) if _has_wildcard(query) else ())
+    return AdaptedQuery("core", _join(query, _quoted), exact=False, caveats=caveats)
+
+
 def semantic_scholar(query: BooleanQuery) -> AdaptedQuery:
-    caveat = (
-        "Semantic Scholar relevance search has no Boolean operators: the terms are searched together "
-        "and ranked by similarity, not filtered by your concept blocks. Screen results accordingly."
-    )
-    caveats = (caveat,) + ((WILDCARD_UNVERIFIED.replace("this database", "Semantic Scholar"),) if _has_wildcard(query) else ())
-    return AdaptedQuery("semantic_scholar", _flat(query.blocks), exact=False, caveats=caveats)
+    # Bulk search syntax (M1.5.5): `+` is AND, `|` is OR, quotes make a phrase, `*` a prefix match.
+    caveats = (WILDCARD_UNVERIFIED.replace("this database", "Semantic Scholar"),) if _has_wildcard(query) else ()
+    text = " + ".join("(" + " | ".join(_quoted(t) for t in b.terms) + ")" for b in query.blocks)
+    return AdaptedQuery("semantic_scholar", text, exact=not caveats, caveats=caveats)
 
 
 def crossref(query: BooleanQuery) -> AdaptedQuery:
@@ -104,6 +117,7 @@ ADAPTERS: dict[str, Callable[[BooleanQuery], AdaptedQuery]] = {
     "crossref": crossref,
     "arxiv": arxiv,
     "pubmed": pubmed,
+    "core": core,
 }
 
 

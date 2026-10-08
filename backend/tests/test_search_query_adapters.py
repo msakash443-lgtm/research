@@ -14,7 +14,14 @@ WILD = q(("employ*", "job search"), ("India",))
 
 
 def test_every_supported_database_has_an_adapter_and_the_set_is_pinned():
-    assert set(ADAPTERS) == {"openalex", "semantic_scholar", "crossref", "arxiv", "pubmed"}
+    assert set(ADAPTERS) == {"openalex", "semantic_scholar", "crossref", "arxiv", "pubmed", "core"}
+
+
+def test_core_keeps_the_boolean_string_but_says_it_searches_full_text():
+    a = adapt(BASIC, "core")
+    assert a.text == render(BASIC)
+    assert a.exact is False and "full text" in a.caveats[0]
+    assert any("Wildcard" in c for c in adapt(WILD, "core").caveats)
 
 
 def test_openalex_keeps_the_generic_boolean_string():
@@ -39,7 +46,7 @@ def test_pubmed_wildcards_stay_unquoted_before_the_tag():
     assert adapt(WILD, "pubmed").text == '(employ*[tiab] OR "job search"[tiab]) AND ("India"[tiab])'
 
 
-@pytest.mark.parametrize("database", ["semantic_scholar", "crossref"])
+@pytest.mark.parametrize("database", ["crossref"])
 def test_databases_without_boolean_logic_are_never_reported_as_exact(database):
     a = adapt(BASIC, database)
     assert a.exact is False
@@ -53,15 +60,18 @@ def test_flat_text_drops_duplicates_across_blocks_and_wildcard_stars():
     assert flat == "Women employ pay"
 
 
-@pytest.mark.parametrize("database", ["openalex", "arxiv"])
+@pytest.mark.parametrize("database", ["openalex", "arxiv", "semantic_scholar"])
 def test_wildcards_where_support_is_unverified_are_flagged_inexact(database):
     a = adapt(WILD, database)
     assert a.exact is False and any("Wildcard" in c for c in a.caveats)
     assert adapt(BASIC, database).exact is True  # only flagged when a wildcard is actually used
 
 
-def test_semantic_scholar_wildcard_adds_a_second_caveat():
-    assert len(adapt(WILD, "semantic_scholar").caveats) == 2
+def test_semantic_scholar_uses_bulk_search_syntax_and_is_exact():
+    a = adapt(BASIC, "semantic_scholar")
+    assert a.text == '("female labour" | "women\'s work") + ("India" | "South Asia")'
+    assert a.exact is True and a.caveats == ()
+    assert adapt(WILD, "semantic_scholar").text == '(employ* | "job search") + ("India")'
 
 
 def test_unknown_database_is_refused_listing_the_supported_ones():

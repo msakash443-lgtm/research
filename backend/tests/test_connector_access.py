@@ -61,6 +61,10 @@ def test_production_refuses_unknown_connector_names():
     assert Settings(**base, connectors_enabled=["openalex"]).connectors_enabled == ["openalex"]
     with pytest.raises(ValueError, match="unknown connector"):
         Settings(**base, connectors_enabled=["openalx"])
+    # CORE has no anonymous access, so enabling it without a key fails at start-up (M1.4.6).
+    with pytest.raises(ValueError, match="CORE_API_KEY"):
+        Settings(**base, connectors_enabled=["core"])
+    assert Settings(**base, connectors_enabled=["core"], core_api_key="k").connectors_enabled == ["core"]
 
 
 def test_api_lists_access_kind_and_state(settings, monkeypatch):
@@ -73,8 +77,8 @@ def test_api_lists_access_kind_and_state(settings, monkeypatch):
 
 
 def test_enabled_but_unimplemented_is_not_usable(settings, monkeypatch):
-    monkeypatch.setattr(settings, "connectors_enabled", ["pubmed"])
-    row = next(r for r in _client().get("/api/connectors").json() if r["name"] == "pubmed")
+    monkeypatch.setattr(settings, "connectors_enabled", ["scopus"])
+    row = next(r for r in _client().get("/api/connectors").json() if r["name"] == "scopus")
     assert row["enabled"] is True and row["implemented"] is False and row["usable"] is False
 
 

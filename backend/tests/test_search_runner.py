@@ -183,3 +183,62 @@ def test_inexact_adaptation_is_kept_with_the_record():
         assert row.exact is False and row.caveats
         again = rerun_search(db, project=project, actor="u", connector=FakeConnector([rec(1)]), search_id=row.search_id)
         assert again.exact is False and again.caveats == row.caveats
+
+
+class BulkConnector(FakeConnector):
+    """Relevance `search` plus a Boolean `boolean_search` whose pages ignore `limit` (like S2 bulk, M1.5.5)."""
+
+    name = "openalex"
+
+    def search(self, request: SearchRequest) -> SearchPage:
+        raise AssertionError("a search run must use boolean_search when the connector has it")
+
+    def boolean_search(self, request: SearchRequest) -> SearchPage:
+        self.requests.append(request)
+        start = int(request.cursor or 0)
+        chunk = self.records[start : start + self.page]  # the whole page, whatever the limit
+        nxt = start + len(chunk)
+        return SearchPage(records=tuple(chunk), total=len(self.records), next_cursor=str(nxt) if nxt < len(self.records) else None)
+
+
+def test_boolean_search_is_preferred_when_a_connector_offers_it():
+    db, project = setup()
+    with db:
+        conn = BulkConnector([rec(i) for i in range(5)], page=1000)
+        row = run_search(db, project=project, actor="u", connector=conn, query=QUERY, max_results=10)
+        assert row.counts["retrieved"] == 5 and row.counts["truncated"] is False and len(conn.requests) == 1
+
+
+def test_a_last_page_bigger_than_the_cap_is_cut_and_reported():
+    db, project = setup()
+    with db:
+        conn = BulkConnector([rec(i) for i in range(12)], page=1000)
+        row = run_search(db, project=project, actor="u", connector=conn, query=QUERY, max_results=4)
+        assert row.counts["retrieved"] == 4 and row.counts["truncated"] is True
+
+
+def _stored_s2(db, project, caveats, exact=False, text="remote work telework productivity"):
+    row = SearchQuery(project_id=project.id, search_id=uuid.uuid4(), database="semantic_scholar", query_string=text,
+                      filters={}, version=1, exact=exact, caveats=caveats, counts={"retrieved": 0}, results=[])
+    db.add(row)
+    db.flush()
+    return row
+
+
+def test_a_semantic_scholar_search_saved_before_bulk_search_is_not_rerun(monkeypatch):
+    from app.search_rerun import LEGACY_S2_CAVEAT, rerun_refusal
+
+    monkeypatch.setattr(get_settings(), "connectors_enabled", ["semantic_scholar"])
+    db, project = setup()
+    with db:
+        legacy = _stored_s2(db, project, [LEGACY_S2_CAVEAT + ": the terms are searched together and ranked by similarity."])
+        conn = BulkConnector([rec(1)])
+        conn.name = "semantic_scholar"
+        with pytest.raises(SearchError, match="Start a new search"):
+            rerun_search(db, project=project, actor="u", connector=conn, search_id=legacy.search_id)
+        assert conn.requests == []  # refused before any call
+
+        current = _stored_s2(db, project, [], exact=True, text='("remote work" | "telework") + ("productivity")')
+        assert rerun_refusal(current) is None
+        again = rerun_search(db, project=project, actor="u", connector=conn, search_id=current.search_id)
+        assert again.version == 2 and again.query_string == current.query_string

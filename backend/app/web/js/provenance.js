@@ -7,6 +7,7 @@ const AGENT_NAMES = {
   "agent:research-run": "AI agent (research run)",
   "agent:arc-retrieval": "Retrieval agent (ARC web/scholar search)",
   "agent:worker": "Background worker",
+  "agent:snowball": "Snowballing agent (citation chasing)",
 };
 
 export function actorName(ctx, actor) {

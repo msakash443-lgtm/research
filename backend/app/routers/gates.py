@@ -74,6 +74,9 @@ def decide_gate(
     role = project_role(db, project, user)
     if role not in required_roles(code):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Gate {code.value} cannot be decided by your role")
+    # Serialise with reopen and stage changes on PostgreSQL: the ordering check below reads the other gates,
+    # so a concurrent reopen of an earlier gate must not commit between that read and our write (M0.5.13).
+    db.refresh(project, with_for_update=True)
     gates = ensure_gates(db, project)
     gate = next(g for g in gates if g.code == code)
     if gate.status == GateStatus.approved:

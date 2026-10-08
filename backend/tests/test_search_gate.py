@@ -221,3 +221,20 @@ def test_only_the_gated_handler_runs_searches():
     )
     assert users == ["task_handlers.py"]
     assert "requires_gate=GateCode.G2" in (app_dir / "task_handlers.py").read_text(encoding="utf-8")
+
+
+def test_rerun_of_a_semantic_scholar_search_saved_before_bulk_search_is_refused(team, monkeypatch):
+    from app.search_rerun import LEGACY_S2_CAVEAT
+
+    monkeypatch.setattr(get_settings(), "connectors_enabled", ["openalex", "semantic_scholar"])
+    search_id = uuid.uuid4()
+    with SessionLocal() as db:
+        db.add(SearchQuery(project_id=uuid.UUID(team["pid"]), search_id=search_id, database="semantic_scholar",
+                           query_string="remote work telework productivity", filters={}, version=1, exact=False,
+                           caveats=[LEGACY_S2_CAVEAT + ": ranked by similarity."], counts={"retrieved": 0}, results=[]))
+        db.commit()
+    r = team["owner"].post(f"/api/projects/{team['pid']}/searches/{search_id}/rerun")
+    assert r.status_code == 409 and "Start a new search" in r.json()["detail"]
+    with SessionLocal() as db:
+        assert not [t for t in db.scalars(select(Task).where(Task.project_id == uuid.UUID(team["pid"])))
+                    if (t.payload or {}).get("search_id") == str(search_id)]

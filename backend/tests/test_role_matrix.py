@@ -45,6 +45,8 @@ MATRIX = [
     ("GET", "/api/projects/{p}/recall-report", ALL, 200),
     ("POST", "/api/projects/{p}/searches", WRITE, 202),  # queues only; gate G2 still blocks the run
     ("POST", "/api/projects/{p}/searches/{q}/rerun", WRITE, 202),
+    ("GET", "/api/projects/{p}/snowball", ALL, 200),
+    ("POST", "/api/projects/{p}/snowball", WRITE, 202),  # queues only; gate G2 still blocks the run
     ("GET", "/api/projects/{p}/research-runs", ALL, 200),
     ("POST", "/api/projects/{p}/research-runs", WRITE, 202),
     ("GET", "/api/projects/{p}/members", ALL, 200),
@@ -101,6 +103,7 @@ BODIES = {
     ("POST", "/api/projects/{p}/research-runs"): {"question": "A long enough question?"},
     ("POST", "/api/projects/{p}/seeds"): {"title": "Another seed paper", "doi": "10.1234/seedx"},
     ("POST", "/api/projects/{p}/searches"): {"database": "openalex", "blocks": [{"label": "a", "terms": ["remote work"]}]},
+    ("POST", "/api/projects/{p}/snowball"): {"connector": "openalex", "rounds": 1},
     ("POST", "/api/projects/{p}/gates/G1/reject"): {"note": "Needs a clearer scope"},
     ("POST", "/api/projects/{p}/gates/G1/reopen"): {"reason": "Scope needs another look"},
     ("POST", "/api/projects/{p}/clusters"): {"k": 2},

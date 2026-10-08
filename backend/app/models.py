@@ -222,6 +222,9 @@ class Source(Timestamped, Base):
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     verified_by: Mapped[str | None] = mapped_column(String(100))
     verification: Mapped[dict | None] = mapped_column(JSON)
+    # How an automated method found this source (M1.9.2), e.g. {"method": "snowball", "direction":
+    # "backward", "round": 1, "via": {"title": ...}}. System-set only; NULL for everything else.
+    found_via: Mapped[dict | None] = mapped_column(JSON)
     project: Mapped[Project] = relationship(back_populates="sources")
     excerpts: Mapped[list["SourceExcerpt"]] = relationship(
         back_populates="source", cascade="all, delete-orphan", order_by="SourceExcerpt.created_at"
@@ -361,6 +364,27 @@ class SearchQuery(Timestamped, Base):
     caveats: Mapped[list | None] = mapped_column(JSON)  # plain-language reasons it might not have
     counts: Mapped[dict | None] = mapped_column(JSON)  # retrieved / unique / duplicates_removed / ...
     results: Mapped[list | None] = mapped_column(JSON)  # one entry per unique record: id, doi, work key
+    created_by: Mapped[str | None] = mapped_column(String(100))
+
+
+class SnowballRun(Timestamped, Base):
+    """One completed citation-chasing run (spec 5.2.3, M1.9): where it started, how far it went, what it found.
+
+    Saved only when the run finished; a failed run leaves an audit event and no row (plan rule 22).
+    Sources it added carry `found_via.run_id` pointing here.
+    """
+
+    __tablename__ = "snowball_runs"
+    __table_args__ = (CheckConstraint("rounds >= 1", name="ck_snowball_run_rounds"),)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    connector: Mapped[str] = mapped_column(String(50))
+    directions: Mapped[list] = mapped_column(JSON)  # ["backward"] / ["forward"] / both
+    rounds: Mapped[int] = mapped_column()
+    caps: Mapped[dict] = mapped_column(JSON)  # max_per_paper / max_new
+    starts: Mapped[list] = mapped_column(JSON)  # the papers it started from, resolved or not
+    counts: Mapped[dict] = mapped_column(JSON)  # per round + totals; `capped` / truncated papers are recorded
+    run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     created_by: Mapped[str | None] = mapped_column(String(100))
 
 

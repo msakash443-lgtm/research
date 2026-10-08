@@ -120,6 +120,7 @@ class SourceRead(BaseModel):
     fulltext_path: str | None = None
     fulltext_access: dict | None = None
     quality_flags: list | None = None
+    found_via: dict | None = None  # how an automated method found it, e.g. snowballing (M1.9.2); system-set
     evidence_excerpt: str | None = None
     excerpt_locator: str | None = None
     created_at: datetime

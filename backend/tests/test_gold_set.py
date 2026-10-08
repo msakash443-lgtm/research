@@ -1,3 +1,6 @@
+import json
+
+import jsonschema
 import pytest
 
 from backend.tests.gold.loader import csv_to_gold_set, load_gold_set, HERE
@@ -21,5 +24,4 @@ def test_csv_roundtrip(tmp_path):
                  "a1,,T1,,Include,yes,on topic\n", encoding="utf-8")
     d = csv_to_gold_set(f, "t", "s")
     assert d["papers"][0]["label"] == "include" and d["papers"][0]["known_relevant"]
-    import jsonschema, json
     jsonschema.validate(d, json.loads((HERE / "gold_set.schema.json").read_text()))

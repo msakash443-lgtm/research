@@ -106,6 +106,7 @@ class QueueItem(BaseModel):
     year: int | None
     doi: str | None
     abstract: str | None  # untrusted text from a connector: show it as text only
+    found_via: dict | None = None  # e.g. snowballing: which paper, direction and round (M1.9.2)
     ai_suggestion: SuggestionRead | None  # a suggestion only; it never counts as a decision
 
 
@@ -151,7 +152,7 @@ def get_queue(
         items.append(
             QueueItem(
                 source_id=source.id, title=source.title, authors=source.authors, year=source.year, doi=source.doi,
-                abstract=source.abstract,
+                abstract=source.abstract, found_via=source.found_via,
                 ai_suggestion=SuggestionRead(decision=suggestion.decision, reason_code=suggestion.reason_code, confidence=suggestion.confidence, rationale=suggestion.note) if suggestion else None,
             )
         )
