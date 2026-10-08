@@ -184,7 +184,7 @@
 | G10 | Per manuscript section | M6.11 *(new)* | ″ | — | `[ ]` |
 | G11 | Before submission | M7.5 | ″ | — | `[ ]` |
 | all | Who may approve (role matrix) | M0.3.2, M0.3.4 | `project_access` role sets | `test_project_access.py`, `test_role_matrix.py` | `[x]` (human review X.30 `[!]`) |
-| all | Gates decided in order; reopen before the stage is reached | M0.5.10, M0.5.11, M0.5.13 | `decide_gate` 409 with `waiting_for`; `POST …/gates/{code}/reopen` | `test_gate_reopen.py` | M0.5.10, M0.5.11 `[?]`; M0.5.13 `[ ]` (concurrent reopen + later approval, found in review 2026-10-08) |
+| all | Gates decided in order; reopen before the stage is reached | M0.5.10, M0.5.11, M0.5.13 | `decide_gate` 409 with `waiting_for`; `POST …/gates/{code}/reopen` | `test_gate_reopen.py` | M0.5.10, M0.5.11, M0.5.13 `[?]` (M0.5.13: decide locks the project row like reopen; found in review 2026-10-08) |
 
 ### §9 Integrity and ethics
 | Requirement | Tasks | Tests | Status |
