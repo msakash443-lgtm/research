@@ -54,7 +54,7 @@ def test_the_request_to_the_model_uses_the_text_of_the_recorded_prompt_version(f
     system, user = (m["content"] for m in body["messages"])
     prompt = load_prompt(*executor.EVIDENCE_SYNTHESIS_PROMPT)
     assert system == prompt.system
-    assert user.startswith("Research question:\nA long enough question?") and user.endswith("then the most useful next step.")
+    assert user.startswith("Research question:\nA long enough question?") and user.endswith("Never guess to fill a gap.")
 
 
 def test_a_failed_model_call_still_records_which_prompt_and_model_were_used(fake_llm):

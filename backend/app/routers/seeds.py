@@ -4,13 +4,13 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import audit, known_items
+from app import audit, known_items, recall_report
 from app.database import get_db
 from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_access
 from app.doi import normalize_doi
@@ -114,3 +114,13 @@ def remove_seed(
 def known_item_check(project: Project = Depends(project_access(READ_ROLES)), db: Session = Depends(get_db)) -> dict[str, Any]:
     """Which seed papers the project's searches found, and which they missed (read-only)."""
     return known_items.check(db, project)
+
+
+@router.get("/recall-report")
+def gold_set_recall_report(
+    target: float = Query(default=recall_report.DEFAULT_TARGET, ge=0.5, le=1.0),
+    project: Project = Depends(project_access(READ_ROLES)),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Recall of the seed papers (the gold set) against the target, with why each missed one was missed."""
+    return recall_report.project_report(db, project, target)

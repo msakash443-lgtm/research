@@ -223,7 +223,8 @@ def test_an_advance_is_audited_with_who_moved_it_and_who_approved_the_gate(world
 def test_advancing_never_touches_gates_or_artifacts(world):
     _approve(world, "G1")
     with SessionLocal() as db:
-        db.add(Artifact(project_id=world["pid"], kind="x", ref_id="", stage=S.scoped, status=ArtifactStatus.stale, stale_reason="r"))
+        # A later stage's stale result: one at or before the target would block the advance (M0.5.9).
+        db.add(Artifact(project_id=world["pid"], kind="x", ref_id="", stage=S.synthesized, status=ArtifactStatus.stale, stale_reason="r"))
         db.commit()
     before = _snapshot(world)
 

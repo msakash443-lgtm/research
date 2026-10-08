@@ -77,6 +77,7 @@ class OpenAICompatibleLLM:
         model: str | None = None,
         timeout_seconds: float | None = None,
         require_api_key: bool = True,
+        meter: Any = None,
     ):
         self.settings = settings
         self._api_key = settings.llm_api_key if api_key is _UNSET else api_key
@@ -84,6 +85,7 @@ class OpenAICompatibleLLM:
         self._model = model if model is not None else settings.llm_model
         self._timeout_seconds = timeout_seconds if timeout_seconds is not None else settings.llm_timeout_seconds
         self._require_api_key = require_api_key
+        self._meter = meter  # optional: .before_call() may refuse, .after_call(model, response) records usage
 
     @classmethod
     def for_participant_data(cls, settings: Settings) -> "OpenAICompatibleLLM":
@@ -133,6 +135,8 @@ class OpenAICompatibleLLM:
             "temperature": 0.1,
             "max_tokens": 1800,
         }
+        if self._meter is not None:
+            self._meter.before_call()
         headers = {"Content-Type": "application/json"}
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key.get_secret_value()}"
@@ -146,6 +150,8 @@ class OpenAICompatibleLLM:
         except ValueError as exc:
             raise LLMResponseError("The configured LLM service returned invalid JSON.") from exc
 
+        if self._meter is not None:
+            self._meter.after_call(self._model, data)
         try:
             answer = _message_text(data["choices"][0]["message"]["content"])
         except (KeyError, IndexError, TypeError) as exc:

@@ -24,6 +24,7 @@ button:disabled { cursor:wait; opacity:.68; }
 #account-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:22vw; }
 .quiet-button { background:transparent; color:var(--navy); border:1px solid var(--line); }
 .quiet-button:hover { background:#f2f4f5; }
+a.quiet-button { display:inline-block; border-radius:7px; padding:10px 15px; font-weight:650; text-decoration:none; }
 .role-chip { background:var(--warm); padding:4px 10px; border-radius:999px; font-size:12px; font-weight:700; color:var(--navy); }
 
 .auth-screen { display:grid; place-items:center; min-height:calc(100vh - 70px); padding:30px; background:linear-gradient(135deg,#f8f8f4,#edf5f2); }
@@ -92,6 +93,12 @@ input:focus,textarea:focus,select:focus { outline:2px solid #b9dfd8; border-colo
 .evidence-excerpt,.source-locator,.empty-card p,.run-card p { color:var(--muted); line-height:1.55; margin:7px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; }
 .evidence-excerpt { border-left:3px solid #c8e4de; padding-left:11px; }
 .source-locator { font-size:13px; }
+.provenance-badge { display:grid; grid-template-columns:max-content minmax(0,1fr); gap:3px 12px; margin:10px 0 0; padding:9px 11px; border:1px solid var(--line); border-radius:6px; background:var(--warm); font-size:13px; }
+.provenance-badge dt { color:var(--muted); font-weight:650; }
+.provenance-badge dd { margin:0; color:var(--ink); overflow-wrap:anywhere; }
+.provenance-badge .approval-approved { color:var(--teal); font-weight:650; }
+.provenance-badge .approval-pending { color:#8a5a00; font-weight:650; }
+.provenance-badge .approval-stale { color:#a3332b; font-weight:650; }
 .context-kind { text-transform:uppercase; font-size:10px; letter-spacing:1px; color:var(--teal); font-weight:800; }
 .unverified-tag { display:inline-block; margin-left:6px; color:#87520c; }
 .verification-status { margin:4px 0 0; color:var(--muted); }
@@ -207,6 +214,19 @@ dialog .helper { margin:0; }
 .toast { position:fixed; left:50%; bottom:22px; transform:translate(-50%,10px); background:var(--navy); color:white; padding:12px 16px; border-radius:7px; box-shadow:var(--shadow); opacity:0; transition:.2s; pointer-events:none; z-index:50; }
 .toast.show { opacity:1; transform:translate(-50%,0); }
 
+/* Quick capture (X.31.1). */
+.dialog-tabs { display:flex; gap:8px; }
+.tab-button { background:transparent; color:var(--muted); border:1px solid var(--line); border-radius:999px; padding:6px 14px; font-size:13px; }
+.tab-button.active { background:var(--navy); color:white; border-color:var(--navy); }
+.checkbox-field { display:flex; flex-direction:row; align-items:center; gap:8px; font-weight:500; }
+.checkbox-field input { width:auto; }
+.notes-list { padding:0 28px 28px; display:grid; gap:14px; max-height:60vh; overflow-y:auto; }
+.note-row { border:1px solid var(--line); border-radius:9px; padding:14px; display:grid; gap:6px; }
+.note-row-head { display:flex; gap:8px; align-items:center; }
+.note-kind-badge,.note-status-badge { font-size:11px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; padding:2px 8px; border-radius:999px; background:var(--warm); color:var(--navy); }
+.note-row-body { margin:0; white-space:pre-wrap; }
+.note-row .small { justify-self:start; padding:6px 11px; font-size:13px; }
+
 /* Desktop: the memory sidebar can be collapsed to a two-column layout. */
 @media (min-width:1280px) {
   body.memory-collapsed .workspace { grid-template-columns:248px minmax(0,1fr); }
@@ -253,6 +273,9 @@ dialog .helper { margin:0; }
   .panel h2,.section-title h2 { font-size:20px; }
   .section-title { flex-wrap:wrap; align-items:start; gap:12px; }
   .section-title button { width:100%; }
+  .section-title .source-actions button { width:auto; }
+  .panel { min-width:0; }
+  #activity-table { display:block; max-width:100%; overflow-x:auto; }
   .form-grid { grid-template-columns:1fr; }
   .full-width { grid-column:auto; }
   .form-actions { align-items:stretch; flex-direction:column; }

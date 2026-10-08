@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wireframe Walkthrough</title>
+<link rel="stylesheet" href="wireframe.css">
+</head>
+<body>
+<div class="wf-banner"><span><strong>WIREFRAMES</strong> · X.14 · static prototypes with invented data · not connected to the app · nothing is saved</span></div>
+<main class="doc">
+  <p class="muted small">Research AI · plan.md task X.14 · drafted 7 Oct 2026</p>
+  <h1>Wireframe walkthrough</h1>
+  <p>Three screens are drafted here <strong>before</strong> anyone builds them (plan.md rule 32). Each one is clickable: the buttons, keyboard shortcuts and approvals work, but the papers and text are invented and nothing is saved. Reload a page to start it over.</p>
+  <p>For each screen we want to hear, in your own words, three things:</p>
+  <ol>
+    <li><strong>Where do I approve?</strong></li>
+    <li><strong>Where do I see the source?</strong></li>
+    <li><strong>How do I go back?</strong></li>
+  </ol>
+  <p>The orange <span class="pin">Q1</span> pins mark the other open questions; they are listed at the bottom of each screen. Untick "Show walkthrough questions" to see the screen without them. "View as" in the dark bar switches between the owner and the supervisor, so you can see who approves what.</p>
+
+  <div class="cards">
+    <a class="card" href="screening-queue.html"><strong>1 · Screening queue</strong>Title/abstract screening by keyboard, the AI's suggestion with its reason, the AI-exclude audit, a reviewer conflict, and the G3 approval. <span class="muted small">Before M2.3</span></a>
+    <a class="card" href="evidence-table.html"><strong>2 · Evidence table</strong>Papers × fields. Every cell opens its quote on the page it came from. Check, correct or mark "not reported", then G4. <span class="muted small">Before M3.5 / M3.6</span></a>
+    <a class="card" href="claim-evidence-panel.html"><strong>3 · Claim–evidence panel</strong>A draft section where each sentence shows what supports it, export is blocked on gaps, and each section gets its own G10 approval. <span class="muted small">Before M6.2</span></a>
+  </div>
+
+  <h2>Suggested tasks (about 20 minutes)</h2>
+  <p class="muted small">Think aloud while you do them. The person taking notes should not help unless you are stuck for more than a minute; being stuck is a finding.</p>
+  <ol>
+    <li><strong>Screening.</strong> Screen the first three records using only the keyboard. Exclude one and give a reason. Then change your mind about the last one. Find out why the AI suggested "maybe" for the telework/household record. Look at where the editorial was found. Finish the queue and the audit, resolve the conflict, and get G3 approved.</li>
+    <li><strong>Evidence table.</strong> Find the sample size of the Das &amp; Varghese study and check it against the paper. Find the cell whose quote isn't in the paper and fix it. Get G4 approved.</li>
+    <li><strong>Claim–evidence.</strong> Find the sentence that would stop the export and fix it. Give the sentence about "who gets remote-capable jobs" its evidence. Open one piece of evidence in the evidence table, then come back to the same sentence. Approve the section.</li>
+  </ol>
+  <p>Notes go into the findings table in <code>docs/wireframes/README.md</code>, then into the next milestone report.</p>
+</main>
+<script src="wireframe.js"></script>
+</body>
+</html>

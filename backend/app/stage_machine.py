@@ -6,7 +6,8 @@
 
 One step at a time. Reaching a stage that has a gate needs that gate approved by a person; the same
 function serves the API and system producers, and a producer can advance an ungated stage but can never
-satisfy a gate (only `decide_gate` approves). Going back is `artifacts.reenter_stage`.
+satisfy a gate (only `decide_gate` approves). Going back is `artifacts.reenter_stage`; after a re-entry the
+project can't move into or past a stage whose results are still stale until each is replaced (plan M0.5.9).
 
 `advance_stage` is not idempotent on its own (each call is one more step); callers that may retry pass the
 target stage, so a repeated request is refused instead of moving twice.
@@ -19,9 +20,9 @@ from dataclasses import dataclass
 from sqlalchemy.orm import Session
 
 from app import audit
-from app.artifacts import STAGE_ORDER, StageError, gate_for_stage
+from app.artifacts import STAGE_ORDER, StageError, gate_for_stage, unreplaced_stale
 from app.gates import ensure_gates, required_roles
-from app.models import GateCode, GateStatus, Project, ProjectRole, ProjectStage
+from app.models import Artifact, GateCode, GateStatus, Project, ProjectRole, ProjectStage
 
 
 class GateNotApproved(StageError):
@@ -31,6 +32,18 @@ class GateNotApproved(StageError):
         self.target, self.gate, self.gate_status, self.roles = target, gate, gate_status, roles
         names = " or ".join(sorted(r.value for r in roles))
         super().__init__(f"Gate {gate.value} must be approved by an {names} before the project can reach '{target.value}'")
+
+
+class StaleResults(StageError):
+    """Results of the target stage, or of one before it, went stale on a re-entry and haven't been replaced."""
+
+    def __init__(self, target: ProjectStage, artifacts: list[Artifact]):
+        self.target, self.artifacts = target, artifacts
+        stages = ", ".join(dict.fromkeys(f"'{a.stage.value}'" for a in artifacts))
+        super().__init__(
+            f"{len(artifacts)} result(s) from {stages} are stale since a re-entry and haven't been redone; "
+            f"redo them before the project can reach '{target.value}'"
+        )
 
 
 @dataclass
@@ -65,7 +78,8 @@ def next_options(db: Session, project: Project) -> list[StageOption]:
     for target in allowed_next(project.stage):
         code = gate_for_stage(target)
         gate_status = gates[code].status if code else None
-        options.append(StageOption(target, code, gate_status, ready=code is None or gate_status == GateStatus.approved))
+        gate_ok = code is None or gate_status == GateStatus.approved
+        options.append(StageOption(target, code, gate_status, ready=gate_ok and not unreplaced_stale(db, project, target)))
     return options
 
 
@@ -83,6 +97,10 @@ def advance_stage(db: Session, project: Project, target: ProjectStage | None = N
         raise StageError(
             f"'{target.value}' does not follow '{current.value}'; next is " + " or ".join(f"'{c.value}'" for c in choices)
         )
+
+    stale = unreplaced_stale(db, project, target)
+    if stale:
+        raise StaleResults(target, stale)
 
     code = gate_for_stage(target)
     decided_by = None

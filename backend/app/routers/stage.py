@@ -115,6 +115,15 @@ def advance_stage(
                 "required_roles": sorted(r.value for r in exc.roles),
             },
         ) from exc
+    except stage_machine.StaleResults as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": str(exc),
+                "stale_artifacts": [ArtifactRead.model_validate(a).model_dump(mode="json") for a in exc.artifacts],
+            },
+        ) from exc
     except art.StageError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc

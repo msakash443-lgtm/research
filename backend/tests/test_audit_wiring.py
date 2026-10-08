@@ -1,5 +1,4 @@
 import uuid
-from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select, text
@@ -10,8 +9,7 @@ from app.agent.llm import LLMResponseError, OpenAICompatibleLLM
 from app.config import get_settings
 from app.database import SessionLocal
 from app.main import app
-from app.models import AuditEvent, Project, ResearchRun, ResearchRunStatus, User
-from app.worker import reap_stale_runs
+from app.models import AuditEvent, Project, ResearchRun, User
 
 
 def _login(email):
@@ -88,11 +86,11 @@ def test_research_run_events_record_the_agent_and_model(fake_llm):
 
 
 def test_failed_run_is_recorded_loudly(monkeypatch):
-    def fail(self, system, user):
+    def fail(self, system, user, schema, max_attempts=None):
         raise LLMResponseError("provider unavailable")
 
     monkeypatch.setattr(get_settings(), "llm_model", "test-model")
-    monkeypatch.setattr(OpenAICompatibleLLM, "complete", fail)
+    monkeypatch.setattr(OpenAICompatibleLLM, "complete_json", fail)
     client, _ = _login("audit-fail@example.com")
     project_id = client.post("/api/projects", json={"title": "Fails"}).json()["id"]
     client.post(f"/api/projects/{project_id}/sources", json={"title": "S", "evidence_excerpt": "text"})
@@ -117,27 +115,3 @@ def test_arc_ingest_is_recorded_as_unverified(monkeypatch):
     assert retrieved[2]["added"] == 1 and retrieved[2]["verified"] is False
 
 
-def test_reaper_records_requeue_and_abandon():
-    settings = get_settings()
-    old = datetime.now(timezone.utc) - timedelta(seconds=settings.research_run_lease_seconds + 60)
-    with SessionLocal() as db:
-        user = User(email=f"audit-reap-{uuid.uuid4().hex}@example.test")
-        db.add(user)
-        db.flush()
-        project = Project(owner_id=user.id, title="Reap")
-        db.add(project)
-        db.flush()
-        for attempts in (1, settings.research_run_max_attempts):
-            db.add(
-                ResearchRun(
-                    project_id=project.id, question="q", status=ResearchRunStatus.running,
-                    started_at=old, attempt_count=attempts,
-                )
-            )
-        db.commit()
-        project_id = str(project.id)
-
-    assert reap_stale_runs() == 2
-
-    actions = {e[0]: e[1] for e in _events(project_id)}
-    assert actions == {"research_run.requeued": "agent:worker", "research_run.abandoned": "agent:worker"}

@@ -1,0 +1,21 @@
+# Prompt: synonym_suggestions, version 1 (plan M1.5.3).
+#
+# The model PROPOSES alternative search terms for one concept; the scholar edits and accepts them.
+# Nothing here searches, saves or approves anything. Terms come from the scholar, not from retrieved
+# text, but the reply is still validated, filtered and length-limited by app/synonym_suggest.py.
+#
+# PUBLISHED VERSIONS ARE IMMUTABLE. To change this wording, add `synonym_suggestions.v2.toml`.
+name = "synonym_suggestions"
+version = 1
+description = "Propose additional search terms (synonyms, spelling variants, acronyms) for one concept block."
+placeholders = ["concept", "terms", "question"]
+
+system = '''You help a researcher widen a literature search. For ONE concept you are given the terms already in use. Propose additional terms a database search should also try: synonyms, near-synonyms, spelling and regional variants, acronyms and their expansions, and common older or newer names for the same idea. Rules: every term must name the same concept, not a broader or narrower one; plain words only (no quotes, brackets, Boolean operators or wildcards); at most 4 words per term; do not repeat any term already in use; do not invent jargon you are not sure exists; prefer fewer good terms over many doubtful ones. For each term give a short reason (one sentence). Reply with ONE JSON object and nothing else: {"suggestions": [{"term": "...", "reason": "..."}]}. If you have no confident additions, reply {"suggestions": []}.'''
+
+user = '''Research question (context only):
+${question}
+
+Concept: ${concept}
+Terms already in use: ${terms}
+
+Propose additional terms for this concept.'''

@@ -8,12 +8,15 @@ import uuid
 from typing import Any
 
 from sqlalchemy import case, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from app import audit
 from app.agent.arc_client import ArcRetrievalClient, ArcRetrievalError
 from app.agent.context import select_agent_context
 from app.agent.llm import LLMConfigurationError, LLMResponseError, OpenAICompatibleLLM
+from app.llm_usage import ProjectMeter
+from app.output_schemas import EVIDENCE_SYNTHESIS_SCHEMA
 from app.prompt_registry import Prompt, load_prompt
 from app.answer_guard import check_answer
 from app.untrusted_text import clean_untrusted
@@ -112,7 +115,7 @@ def _citation_problem(answer: str, sources: list[dict[str, Any]]) -> tuple[int, 
 
 # The exact prompt every research run uses. Changing wording means adding a new version file
 # and moving this pin on purpose; the version is stored with each answer.
-EVIDENCE_SYNTHESIS_PROMPT = ("evidence_synthesis", 3)  # v3 states verification explicitly (M1.10.5)
+EVIDENCE_SYNTHESIS_PROMPT = ("evidence_synthesis", 4)  # v4: structured reply with confidence + abstention (M0.8.6)
 
 
 def _item_identity_hash(item) -> str:
@@ -178,19 +181,25 @@ def _ingest_arc_sources(db, project: Project, run: ResearchRun, settings) -> dic
             metadata_verified=False,
             created_by=audit.AGENT_ARC_RETRIEVAL,
         )
-        db.add(source)
-        db.flush()
-        if item.excerpt:
-            content = _compact(item.excerpt, MAX_EXCERPT_CHARS_PER_SOURCE)
-            db.add(
-                SourceExcerpt(
-                    source_id=source.id,
-                    content=content,
-                    locator=item.locator,
-                    content_hash=excerpt_hash(content),
-                    created_by=audit.AGENT_ARC_RETRIEVAL,
-                )
-            )
+        try:
+            with db.begin_nested():  # savepoint: a concurrent attempt storing the same item loses only this item
+                db.add(source)
+                db.flush()
+                if item.excerpt:
+                    content = _compact(item.excerpt, MAX_EXCERPT_CHARS_PER_SOURCE)
+                    db.add(
+                        SourceExcerpt(
+                            source_id=source.id,
+                            content=content,
+                            locator=item.locator,
+                            content_hash=excerpt_hash(content),
+                            created_by=audit.AGENT_ARC_RETRIEVAL,
+                        )
+                    )
+        except IntegrityError:
+            existing_keys.add(ingest_key)
+            added += 1  # the other attempt's row counts toward the cap
+            continue
         if item.url:
             existing_urls.add(item.url)
         if item.doi:
@@ -376,19 +385,27 @@ def execute_research_run(run_id: str | uuid.UUID) -> None:
         evidence_sources = [source for source in source_snapshot if source["excerpt"]]
         if not sources:
             run.status = ResearchRunStatus.needs_sources
-            run.answer = "No sources are saved for this project yet. Add primary or official sources and a short evidence excerpt, then run the question again."
+            run.answer = None
+            run.error_message = "No sources are saved for this project yet. Add primary or official sources and a short evidence excerpt, then run the question again."
         elif not evidence_sources:
             run.status = ResearchRunStatus.needs_sources
-            run.answer = "Your project has sources, but no evidence excerpts. Add a short quotation or data note with a page/table locator so the agent can make a verifiable synthesis."
+            run.answer = None
+            run.error_message = "Your project has sources, but no evidence excerpts. Add a short quotation or data note with a page/table locator so the agent can make a verifiable synthesis."
         else:
             # Record the model before calling it, so failed attempts show which model was used.
             prompt = load_prompt(*EVIDENCE_SYNTHESIS_PROMPT)
             run.provider_model = settings.llm_model
             run.prompt_version = prompt.ref
+            # Don't hold a write transaction (e.g. retrieved sources) across the model call: the usage
+            # meter writes in its own session, and on SQLite that write would wait on our lock.
+            db.commit()
             try:
                 nonce = secrets.token_hex(8)
                 system_prompt, user_prompt = _agent_prompts(prompt, run, context, source_snapshot, nonce=nonce)
-                answer = OpenAICompatibleLLM(settings).complete(system_prompt, user_prompt)
+                reply = OpenAICompatibleLLM(settings, meter=ProjectMeter(run.project_id, settings, purpose="research_run", run_id=run.id)).complete_json(system_prompt, user_prompt, EVIDENCE_SYNTHESIS_SCHEMA)
+                abstained = bool(reply["insufficient_evidence"]["insufficient"])
+                # Both the answer and an abstention reason are model text: check whichever is stored.
+                answer = reply["insufficient_evidence"]["reason"] if abstained else reply["answer"]
                 leaked = check_answer(answer, system_prompt=system_prompt, nonce=nonce)
                 bad_citation = None if leaked else _citation_problem(answer, source_snapshot)
                 if leaked:
@@ -424,7 +441,11 @@ def execute_research_run(run_id: str | uuid.UUID) -> None:
                         model_id=run.provider_model, prompt_version=run.prompt_version,
                     )
                 else:
-                    run.answer = answer
+                    # An abstention keeps its reason out of `answer`, so `answer` only ever holds an answer.
+                    run.answer = None if abstained else answer
+                    run.insufficient_evidence = abstained
+                    run.insufficient_reason = answer if abstained else None
+                    run.confidence = float(reply["confidence"])
                     run.status = ResearchRunStatus.completed
                     # A finished synthesis is an artifact: re-entering an earlier stage later marks it stale.
                     register_artifact(

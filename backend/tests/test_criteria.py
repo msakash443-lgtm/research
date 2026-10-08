@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
+from gate_helpers import approve_earlier_gates
 from app.criteria import FRAMEWORKS
 from app.database import SessionLocal
 from app.main import app
@@ -28,6 +29,7 @@ def world():
             db.add(ProjectMember(project_id=uuid.UUID(pid), user_id=uuid.UUID(uid), role=ProjectRole(role)))
             db.commit()
         others[role] = client
+    approve_earlier_gates(pid, "G2")  # G1; gates go in order (M0.5.10)
     return {"owner": owner, "pid": pid, **others}
 
 

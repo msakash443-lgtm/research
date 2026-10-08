@@ -110,8 +110,6 @@ The application refuses to start in production (`ENVIRONMENT=production`) if:
 - the Google OAuth client id or secret is missing;
 - `ARC_RETRIEVAL_ENABLED=true` and `ARC_RETRIEVAL_BASE_URL` is not `https://`, or `ARC_RETRIEVAL_TOKEN` is shorter than 16 characters.
 
-`RESEARCH_RUN_LEASE_SECONDS` and `RESEARCH_RUN_MAX_ATTEMPTS` (commented out in `.env.example`) belong to the old run queue. The current worker does not read them; they go away with that code (plan M0.6.6). Use the `TASK_*` settings instead.
-
 ### Secrets
 
 | Secret | Needed by | Notes |

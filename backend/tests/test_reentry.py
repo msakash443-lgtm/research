@@ -9,6 +9,7 @@ from sqlalchemy import select
 from app import artifacts as art
 from app import task_queue as q
 from app import task_registry as registry
+from gate_helpers import approve_earlier_gates
 from app.database import SessionLocal
 from app.main import app
 from app.models import (
@@ -64,6 +65,7 @@ def _reenter(world, target, reason="Rework needed", who="owner"):
 
 
 def _approve(world, code):
+    approve_earlier_gates(world["project"], code)  # gates go in order (M0.5.10)
     return world["clients"]["owner"].post(f"/api/projects/{world['project']}/gates/{code}/approve", json={"note": "ok"})
 
 

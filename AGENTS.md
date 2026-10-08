@@ -1,5 +1,7 @@
 # Repository Guidelines
 
+> **Read first, any tool or person:** before editing code, read `plan.md` §1 and §1.8, claim one task by hand-editing its line (`[~]`, `owner: @you`, `since: <date>`) and saving `plan.md`, then work. Append one Work Log line at the end. Commits are manual, made by the developer: leave changes in the working tree with a suggested message; never commit/push/stash/reset unless the user asks. This file is the canonical copy; `CLAUDE.md` repeats it for Claude Code.
+
 ## Project Overview
 
 A research-automation platform for literature review / evidence synthesis. Per `docs/research-automation-spec.md`, the goal is to "automate the repeatable, high-volume work of research (searching, screening, extracting, organizing, formatting, tracking) so the scholar can spend time on judgment-heavy work." Core design stance: the system is modeled on how a research scholar thinks — every module maps to a scholarly decision, produces an auditable artifact, and **the human stays the accountable author** (AI proposes, human decides; every consequential step has an approval gate).
@@ -163,3 +165,4 @@ This repo is driven by `plan.md`, the single living task plan — read it before
 5. Discovered work goes into `plan.md` as a new task, not into your diff — don't silently expand scope.
 6. `[x]` only after `pytest -q` passes from the repo root `research-main/` and the test baseline hasn't regressed; **no self-review** for P0/P1 — a different agent/developer moves `[?]` → `[x]`.
 7. Append one line to `plan.md`'s Work Log per session.
+8. Follow `plan.md` §1.8 (rules 33–46) for local task choosing, execution and git: the working tree is shared and often dirty, so never revert or clean changes you didn't make, and never commit, push, branch, stash or reset unless the user explicitly asks for that action. All branch work reaches `main` through one reviewed PR per task, following rules 47–56.

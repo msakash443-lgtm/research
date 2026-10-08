@@ -16,14 +16,17 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import audit
+from app.agent.llm import LLMConfigurationError, LLMResponseError, OpenAICompatibleLLM
 from app.config import get_settings
 from app.connectors.access import is_enabled
 from app.connectors.factory import SEARCHABLE
-from app.database import get_db
+from app.database import SessionLocal, get_db
 from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_access
 from app.models import Project, SearchQuery, Task, TaskStatus, User
 from app.search_query import BooleanQuery, ConceptBlock, QueryError
 from app.search_query_adapters import adapt
+from app.llm_usage import ProjectMeter
+from app.synonym_suggest import SuggestionError, suggest_synonyms
 from app.search_limits import DEFAULT_MAX_RESULTS, HARD_MAX_RESULTS
 from app.task_handlers import SEARCH_RUN
 from app.task_queue import enqueue_task
@@ -145,3 +148,51 @@ def list_searches(project: Project = Depends(project_access(READ_ROLES)), db: Se
         for t in _open_tasks(db, project)
     ]
     return {"searches": list(searches.values()), "pending": pending}
+
+
+class SynonymRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    block: ConceptBlock
+
+
+class SynonymProposal(BaseModel):
+    term: str
+    reason: str
+
+
+class SynonymSuggestions(BaseModel):
+    proposals: list[SynonymProposal]
+    dropped: int
+    model_id: str
+    prompt_version: str
+    note: str = "Proposals only: nothing has been added to your search. Edit, then add the terms you want."
+
+
+@router.post("/suggest-synonyms", response_model=SynonymSuggestions)
+def suggest_search_synonyms(
+    body: SynonymRequest,
+    project: Project = Depends(project_access(WRITE_ROLES)),
+    user: User = Depends(current_user),
+):
+    """Ask the model for extra terms for one concept. Proposals only: nothing is saved or searched."""
+    settings = get_settings()
+    llm = OpenAICompatibleLLM(settings, meter=ProjectMeter(project.id, settings, purpose="synonyms"))
+    try:
+        result = suggest_synonyms(llm, body.block, project.title)
+    except LLMConfigurationError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    except (LLMResponseError, SuggestionError) as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    # Its own short transaction: a proposal request changes no project data, only the audit trail.
+    with SessionLocal() as db:
+        audit.record(
+            db, actor=audit.user_actor(user), action="search.synonyms_suggested", project_id=project.id,
+            payload={"proposed": len(result.items), "dropped": result.dropped, "terms_in_use": len(body.block.terms)},
+            model_id=result.model_id, prompt_version=result.prompt_version,
+        )
+        db.commit()
+    return SynonymSuggestions(
+        proposals=[SynonymProposal(term=p.term, reason=p.reason) for p in result.items],
+        dropped=result.dropped, model_id=result.model_id, prompt_version=result.prompt_version,
+    )

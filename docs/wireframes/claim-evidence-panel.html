@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claim Evidence Wireframe</title>
+<link rel="stylesheet" href="wireframe.css">
+<style>
+  .layout { display:grid; grid-template-columns:180px minmax(0,1fr) 380px; gap:14px; padding:14px 20px; align-items:start; }
+  .rail a { display:block; padding:6px 8px; border-radius:6px; text-decoration:none; color:var(--navy); font-size:14px; }
+  .rail a[aria-current="page"] { background:#eef1f4; font-weight:700; }
+  .editor { font-family:Georgia, "Times New Roman", serif; font-size:17px; line-height:1.8; max-width:70ch; }
+  .editor h2 { font-family:system-ui, sans-serif; font-size:20px; margin:0 0 10px; }
+  .s { cursor:pointer; border-radius:3px; padding:1px 0; }
+  .s:hover { background:#f1f4f7; }
+  .s[aria-selected="true"] { background:#e4ecf6; box-shadow:0 0 0 2px #e4ecf6; }
+  .s.orphan { text-decoration:underline dotted var(--warn); text-decoration-thickness:2px; text-underline-offset:4px; }
+  .s.blocked { text-decoration:underline wavy var(--bad); text-underline-offset:4px; }
+  .cite { font-family:system-ui, sans-serif; font-size:13px; padding:1px 6px; border-radius:5px; background:#eef1f4; color:var(--navy); font-weight:650; white-space:nowrap; }
+  .cite.unv { background:var(--bad-bg); color:var(--bad); }
+  .ev { border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin:8px 0; }
+  .checks li { margin:4px 0; }
+  .picker button { width:100%; text-align:left; margin:4px 0; }
+  .picker button:disabled { opacity:1; background:#f4f5f6; color:var(--muted); border:1px dashed var(--line); }
+  @media (max-width:1100px) { .layout { grid-template-columns:minmax(0,1fr) 340px; } .rail { display:none; } }
+  @media (max-width:760px) { .layout { grid-template-columns:1fr; padding:12px 16px; } }
+</style>
+</head>
+<body>
+<div class="wf-banner">
+  <span><strong>WIREFRAME</strong> · Claim–evidence panel (before M6.2) · invented example text · nothing is saved · typing is not part of this wireframe</span>
+  <span class="row">
+    <label>View as <select id="role"><option value="owner">Owner (Priya)</option><option value="supervisor">Supervisor (Dr. Nair)</option></select></label>
+    <label><input type="checkbox" id="pin-toggle" checked> Show walkthrough questions</label>
+    <a href="index.html">All wireframes</a>
+  </span>
+</div>
+
+<header class="topbar">
+  <div class="row">
+    <a class="brand" href="index.html">Research<span>AI</span></a>
+    <span class="crumbs"><a href="#" onclick="wfToast('Would go to the project overview.');return false;">Remote work &amp; gender wage gap</a> › Write › <strong>2 Background</strong></span>
+  </div>
+  <div class="row">
+    <span class="chip ai">AI: Suggestions only</span>
+    <span class="role-chip" id="role-chip">owner</span>
+  </div>
+</header>
+
+<div class="gatebar">
+  <div><strong>G10 · Approve this section</strong><span class="pin" title="Q1">Q1</span> <span class="muted" id="gate-status"></span></div>
+  <div class="row">
+    <label class="small row" style="font-weight:600">AI involvement in this section
+      <select id="ai-level" style="width:auto;padding:4px">
+        <option>None</option><option selected>AI comments only</option><option>AI-edited text, accepted by the author</option>
+      </select></label>
+    <button id="gate-btn" disabled>Ask for G10 approval</button>
+    <button class="quiet" id="export-btn">Export manuscript…</button>
+  </div>
+</div>
+
+<div class="layout">
+  <nav class="rail panel panel-body" aria-label="Sections">
+    <div class="muted small" style="margin-bottom:6px">Sections</div>
+    <a href="#" onclick="wfToast('Would open 1 Introduction.');return false;">1 Introduction <span class="chip ok">✓</span></a>
+    <a href="#" aria-current="page">2 Background</a>
+    <a href="#" onclick="wfToast('Would open 3 Methods.');return false;">3 Methods</a>
+    <a href="#" onclick="wfToast('Would open the reference list.');return false;">References</a>
+  </nav>
+
+  <article class="panel panel-body">
+    <div class="editor" id="editor"><h2>2 Background</h2><p id="para1"></p><p id="para2"></p></div>
+    <p class="small muted" style="margin-top:14px">Click a sentence (or use <kbd>J</kbd>/<kbd>K</kbd>) to see what supports it. Dotted underline = a claim with no evidence yet. Wavy red = cites a source that isn't verified.</p>
+  </article>
+
+  <aside style="display:grid;gap:14px">
+    <section class="panel">
+      <div class="panel-head">What supports this sentence <span class="pin" title="Q2">Q2</span></div>
+      <div class="panel-body" id="claim"></div>
+    </section>
+    <section class="panel">
+      <div class="panel-head">Section checks <span class="pin" title="Q4">Q4</span></div>
+      <div class="panel-body"><ul class="checks small" id="checks" style="margin:0;padding-left:18px"></ul></div>
+    </section>
+  </aside>
+</div>
+
+<section class="questions" aria-label="Walkthrough questions">
+  <h2>Questions for the walkthrough (orange pins on the screen)</h2>
+  <ol>
+    <li><span class="pin">Q1</span> <span><strong>Where do I approve?</strong> Each section has its own G10 approval in the bar at the top, with the AI-involvement level recorded. It opens only when the section checks pass. Is per-section approval right, or do you want one approval for the whole manuscript too?</span></li>
+    <li><span class="pin">Q2</span> <span><strong>Where do I see the source?</strong> Click a sentence: the panel shows the quote and page. "Open in evidence table" jumps to the exact cell (and its page text). Is one click enough?</span></li>
+    <li><span class="pin">Q3</span> <span><strong>How do I go back?</strong> From the evidence table, the browser Back button returns here to the same sentence. Would you also want a visible "Back to my draft" link there?</span></li>
+    <li><span class="pin">Q4</span> <span>Export is <em>blocked</em> while a claim has no evidence or cites an unverified source (not just a warning). Is "This is my argument, not a factual claim" an acceptable way out for interpretive sentences?</span></li>
+    <li><span class="pin">Q5</span> <span>The picker lists only verified sources; unverified ones are shown greyed with the reason. Helpful, or should they be hidden?</span></li>
+    <li><span class="pin">Q6</span> <span>The workspace design (X.31, screen S4) also has a Sources panel beside the editor. Should this panel <em>be</em> that panel (one place), or stay a separate check view?</span></li>
+  </ol>
+</section>
+
+<dialog id="picker-dialog" aria-labelledby="picker-title">
+  <div class="panel-head" id="picker-title">Link evidence <span class="pin" title="Q5">Q5</span></div>
+  <div class="panel-body picker" id="picker"></div>
+</dialog>
+
+<script src="wireframe.js"></script>
+<script>
+// Evidence comes from evidence-table cells (paper.field); `et` links straight to that cell in the evidence-table wireframe.
+const REFS = {
+  menon:{ cite:"Menon & Thomas, 2022", verified:true, cells:[ { et:"p1.key_findings", quote:"wage growth 4.1 percentage points lower than comparable men", page:9 }, { et:"p1.sample", quote:"2,140 employees (46% women) in 31 IT firms in Kerala, India", page:5 } ] },
+  das:{ cite:"Das & Varghese, 2024", verified:true, cells:[ { et:"p2.key_findings", quote:"Women accepted offers with 6% lower pay on average when a remote option was offered", page:7 } ] },
+  joseph:{ cite:"Joseph, 2020", verified:true, cells:[ { et:"p3.key_findings", quote:"The remote-capable premium is smaller for women (11%) than for men (21%).", page:8 } ] },
+  pillai:{ cite:"Pillai & George, 2021", verified:true, cells:[ { et:"p4.key_findings", quote:"Women's share of childcare rose from 64% to 71% when both partners teleworked.", page:9 } ] },
+  kapoor:{ cite:"Kapoor, 2023", verified:false, why:"Not verified: no DOI match and nobody has checked it", cells:[] },
+};
+// kind: claim (needs evidence) | own (author's argument, no evidence needed)
+const SENTENCES = [
+  { p:1, text:"Remote work spread quickly in India's IT sector after 2020.", kind:"claim", cites:["kapoor"], ev:[] },
+  { p:1, text:"In Kerala, women who moved to fully remote work saw wage growth about four percentage points lower than comparable men.", kind:"claim", cites:["menon"], ev:[{ ref:"menon", i:0 }] },
+  { p:1, text:"Field-experiment evidence points the same way: women accept lower pay for jobs that offer a remote option.", kind:"claim", cites:["das"], ev:[{ ref:"das", i:0 }] },
+  { p:2, text:"Part of the gap may come from who gets remote-capable jobs in the first place.", kind:"claim", cites:[], ev:[] },
+  { p:2, text:"Care work also shifted towards women when couples teleworked.", kind:"claim", cites:["pillai"], ev:[{ ref:"pillai", i:0 }] },
+  { p:2, text:"Together, these studies suggest remote work is not gender-neutral.", kind:"own", cites:[], ev:[] },
+];
+const state = { cur:1, role:"owner", gate:"open" };
+const LISTED = new Set(["menon", "das", "pillai", "kapoor", "joseph"]); // the section's reference list
+const $ = id => document.getElementById(id);
+
+const status = s => {
+  if (s.cites.some(c => !REFS[c].verified)) return "blocked";
+  if (s.kind === "claim" && !s.ev.length) return "orphan";
+  return s.kind === "own" ? "own" : "ok";
+};
+function renderEditor() {
+  $("para1").innerHTML = ""; $("para2").innerHTML = "";
+  SENTENCES.forEach((s, i) => {
+    const span = document.createElement("span");
+    const st = status(s);
+    span.className = "s" + (st === "orphan" ? " orphan" : st === "blocked" ? " blocked" : "");
+    span.tabIndex = 0; span.setAttribute("role", "button"); span.setAttribute("aria-selected", i === state.cur ? "true" : "false");
+    span.append(s.text.replace(/\.$/, ""));
+    s.cites.forEach(c => { const b = document.createElement("span"); b.className = "cite" + (REFS[c].verified ? "" : " unv"); b.textContent = " (" + REFS[c].cite + ")" ; span.append(" ", b); });
+    span.append(". ");
+    span.addEventListener("click", () => select(i));
+    span.addEventListener("keydown", e => { if (e.key === "Enter") select(i); });
+    $(s.p === 1 ? "para1" : "para2").appendChild(span);
+  });
+}
+function select(i) { state.cur = i; renderAll(); if (location.hash !== "#s" + i) location.hash = "s" + i; }
+function renderClaim() {
+  const s = SENTENCES[state.cur], st = status(s), box = $("claim");
+  const chip = { ok:'<span class="chip ok">Supported</span>', orphan:'<span class="chip warn">Claim with no evidence yet</span>', blocked:'<span class="chip bad">Cites an unverified source</span>', own:'<span class="chip plain">Your argument (no evidence needed)</span>' }[st];
+  box.innerHTML = `<div class="row">${chip}</div><p style="margin:8px 0" id="ctext"></p><div id="evs"></div><div class="row" id="cacts" style="margin-top:8px"></div>
+    <div class="provenance" style="margin-top:8px">Typed by Priya · 7 Oct 10:31</div>`;
+  $("ctext").textContent = "“" + s.text + "”";
+  const evs = $("evs");
+  s.cites.filter(c => !REFS[c].verified).forEach(c => {
+    const d = document.createElement("div"); d.className = "ev"; d.style.borderColor = "var(--bad)";
+    d.innerHTML = `<strong></strong><div class="small" style="color:var(--bad)"></div><div class="small muted">Export is blocked until this citation is removed or the source is verified (in Sources).</div>`;
+    d.querySelector("strong").textContent = REFS[c].cite; d.querySelector("div").textContent = REFS[c].why;
+    const rm = document.createElement("button"); rm.className = "quiet"; rm.textContent = "Remove this citation"; rm.style.marginTop = "6px";
+    rm.addEventListener("click", () => {
+      s.cites = s.cites.filter(x => x !== c);
+      const stillCited = SENTENCES.some(x => x.cites.includes(c));
+      if (!stillCited) LISTED.delete(c);
+      wfToast("Citation removed" + (stillCited ? "." : " and taken off the reference list.") + " The sentence now needs evidence from a verified source, or mark it as your argument.");
+      renderAll();
+    });
+    d.appendChild(rm); evs.appendChild(d);
+  });
+  s.ev.forEach((e, k) => {
+    const r = REFS[e.ref], cell = r.cells[e.i];
+    const d = document.createElement("div"); d.className = "ev";
+    d.innerHTML = `<div class="row"><strong></strong><span class="chip ok">✓ verified source</span></div><div class="quote"></div>
+      <div class="row small"><span class="muted">p.${cell.page}</span><span class="spacer"></span><a href="evidence-table.html#${cell.et}">Open in evidence table →</a></div>`;
+    d.querySelector("strong").textContent = r.cite; d.querySelector(".quote").textContent = "“" + cell.quote + "”";
+    const un = document.createElement("button"); un.className = "quiet"; un.textContent = "Unlink"; un.style.marginTop = "6px";
+    un.addEventListener("click", () => { s.ev.splice(k, 1); wfToast("Evidence unlinked."); renderAll(); });
+    d.appendChild(un); evs.appendChild(d);
+  });
+  if (st === "own") evs.innerHTML += '<p class="small muted">You marked this as your own interpretation. It is listed in the section report as "argument, not a factual claim".</p>';
+  const acts = $("cacts");
+  const add = document.createElement("button"); add.textContent = "Link evidence…"; add.addEventListener("click", openPicker);
+  const own = document.createElement("button"); own.className = "quiet";
+  own.textContent = s.kind === "own" ? "This is a factual claim" : "This is my argument, not a factual claim";
+  own.addEventListener("click", () => { s.kind = s.kind === "own" ? "claim" : "own"; wfToast("Changed. This is recorded in the section's history."); renderAll(); });
+  acts.append(add, own);
+  if (state.gate !== "open") acts.querySelectorAll("button").forEach(b => b.disabled = true);
+}
+function openPicker() {
+  const s = SENTENCES[state.cur], box = $("picker"); box.innerHTML = '<p class="small muted" style="margin:0">Only verified sources can be cited. Each item is a checked cell from the evidence table.</p>';
+  Object.entries(REFS).forEach(([key, r]) => {
+    if (!r.verified) { const b = document.createElement("button"); b.className = "quiet"; b.disabled = true; b.textContent = `${r.cite} · ${r.why}`; box.appendChild(b); return; }
+    r.cells.forEach((cell, i) => {
+      const b = document.createElement("button"); b.className = "quiet";
+      b.innerHTML = `<strong></strong> · p.${cell.page}<div class="small muted"></div>`;
+      b.querySelector("strong").textContent = r.cite; b.querySelector("div").textContent = "“" + cell.quote + "”";
+      b.addEventListener("click", () => { s.ev.push({ ref:key, i }); if (!s.cites.includes(key)) s.cites.push(key); LISTED.add(key); $("picker-dialog").close(); wfToast(`Linked to ${r.cite}, p.${cell.page}. The in-text citation was added too.`); renderAll(); });
+      box.appendChild(b);
+    });
+  });
+  const c = document.createElement("button"); c.textContent = "Cancel"; c.addEventListener("click", () => $("picker-dialog").close()); box.appendChild(c);
+  $("picker-dialog").showModal();
+}
+function problems() {
+  const orphans = SENTENCES.filter(s => status(s) === "orphan").length, blocked = SENTENCES.filter(s => status(s) === "blocked").length;
+  const cited = new Set(SENTENCES.flatMap(s => s.cites));
+  const notCited = [...LISTED].filter(k => !cited.has(k)).map(k => REFS[k].cite);
+  const notListed = [...cited].filter(k => !LISTED.has(k)).map(k => REFS[k].cite);
+  return { orphans, blocked, notCited, notListed };
+}
+function renderChecks() {
+  const p = problems(), ul = $("checks"); ul.innerHTML = "";
+  const li = (ok, text) => { const n = document.createElement("li"); n.innerHTML = ok ? '<span class="chip ok">✓</span> ' : '<span class="chip bad">✗</span> '; n.append(text); ul.appendChild(n); };
+  li(!p.orphans, p.orphans ? `${p.orphans} claim(s) with no evidence` : "Every claim has evidence");
+  li(!p.blocked, p.blocked ? `${p.blocked} citation(s) to unverified sources` : "Every citation is to a verified source");
+  li(!p.notCited.length && !p.notListed.length, p.notCited.length ? `In the reference list but never cited here: ${p.notCited.join(", ")}` : p.notListed.length ? `Cited but missing from the reference list: ${p.notListed.join(", ")}` : "Reference list and in-text citations match");
+  const n = document.createElement("li"); n.className = "muted"; n.textContent = "Numbers in this section: none from analysis runs (M6.3)."; ul.appendChild(n);
+}
+function renderGate() {
+  const p = problems(), ready = !p.orphans && !p.blocked && !p.notCited.length && !p.notListed.length, btn = $("gate-btn"), st = $("gate-status");
+  $("role-chip").textContent = state.role;
+  if (state.gate === "approved") { st.textContent = ` · Approved by Dr. Nair · AI involvement recorded: “${$("ai-level").value}”.`; btn.hidden = true; $("ai-level").disabled = true; return; }
+  if (state.gate === "requested") { st.textContent = ` · Waiting for approval · AI involvement: “${$("ai-level").value}”.`; btn.textContent = state.role === "supervisor" ? "Approve G10" : "Approval requested"; btn.disabled = state.role !== "supervisor"; $("ai-level").disabled = true; return; }
+  st.textContent = ready ? " · Ready: section checks pass." : " · Opens when the section checks pass (right).";
+  btn.textContent = "Ask for G10 approval"; btn.disabled = !ready;
+}
+function renderAll() { renderEditor(); renderClaim(); renderChecks(); renderGate(); }
+
+$("gate-btn").addEventListener("click", () => {
+  if (state.gate === "open") { state.gate = "requested"; wfToast("G10 requested for this section. Switch 'View as' to Supervisor to approve."); }
+  else if (state.role === "supervisor") { state.gate = "approved"; wfToast("Section approved. The AI-involvement level is stored with the approval."); }
+  renderAll();
+});
+$("export-btn").addEventListener("click", () => {
+  const p = problems(), refs = p.notCited.length + p.notListed.length;
+  wfToast(p.orphans || p.blocked || refs ? `Export blocked: ${p.orphans} claim(s) without evidence, ${p.blocked} unverified citation(s), ${refs} reference-list mismatch(es). Fix them first; this is a block, not a warning.` : "Would open the export options (DOCX, LaTeX, Markdown).");
+});
+$("role").addEventListener("change", e => { state.role = e.target.value; renderAll(); });
+window.addEventListener("hashchange", () => { const m = location.hash.match(/^#s(\d+)$/); if (m) { state.cur = Number(m[1]); renderAll(); } });
+document.addEventListener("keydown", e => {
+  if (wfTyping(e) || document.querySelector("dialog[open]") || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key === "j") select(Math.min(SENTENCES.length - 1, state.cur + 1));
+  if (e.key === "k") select(Math.max(0, state.cur - 1));
+});
+const start = location.hash.match(/^#s(\d+)$/); if (start) state.cur = Number(start[1]);
+renderAll();
+</script>
+</body>
+</html>

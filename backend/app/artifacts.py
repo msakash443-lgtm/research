@@ -18,6 +18,7 @@ from __future__ import annotations
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -173,6 +174,41 @@ def reenter_stage(db: Session, project: Project, target: ProjectStage, *, actor:
     )
     db.flush()
     return result
+
+
+def _utc_seconds(value: datetime) -> datetime:
+    """`value` in UTC, to the second. `created_at` comes from the database clock (whole seconds on SQLite,
+    sometimes without a zone), `stale_at` from Python with microseconds; compare them on equal terms."""
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).replace(microsecond=0)
+
+
+def unreplaced_stale(db: Session, project: Project, up_to: ProjectStage) -> list[Artifact]:
+    """Stale results of `up_to` or an earlier stage that nothing has replaced yet (plan M0.5.9).
+
+    A stale artifact counts as replaced once a *current* artifact of the same kind, produced at the same
+    stage, was registered no earlier than it went stale (Decisions log 2026-10-07). Regenerating the same
+    record (`refresh_artifact`) makes it current, so it is not listed at all.
+    """
+    limit = stage_index(up_to)
+    artifacts = db.scalars(select(Artifact).where(Artifact.project_id == project.id)).all()
+    relevant = [a for a in artifacts if stage_index(a.stage) <= limit]
+    current = [a for a in relevant if a.status == ArtifactStatus.current]
+    blocking = []
+    for artifact in relevant:
+        if artifact.status != ArtifactStatus.stale:
+            continue
+        went_stale = _utc_seconds(artifact.stale_at) if artifact.stale_at else None
+        replaced = any(
+            other.kind == artifact.kind
+            and other.stage == artifact.stage
+            and (went_stale is None or _utc_seconds(other.created_at) >= went_stale)
+            for other in current
+        )
+        if not replaced:
+            blocking.append(artifact)
+    return sorted(blocking, key=lambda a: (stage_index(a.stage), a.kind, a.ref_id))
 
 
 def rerun_path(db: Session, project: Project) -> list[dict]:
