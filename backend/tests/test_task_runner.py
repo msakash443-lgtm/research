@@ -238,6 +238,33 @@ def test_the_worker_runs_the_queued_run_to_completion(queued_mode, fake_llm):
     assert task_runner.run_one_task() is False
 
 
+def test_a_run_taken_over_during_the_model_call_does_not_persist_the_stale_answer(queued_mode, fake_llm):
+    client = _login("port-takeover@example.com")
+    project_id, created = _create_run(client)
+    handed_over = {}
+
+    def take_over_during_model_call(request):
+        handed_over["second"] = _reap_and_reclaim()
+        from tests.llm_replies import chat_reply
+
+        return chat_reply("Stale answer [S1].")
+
+    fake_llm.handler = take_over_during_model_call
+
+    assert task_runner.run_one_task(NOW) is True
+
+    run = client.get(f"/api/projects/{project_id}/research-runs").json()[0]
+    assert run["id"] == created.json()["id"]
+    assert run["status"] == "running" and run["answer"] is None
+    assert len(fake_llm.requests) == 1
+    task = _get(Task, handed_over["second"].id)
+    assert task.status == TaskStatus.running and task.attempts == 2
+    with SessionLocal() as db:
+        actions = [event.action for event in db.scalars(select(AuditEvent))]
+    assert "research_run.finished" not in actions
+    assert "research_run.failed" not in actions
+
+
 def test_a_run_that_needs_sources_still_finishes_normally_through_the_queue(queued_mode):
     client = _login("port-nosrc@example.com")
     project_id, _ = _create_run(client, with_source=False)

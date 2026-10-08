@@ -5,11 +5,12 @@ import logging
 import secrets
 import re
 import uuid
+from collections.abc import Callable
 from typing import Any
 
 from sqlalchemy import case, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import Session, selectinload
 
 from app import audit
 from app.agent.arc_client import ArcRetrievalClient, ArcRetrievalError
@@ -20,6 +21,7 @@ from app.output_schemas import EVIDENCE_SYNTHESIS_SCHEMA
 from app.prompt_registry import Prompt, load_prompt
 from app.answer_guard import check_answer
 from app.untrusted_text import clean_untrusted
+from app.task_registry import TaskOwnershipLost
 from app.config import get_settings
 from app.database import SessionLocal
 from app.artifacts import register_artifact
@@ -129,11 +131,21 @@ def _item_identity_hash(item) -> str:
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:32]
 
 
-def _ingest_arc_sources(db, project: Project, run: ResearchRun, settings) -> dict[str, Any]:
+def _ingest_arc_sources(
+    db: Session,
+    project: Project,
+    run: ResearchRun,
+    settings,
+    ensure_owned: Callable[[Session | None], None] | None = None,
+) -> dict[str, Any]:
     """Save sources found by the ARC retrieval service. Failure never fails the run."""
+    if ensure_owned is not None:
+        ensure_owned()
     try:
         retrieved = ArcRetrievalClient(settings).retrieve(run.question)
     except ArcRetrievalError as exc:
+        if ensure_owned is not None:
+            ensure_owned(db)
         logger.warning("ARC retrieval failed for run %s: %s", run.id, exc)
         audit.record(
             db, actor=audit.AGENT_ARC_RETRIEVAL, action="retrieval.failed", project_id=project.id,
@@ -142,6 +154,8 @@ def _ingest_arc_sources(db, project: Project, run: ResearchRun, settings) -> dic
         db.commit()
         return {"status": "failed", "added": 0, "error": str(exc)}
 
+    if ensure_owned is not None:
+        ensure_owned()
     existing_urls = set(
         db.scalars(select(Source.url).where(Source.project_id == project.id, Source.url.is_not(None))).all()
     )
@@ -159,6 +173,8 @@ def _ingest_arc_sources(db, project: Project, run: ResearchRun, settings) -> dic
     added = len(existing_keys)
     new_sources = 0
     for item in retrieved:
+        if ensure_owned is not None:
+            ensure_owned()
         if added >= MAX_ARC_SOURCES_PER_RUN:
             break
         ingest_key = key_prefix + _item_identity_hash(item)
@@ -208,6 +224,8 @@ def _ingest_arc_sources(db, project: Project, run: ResearchRun, settings) -> dic
         added += 1
         new_sources += 1
     if new_sources:
+        if ensure_owned is not None:
+            ensure_owned(db)
         audit.record(
             db, actor=audit.AGENT_ARC_RETRIEVAL, action="sources.retrieved", project_id=project.id,
             payload={"run_id": str(run.id), "added": new_sources, "retrieved": len(retrieved), "verified": False},
@@ -317,10 +335,15 @@ def _agent_prompts(
     return prompt.system, user
 
 
-def execute_research_run(run_id: str | uuid.UUID) -> None:
+def execute_research_run(
+    run_id: str | uuid.UUID,
+    ensure_owned: Callable[[Session | None], None] | None = None,
+) -> None:
     """Run one durable research task. Safe to call from the worker or inline in local development."""
     db = SessionLocal()
     try:
+        if ensure_owned is not None:
+            ensure_owned(db)
         run_key = uuid.UUID(str(run_id))
         run = db.get(ResearchRun, run_key)
         if run is None or run.status not in {ResearchRunStatus.queued, ResearchRunStatus.running}:
@@ -329,6 +352,8 @@ def execute_research_run(run_id: str | uuid.UUID) -> None:
         run.status = ResearchRunStatus.running
         run.started_at = run.started_at or utcnow()
         run.attempt_count += 1
+        if ensure_owned is not None:
+            ensure_owned(db)
         db.commit()
 
         project = db.get(Project, run.project_id)
@@ -340,13 +365,15 @@ def execute_research_run(run_id: str | uuid.UUID) -> None:
                 db, actor=audit.AGENT_RESEARCH_RUN, action="research_run.failed", project_id=run.project_id,
                 payload={"run_id": str(run.id), "reason": "project_missing"},
             )
+            if ensure_owned is not None:
+                ensure_owned(db)
             db.commit()
             return
 
         settings = get_settings()
         web_retrieval = None
         if run.use_web_retrieval and settings.arc_retrieval_enabled:
-            web_retrieval = _ingest_arc_sources(db, project, run, settings)
+            web_retrieval = _ingest_arc_sources(db, project, run, settings, ensure_owned=ensure_owned)
 
         context_rows = select_agent_context(
             db.scalars(select(ResearchContextItem).where(ResearchContextItem.project_id == project.id)).all()
@@ -398,10 +425,14 @@ def execute_research_run(run_id: str | uuid.UUID) -> None:
             run.prompt_version = prompt.ref
             # Don't hold a write transaction (e.g. retrieved sources) across the model call: the usage
             # meter writes in its own session, and on SQLite that write would wait on our lock.
+            if ensure_owned is not None:
+                ensure_owned(db)
             db.commit()
             try:
                 nonce = secrets.token_hex(8)
                 system_prompt, user_prompt = _agent_prompts(prompt, run, context, source_snapshot, nonce=nonce)
+                if ensure_owned is not None:
+                    ensure_owned()
                 reply = OpenAICompatibleLLM(settings, meter=ProjectMeter(run.project_id, settings, purpose="research_run", run_id=run.id)).complete_json(system_prompt, user_prompt, EVIDENCE_SYNTHESIS_SCHEMA)
                 abstained = bool(reply["insufficient_evidence"]["insufficient"])
                 # Both the answer and an abstention reason are model text: check whichever is stored.
@@ -467,10 +498,17 @@ def execute_research_run(run_id: str | uuid.UUID) -> None:
             model_id=run.provider_model,
             prompt_version=run.prompt_version,
         )
+        if ensure_owned is not None:
+            ensure_owned(db)
         db.commit()
+    except TaskOwnershipLost:
+        db.rollback()
+        raise
     except Exception:
         db.rollback()
         try:
+            if ensure_owned is not None:
+                ensure_owned(db)
             run = db.get(ResearchRun, run_key)
             if run is not None:
                 run.status = ResearchRunStatus.failed
@@ -482,7 +520,12 @@ def execute_research_run(run_id: str | uuid.UUID) -> None:
                     model_id=run.provider_model,
                     prompt_version=run.prompt_version,
                 )
+                if ensure_owned is not None:
+                    ensure_owned(db)
                 db.commit()
+        except TaskOwnershipLost:
+            db.rollback()
+            raise
         except Exception:
             db.rollback()
         raise

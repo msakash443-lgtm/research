@@ -67,7 +67,7 @@ def handle_research_run(task: ClaimedTask) -> None:
     if not run_id:
         raise PermanentTaskError("A research_run task needs a run_id in its payload.")
     try:
-        execute_research_run(run_id)  # M0.6.9: pass ensure_owned=task.ensure_owned once the executor accepts it
+        execute_research_run(run_id, ensure_owned=task.ensure_owned)
     except TaskOwnershipLost:
         raise  # another worker has the run; nothing was written by this attempt
     except Exception as exc:
