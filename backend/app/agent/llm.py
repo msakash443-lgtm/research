@@ -88,7 +88,7 @@ class OpenAICompatibleLLM:
         self._meter = meter  # optional: .before_call() may refuse, .after_call(model, response) records usage
 
     @classmethod
-    def for_participant_data(cls, settings: Settings) -> "OpenAICompatibleLLM":
+    def for_participant_data(cls, settings: Settings, *, meter: Any = None) -> "OpenAICompatibleLLM":
         """An adapter for prompts that may contain participant/sensitive data.
 
         Use this instead of the plain constructor for consent text, raw responses,
@@ -99,6 +99,7 @@ class OpenAICompatibleLLM:
         default), it fails loudly instead (plan rule 22 — no silent substitution).
         Most local servers (Ollama, LM Studio, vLLM without `--api-key`) need no key,
         so one is not required here even though it is for the default constructor.
+        Pass the project's `meter` (M0.9.1) so these calls count toward its token budget too.
         """
         if settings.local_llm_api_base_url and settings.local_llm_model:
             return cls(
@@ -108,6 +109,7 @@ class OpenAICompatibleLLM:
                 model=settings.local_llm_model,
                 timeout_seconds=settings.local_llm_timeout_seconds,
                 require_api_key=False,
+                meter=meter,
             )
         if settings.participant_data_requires_local_model:
             raise LLMConfigurationError(
@@ -116,7 +118,7 @@ class OpenAICompatibleLLM:
                 "PARTICIPANT_DATA_REQUIRES_LOCAL_MODEL=false to explicitly allow the "
                 "third-party model configured in LLM_API_BASE_URL to see participant data."
             )
-        return cls(settings)
+        return cls(settings, meter=meter)
 
     def complete(self, system_prompt: str, user_prompt: str) -> str:
         if (self._require_api_key and not self._api_key) or not self._api_base_url or not self._model:

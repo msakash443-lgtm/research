@@ -79,24 +79,37 @@ def _source_snapshot(source: Source) -> dict[str, Any]:
     }
 
 
-# A citation group like [S1], [S1, S3], [S2; S4], [S1 and S2] or a range [S1-S3] / [S1–S3].
+# A citation group like [S1], [S1, S3], [S2; S4], [S1 and S2] or a range [S1-S3] / [S1–S3]. Used to turn
+# well-formed groups into links (Obsidian export); the hard block below does not rely on it alone.
 _CITATION_GROUP = re.compile(r"\[\s*(S\d+(?:\s*(?:[,;]|-|–|and)\s*S?\d+)*)\s*\]", re.IGNORECASE)
-_CITATION_PART = re.compile(r"(?:(?P<sep>[,;]|-|–|and)\s*)?S?(?P<n>\d+)", re.IGNORECASE)
+# Fail-closed reading (M1.10.6): inside any [...], every S# token starts or continues a chain, however
+# it is written ("[S2, p. 4]", "[S1, S2, and S3]", "[S1 & S2]", "[S1/S2]", "[S 2]"); a chain also takes
+# bare numbers and ranges after an S# ("[S1, 2]", "[S1 to S3]"). A page number after "p." is not a source.
+_BRACKET = re.compile(r"\[([^\[\]]{1,300})\]")
+_SEP = r"(?:,\s*and|,\s*or|[,;/&]|\band\b|\bor\b)"
+_RANGE = r"(?:-|–|—|\bto\b|\bthrough\b)"
+_CHAIN = re.compile(rf"(?<![A-Za-z0-9])S\s*\d+(?:\s*(?:{_SEP}|{_RANGE})\s*(?:S\s*)?\d+(?![\d.]))*", re.IGNORECASE)
+_CHAIN_PART = re.compile(rf"\s*(?:(?P<range>{_RANGE})|{_SEP})?\s*(?P<s>S\s*)?(?P<n>\d+)", re.IGNORECASE)
 
 
 def _cited_indices(answer: str) -> set[int]:
-    """Every source number an answer cites with [S#] markers, ranges expanded."""
+    """Every source number an answer cites inside [...], ranges expanded. Errs towards finding a citation:
+    a number read as a source that wasn't meant as one can only block a run, never let one through."""
     cited: set[int] = set()
-    for group in _CITATION_GROUP.finditer(answer):
-        previous = None
-        for part in _CITATION_PART.finditer(group.group(1)):
-            number = int(part["n"])
-            if part["sep"] in ("-", "–") and previous is not None:
-                low, high = sorted((previous, number))
-                # Bounded: anything past the run's sources is rejected anyway.
-                cited.update(range(low, min(high, low + MAX_SOURCES + 1) + 1))
-            cited.add(number)
-            previous = number
+    for bracket in _BRACKET.finditer(answer):
+        inside = bracket.group(1)
+        for chain in _CHAIN.finditer(inside):
+            previous = None
+            for part in _CHAIN_PART.finditer(chain.group(0)):
+                if not part["s"] and len(part["n"]) == 4:
+                    continue  # "[S2, 2019]": a bare four-digit number is a year, not a source
+                number = int(part["n"])
+                if part["range"] and previous is not None:
+                    low, high = sorted((previous, number))
+                    # Bounded: anything past the run's sources is rejected anyway.
+                    cited.update(range(low, min(high, low + MAX_SOURCES + 1) + 1))
+                cited.add(number)
+                previous = number
     return cited
 
 

@@ -1,7 +1,43 @@
+import ipaddress
+import re
 from functools import lru_cache
+from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_LOCAL_NAME_SUFFIXES = (".localhost", ".local", ".internal")
+# A single-label name such as a Docker service (`ollama`). It must start with a letter, so numeric
+# shorthands like `2130706433` or `0x7f000001`, which resolvers may turn into any IPv4 address, don't count.
+_SINGLE_LABEL = re.compile(r"[a-z][a-z0-9-]{0,62}")
+
+
+def local_llm_url_problem(url: str) -> str | None:
+    """Why `url` doesn't name a local/private host, or None if it does (M0.8.8, Decisions log 2026-10-08).
+
+    Judged from the URL text only, with no DNS lookup: loopback, private and link-local IP addresses;
+    `localhost` and names under `.localhost`/`.local`/`.internal`; or a single-label name.
+    """
+    try:
+        parts = urlsplit(url.strip())
+        host = (parts.hostname or "").rstrip(".")
+    except ValueError:
+        return "is not a valid URL"
+    if parts.scheme not in {"http", "https"} or not host:
+        return "must be an http(s) URL with a host"
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        address = None
+    if address is not None:
+        if address.version == 6 and address.ipv4_mapped is not None:
+            address = address.ipv4_mapped
+        if address.is_loopback or address.is_private or address.is_link_local:
+            return None
+        return f"points at {host}, which is not a loopback, private or link-local address"
+    if host == "localhost" or host.endswith(_LOCAL_NAME_SUFFIXES) or _SINGLE_LABEL.fullmatch(host):
+        return None
+    return f"points at {host}, which is not a local or private host name"
 
 
 class Settings(BaseSettings):
@@ -29,6 +65,9 @@ class Settings(BaseSettings):
     local_llm_api_base_url: str | None = None
     local_llm_model: str | None = None
     local_llm_timeout_seconds: float = 120
+    # LOCAL_LLM_API_BASE_URL must name a local/private host (`local_llm_url_problem`). Set true only on purpose,
+    # for a self-hosted server reachable at a public address (M0.8.8).
+    local_llm_allow_public_host: bool = False
     # Safe default: participant data is refused (loudly) rather than silently sent to
     # LLM_API_BASE_URL unless a local model is configured. Set false only after an
     # explicit decision that the third-party model may see participant data (Q4).
@@ -92,6 +131,13 @@ class Settings(BaseSettings):
     def validate_production_settings(self) -> "Settings":
         if bool(self.local_llm_api_base_url) != bool(self.local_llm_model):
             raise ValueError("LOCAL_LLM_API_BASE_URL and LOCAL_LLM_MODEL must be set together")
+        if self.local_llm_api_base_url and not self.local_llm_allow_public_host:
+            problem = local_llm_url_problem(self.local_llm_api_base_url)
+            if problem:
+                raise ValueError(
+                    f"LOCAL_LLM_API_BASE_URL {problem}. Participant data may only go to a self-hosted model: use a "
+                    "local/private address, or set LOCAL_LLM_ALLOW_PUBLIC_HOST=true if this public address is your own server"
+                )
         if self.environment != "production":
             return self
 

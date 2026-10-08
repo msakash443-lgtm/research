@@ -140,7 +140,15 @@ def test_citing_a_source_the_run_does_not_have_is_blocked(world, fake_llm):
     assert_blocked(research(c, pid), rejections(c, pid), 2, "unknown_citation_index", "cited [S2], which doesn't match any source")
 
 
-@pytest.mark.parametrize("citation", ["[S1, S2]", "[S1; S2]", "[S1 and S2]", "[S1-S2]", "[S1–S2]", "[s1, s2]"])
+@pytest.mark.parametrize(
+    "citation",
+    [
+        "[S1, S2]", "[S1; S2]", "[S1 and S2]", "[S1-S2]", "[S1–S2]", "[s1, s2]",
+        # Forms the first parser missed (M1.10.6): each cites both sources, so one is unverified.
+        "[S1, S2, and S1]", "[S1 & S2]", "[S1/S2]", "[S1 S2]", "[S1 or S2]", "[S1 to S2]", "[S1, 2]",
+        "[S1, p. 4] and [S2, p. 5]", "[S2: p. 4; S1: p. 3]", "[S 1] [S 2]", "[[S1]] [[S2]]",
+    ],
+)
 def test_every_source_in_a_grouped_citation_is_checked(world, fake_llm, citation):
     c, pid = world
     verified = add_source(c, pid, title="A verified study", doi="10.1234/one")
@@ -185,3 +193,35 @@ def test_older_prompt_versions_render_without_the_citation_marker():
     _, user = executor._agent_prompts(load_prompt("evidence_synthesis", 2), SimpleNamespace(question="Q?"), [], [source])
 
     assert "Status: added by a researcher\n" in user and "may be cited" not in user
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("[S1, S2, and S3]", {1, 2, 3}),
+        ("[S1, S2, S3, and S4]", {1, 2, 3, 4}),
+        ("[S2, p. 4]", {2}),
+        ("[S2, pp. 4-9]", {2}),
+        ("[S3, p. 12; S5]", {3, 5}),
+        ("[S1 to S3]", {1, 2, 3}),
+        ("[S1 through S3]", {1, 2, 3}),
+        ("[S1-3]", {1, 2, 3}),
+        ("[S1 and 3]", {1, 3}),
+        ("[S 2]", {2}),
+        ("[S2, 2019]", {2}),  # a bare four-digit number is a year
+        ("[Smith and Jones 2020]", set()),
+        ("[CS2 model]", set()),
+        ("no brackets S2 here", set()),
+    ],
+)
+def test_the_citation_reader_finds_every_source_number_however_it_is_written(text, expected):
+    from app.agent.executor import _cited_indices
+
+    assert _cited_indices(text) == expected
+
+
+def test_a_range_is_bounded_and_past_the_sources_it_is_rejected():
+    from app.agent.executor import MAX_SOURCES, _cited_indices, _citation_problem
+
+    assert max(_cited_indices("[S1-S999999]")) == 999999 and len(_cited_indices("[S1-S999999]")) <= MAX_SOURCES + 3
+    assert _citation_problem("[S1 to S9]", [{"verified": True}] * 3) == (4, "unknown_citation_index")
