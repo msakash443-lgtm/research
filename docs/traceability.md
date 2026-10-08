@@ -31,13 +31,13 @@
 | 5.2 in | Inclusion/exclusion criteria (PICO etc.) | M1.5.4 | criteria endpoints | `test_criteria.py` | `[x]` |
 | 5.2.1 | Boolean query builder, per-DB syntax | M1.5.1–M1.5.6 | search-query endpoints | `test_search_query*.py` | M1.5.1–.2 `[x]`; M1.5.3 (LLM synonyms), M1.5.5 (S2 bulk Boolean) `[?]`; M1.5.6 (re-runs of pre-bulk S2 searches refused) `[?]` |
 | 5.2.2 | Multi-source retrieval | M1.3, M1.4.1–M1.4.7 | connectors (OpenAlex, Crossref, Semantic Scholar, arXiv, Unpaywall, PubMed/Europe PMC, CORE, OpenCitations); `GET` connector list | `test_connector_*.py`, `test_*_connector.py`, `test_search_runner.py` | M1.3.1–.2, .4–.5 and M1.4.1–.3, .5 `[x]`; M1.3.3 cache, M1.4.4, M1.4.6 `[?]`; M1.4.7 `[ ]`; M1.3.6 `[?]` |
-| 5.2.2 | Web search / crawl / PDF via ARC (opt-in) | M1.1.1–M1.1.11 | `POST /api/projects/{id}/research-runs` (`use_web_retrieval`) | `test_arc_retrieval.py`, `test_arc_fencing.py` | M1.1.1–.9, .12 `[x]`; M1.1.10 `[?]` (live smoke 2026-10-07); M1.1.11 open |
+| 5.2.2 | Web search / crawl / PDF via ARC (opt-in) | M1.1.1–M1.1.14 | `POST /api/projects/{id}/research-runs` (`use_web_retrieval`) | `test_arc_retrieval.py`, `test_arc_fencing.py` | M1.1.1–.9, .12 `[x]`; M1.1.10, M1.1.11 `[x]` (reviewed 2026-10-08); M1.1.13 `[?]`; M1.1.14 `[ ]` |
 | 5.2.2 | De-dup by DOI → title+year+first author | M0.2.2, M1.6.1–M1.6.3 | `POST .../sources` (DOI normalised) | `test_doi.py`, `test_dedupe.py`, `test_merge.py`, `test_source_merge.py` | M0.2.2 and M1.6.1–.4 `[x]` |
 | 5.2.3 | Snowballing N rounds | M1.9.1–M1.9.2 | `POST/GET /api/projects/{id}/snowball` (G2-gated task `snowball_run`); `found_via` on sources + screening queue; PRISMA `other_methods.citation_searching` | `test_snowball.py` | `[?]` |
 | 5.2.4 | Saved-query alerts | M1.12 | — | — | `[ ]` |
 | 5.2.5 | Search log + PRISMA counts | M1.7.1–M1.7.3 | search runs, `GET …/prisma` | `test_search_runner.py`, `test_prisma.py` | `[x]` (counts for screening stages wait on M2) |
 | 5.2 gate | G2: approve strategy before bulk retrieval; known-item test | M1.8.1–M1.8.2 | G2 gate; `GET …/known-items` | `test_search_gate.py`, `test_known_items.py` | `[x]` |
-| 5.2 QC | Gold-set recall, report missed papers | M1.8.3, **X.15** | — | `test_gold_set.py` (loader only) | `[ ]` (X.15 `[!]` blocked on Q10) |
+| 5.2 QC | Gold-set recall, report missed papers | M1.8.3–M1.8.4, **X.15** | — | `test_gold_set.py` (loader only), `test_recall_report.py` | M1.8.3 `[?]` (defect → M1.8.4 `[ ]`); X.15 `[!]` blocked on Q10 |
 
 ### §5.3 Screening
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
@@ -121,7 +121,7 @@
 | 5.11.2 | **Genre templates** (IMRaD, conceptual, review, thesis) | M6.10 *(new)* | — | — | `[ ]` |
 | 5.11.3 | Claim–evidence linker; verified refs only | M6.2, M1.10, **X.14**; see also X.31.9/X.31.10 (source panel + citation picker in the per-note/section editor, design: `docs/researcher-workspace-design.md`) | wireframe `docs/wireframes/claim-evidence-panel.html` (X.14, awaiting scholar walkthrough) | — | `[ ]` |
 | 5.11.4 | Style help with diffs | M6.8; see also X.31.11 (AI side panel, accept/reject proposals, design doc) | — | — | `[ ]` |
-| 5.11.5 | Ref-manager sync; CSL | M1.11, M6.5 | — | — | `[ ]` |
+| 5.11.5 | Ref-manager sync; CSL | M1.11, M6.5 | `POST …/sources/import`, `GET …/sources/export` | `test_refmanager*.py` | M1.11.1 `[x]`; M1.11.2, M1.11.3 `[ ]` |
 | 5.11.6 | **Abstract, keywords, highlights, cover letter**; statements (incl. per-manuscript AI-use statement) | M6.10 *(new)*, M6.5, M6.6; AI-use statement also covered by X.31.12 (`provenance_report.py`, design doc) | — | — | `[ ]` |
 | 5.11.7 | Similarity pre-check | M6.7; project-source similarity also covered by X.31.14, institutional integration point by X.31.15 (design doc) | — | — | `[ ]` |
 | 5.11 gate | **G10 approve each section + AI-involvement level** | M6.1, M6.11 *(new)* | — | — | `[ ]` |
@@ -151,7 +151,7 @@
 |---|---|---|---|---|---|
 | §3.2 | Orchestrator: durable queue, pause, retry, re-entry | M0.2.1, M0.6.1–M0.6.5, M0.6.8–M0.6.10, X.1.1 | worker | `test_task_queue.py`, `test_task_queue_postgres.py` (real PostgreSQL: double claim, backoff, lease expiry) | M0.6.1–.3, .5, .8 `[x]`; M0.6.4 `[?]`; M0.6.9 `[!]`; M0.6.10 `[~]`; X.1.1 `[?]` |
 | §3.2 | Object store for PDFs | M0.10.2, M0.10.3, M0.10.4 | `app/object_storage.py` | `test_object_storage.py` | M0.10.2 `[x]`; M0.10.3, M0.10.4 `[ ]` |
-| §3.3 | Citation verifier | M1.10.1–M1.10.5; human verify M0.2.4 | `POST .../sources/{id}/verify`, `POST .../sources/{id}/check` | `test_source_verify.py`, `test_citation_verifier.py`, `test_source_verification.py`, `test_citation_guard.py` | M0.2.4, M1.10.1–.2 `[x]`; M1.10.3–.5 `[?]` |
+| §3.3 | Citation verifier | M1.10.1–M1.10.6; human verify M0.2.4 | `POST .../sources/{id}/verify`, `POST .../sources/{id}/check` | `test_source_verify.py`, `test_citation_verifier.py`, `test_source_verification.py`, `test_citation_guard.py` | M0.2.4, M1.10.1–.2 `[x]`; M1.10.3–.5 `[?]` |
 | §3.3 | Provenance logger (append-only) | M0.4.1–M0.4.5 | `GET .../audit`, `.../audit/export` | `test_audit_event_model.py`, `test_audit_wiring.py`, `test_audit_append_only.py`, `test_audit_api.py`, `test_created_by.py` | `[x]` (human review on X.30 `[!]`) |
 | §3.3 | Config service (discipline profile) | M0.7.1–M0.7.2 | project `discipline` / `config_json` | `test_discipline.py` | `[x]` |
 | §3.3 | Cost / rate limiter | M0.9.1–M0.9.2 | — | — | `[ ]` |
@@ -160,13 +160,13 @@
 | §6 | **ORCID/ROR author disambiguation** | X.18 *(new)* | — | — | `[ ]` |
 | §7.1 | Retrieval-grounded; untrusted-text fencing | M1.2.1–M1.2.5, M3.3.1 | `untrusted_text.py`, `note_guard.py` | `test_untrusted_text.py`, `test_prompt_fencing.py`, `test_arc_fencing.py`, `test_adversarial.py` | M1.2.1–.5 `[x]`; M3.3.1 `[ ]` |
 | §7.2 | JSON-schema outputs, reject + retry | M0.8.2, M0.8.6 | — | `test_llm_schema.py`, `test_llm_success_path.py` (fail-loudly paths), `test_structured_run.py` | M0.2.5, M0.8.2 `[x]`; M0.8.6 `[?]` |
-| §7.3 | Citation guard (hard block) | M1.10.3, M1.10.5, M1.13.1, M6.4 | research runs (`research_run.citation_rejected`); source cards: verify / check buttons | `test_citation_guard.py` | M1.10.3–.5, M1.13.1 `[?]`; human sign-off X.30 `[!]`; claims/export wait for M3.11/M6.4 |
+| §7.3 | Citation guard (hard block) | M1.10.3, M1.10.5, M1.13.1, M6.4 | research runs (`research_run.citation_rejected`); source cards: verify / check buttons | `test_citation_guard.py` | M1.10.5, M1.13.1 `[x]`; M1.10.3–.4 `[?]` (defect fixed in M1.10.6 `[?]`, awaiting review); human sign-off X.30 `[!]`; claims/export wait for M3.11/M6.4 |
 | §7.4 | Numbers from code | M6.3 | — | — | `[ ]` |
 | §7.5 | Confidence + abstention | M0.8.3, M0.8.6, M0.8.7 | `app/output_schemas.py` | `test_output_schemas.py`, `test_structured_run.py` | M0.8.3, M0.8.6, M0.8.7 `[?]` (M0.8.7 fixes a blank-answer defect found in review 2026-10-08) |
 | §7.6 | Versioned prompts; log `prompt_version` + `model_id` | M0.8.1, M0.2.3 | `GET .../research-runs` (`provider_model`, `input_snapshot`) | `test_run_read_fields.py`, `test_prompts.py`, `test_prompt_provenance.py` | M0.2.3, M0.8.1 `[x]` |
 | §7.7 | Evaluation harness / gold datasets | X.5, **X.15** | — | — | `[ ]` |
 | §7.8 | Bias & coverage warnings | X.6 | — | — | `[ ]` |
-| §7.9 | Data privacy / local model | M0.8.4, M0.8.8, M5.6 | `LOCAL_LLM_*` settings | `test_llm_participant_data.py` | M0.8.4 `[x]`; M0.8.8, M5.6 `[ ]` |
+| §7.9 | Data privacy / local model | M0.8.4, M0.8.8, M5.6 | `LOCAL_LLM_*` settings; local/private-host rule (`config.local_llm_url_problem`) | `test_llm_participant_data.py` | M0.8.4 `[x]`; M0.8.8 `[?]`; M5.6 `[ ]` |
 | App. C | Stage state machine | M0.5.1, M0.5.7 | `stage` on project responses | `test_project_stage.py`, `test_stage_advance.py`, `test_reentry.py` | M0.5.1, M0.5.8 `[x]` (forward advance only when the stage's gate is approved); re-entry M0.5.5 `[?]` |
 
 ### §8 Gates (each must **block** the next step until a human approves)

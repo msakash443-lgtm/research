@@ -4,15 +4,29 @@
     {
       "name": "api",
       "runtimeExecutable": ".venv/Scripts/python.exe",
-      "runtimeArgs": ["-c", "import os, uvicorn; uvicorn.run('app.main:app', app_dir='backend', reload=True, reload_dirs=['backend'], port=int(os.environ.get('PORT', '8000')))"],
+      "runtimeArgs": [
+        "-c",
+        "import os, uvicorn; uvicorn.run('app.main:app', app_dir='backend', reload=True, reload_dirs=['backend'], port=int(os.environ.get('PORT', '8000')))"
+      ],
       "port": 8000,
       "autoPort": true,
-      "env": { "RUN_RESEARCH_INLINE": "true", "OBSIDIAN_EXPORT_ENABLED": "true" }
+      "env": {
+        "RUN_RESEARCH_INLINE": "true",
+        "OBSIDIAN_EXPORT_ENABLED": "true"
+      }
     },
     {
       "name": "wireframes",
       "runtimeExecutable": ".venv/Scripts/python.exe",
-      "runtimeArgs": ["-m", "http.server", "8765", "--bind", "127.0.0.1", "--directory", "docs/wireframes"],
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8765",
+        "--bind",
+        "127.0.0.1",
+        "--directory",
+        "docs/wireframes"
+      ],
       "port": 8765
     }
   ]
