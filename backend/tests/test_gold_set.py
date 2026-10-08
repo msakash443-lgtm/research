@@ -24,5 +24,4 @@ def test_csv_roundtrip(tmp_path):
     assert d["papers"][0]["label"] == "include" and d["papers"][0]["known_relevant"]
     jsonschema.validate(d, json.loads((HERE / "gold_set.schema.json").read_text()))
     assert d["papers"][0]["label"] == "include" and d["papers"][0]["known_relevant"]
-    import jsonschema, json
     jsonschema.validate(d, json.loads((HERE / "gold_set.schema.json").read_text()))
