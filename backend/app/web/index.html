@@ -17,6 +17,8 @@
         </div>
         <div id="account" class="account" hidden>
           <span id="role-chip" class="role-chip" hidden></span>
+          <button id="notes-button" class="quiet-button" type="button">Notes</button>
+          <button id="capture-button" class="quiet-button" type="button">Capture</button>
           <button id="memory-toggle" class="quiet-button" type="button" aria-controls="memory-sidebar" aria-expanded="false" hidden>Memory</button>
           <span id="account-name"></span>
           <button id="logout" class="quiet-button">Sign out</button>
@@ -154,6 +156,13 @@
       <div class="dialog-actions"><button type="button" class="quiet-button" data-close>Cancel</button><button type="submit">Reject</button></div>
     </form></dialog>
 
+    <dialog id="reopen-dialog"><form id="reopen-form"><div class="dialog-heading"><h2>Reopen gate</h2><button type="button" class="close" data-close>×</button></div>
+      <p id="reopen-gate-label" class="muted"></p>
+      <label>Reason <span class="optional">Required</span><textarea name="reason" required maxlength="4000"></textarea></label>
+      <p class="helper">The approval is withdrawn and the gate returns to pending; work waiting on it is held again. The earlier decision stays in the audit log.</p>
+      <div class="dialog-actions"><button type="button" class="quiet-button" data-close>Cancel</button><button type="submit">Reopen</button></div>
+    </form></dialog>
+
     <dialog id="reenter-dialog"><form id="reenter-form"><div class="dialog-heading"><h2>Go back to an earlier stage</h2><button type="button" class="close" data-close>×</button></div>
       <label>Stage<select name="stage"></select></label>
       <label>Reason<textarea name="reason" required maxlength="1000"></textarea></label>
@@ -169,6 +178,26 @@
     </form></dialog>
 
     <dialog id="confirm-dialog"><div class="dialog-heading"><h2 id="confirm-title"></h2><button type="button" class="close" data-close>×</button></div><p id="confirm-message"></p><div class="dialog-actions"><button type="button" class="quiet-button" data-close>Cancel</button><button type="button" id="confirm-ok">Confirm</button></div></dialog>
+
+    <dialog id="capture-dialog"><form id="capture-form" method="dialog">
+      <div class="dialog-heading"><h2>New note</h2><button type="button" class="close" data-close>×</button></div>
+      <input type="hidden" name="kind" value="typed" />
+      <div class="dialog-tabs" role="group" aria-label="What kind of note">
+        <button type="button" class="tab-button active" data-capture-kind="typed">Note</button>
+        <button type="button" class="tab-button" data-capture-kind="clip">Web link</button>
+      </div>
+      <label>Note<textarea name="body" maxlength="20000" placeholder="Type a thought, hunch or lead…" autofocus></textarea></label>
+      <label id="capture-link-field" hidden>Link<input type="url" name="source_url" maxlength="2000" placeholder="https://…" /></label>
+      <label id="capture-quote-field" hidden>Clipped text<textarea name="quoted_text" maxlength="20000" placeholder="Paste the exact text, kept separate from your own words…"></textarea></label>
+      <label class="checkbox-field"><input type="checkbox" name="ai_locked" /> Never send to AI</label>
+      <p class="helper">Saved to your Inbox. No project or tag needed — file it later.</p>
+      <div class="dialog-actions"><button type="button" class="quiet-button" data-close>Cancel</button><button type="submit">Save</button></div>
+    </form></dialog>
+
+    <dialog id="notes-dialog" class="wide-dialog">
+      <div class="dialog-heading"><h2>My notes</h2><button type="button" class="close" data-close>×</button></div>
+      <div id="notes-list" class="notes-list"></div>
+    </dialog>
 
     <div id="toast" class="toast" role="status"></div>
     <script type="module" src="/assets/app.js"></script>

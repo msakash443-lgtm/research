@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, HttpUrl, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, HttpUrl, field_validator, model_validator
 
 from app.discipline import EffectiveSettings, ProfileSettings, available_profiles
 from app.doi import normalize_doi
@@ -11,6 +11,8 @@ from app.models import (
     ContextKind,
     GateCode,
     GateStatus,
+    NoteKind,
+    NoteStatus,
     ProjectRole,
     ProjectStage,
     ResearchRunStatus,
@@ -38,7 +40,6 @@ class ProjectCreate(ProjectBase):
 class ProjectRead(ProjectBase):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID
-    status: str
     stage: ProjectStage
     discipline: str | None = None
     created_at: datetime
@@ -117,6 +118,7 @@ class SourceRead(BaseModel):
     oa_url: str | None = None
     source_ids: dict | None = None
     fulltext_path: str | None = None
+    fulltext_access: dict | None = None
     quality_flags: list | None = None
     evidence_excerpt: str | None = None
     excerpt_locator: str | None = None
@@ -152,6 +154,9 @@ class ResearchRunRead(BaseModel):
     error_message: str | None
     provider_model: str | None
     prompt_version: str | None = None
+    confidence: float | None = None
+    insufficient_evidence: bool | None = None
+    insufficient_reason: str | None = None
     use_web_retrieval: bool
     created_by: str | None = None
     created_at: datetime
@@ -192,6 +197,17 @@ class GateDecision(BaseModel):
         return value.strip() or None if value is not None else None
 
 
+class GateReopen(BaseModel):
+    reason: str = Field(min_length=1, max_length=4000)
+
+    @field_validator("reason")
+    @classmethod
+    def reason_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Say why the approval is being reopened; the reason is recorded")
+        return value.strip()
+
+
 class GateRead(BaseModel):
     code: GateCode
     status: GateStatus
@@ -200,6 +216,9 @@ class GateRead(BaseModel):
     note: str | None
     required_roles: list[ProjectRole]
     can_decide: bool
+    # Earlier gates still waiting for approval; this gate can't be decided until they are (M0.5.10).
+    waiting_for: list[GateCode] = []
+    can_reopen: bool = False
 
 
 class ArtifactRead(BaseModel):
@@ -294,3 +313,100 @@ class ProjectProfileRead(BaseModel):
     label: str | None
     overrides: dict
     effective: EffectiveSettings
+
+
+class NoteCreate(BaseModel):
+    """A quick capture (X.31.1). `client_id` is set by the device and makes a retried submit
+    idempotent: posting the same (signed-in user, client_id) twice returns the same note.
+
+    Only `typed` (the researcher's own words) and `clip` (a web clip: a link and/or quoted text,
+    kept separate from `body`) are accepted so far. `voice`, `highlight` and `photo` need
+    attachment storage (M0.10.2) and ship with X.31.17/X.31.3/X.31.18.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    client_id: str = Field(min_length=1, max_length=64)
+    kind: NoteKind = NoteKind.typed
+    body: str = Field(default="", max_length=20000)
+    quoted_text: str | None = Field(default=None, max_length=20000)
+    source_url: str | None = Field(default=None, max_length=2000)
+    locator: str | None = Field(default=None, max_length=255)
+    captured_at: datetime | None = None
+    device: str | None = Field(default=None, max_length=40)
+    ai_locked: bool = False
+
+    @field_validator("kind")
+    @classmethod
+    def _supported_kind(cls, value: NoteKind) -> NoteKind:
+        if value not in (NoteKind.typed, NoteKind.clip):
+            raise ValueError(f"Capturing a '{value.value}' note isn't available yet")
+        return value
+
+    @field_validator("body")
+    @classmethod
+    def _strip_body(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("quoted_text", "source_url", "locator", "device")
+    @classmethod
+    def _strip_optional(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
+
+    @model_validator(mode="after")
+    def _kind_requirements(self) -> "NoteCreate":
+        if self.kind is NoteKind.typed and not self.body:
+            raise ValueError("A typed note needs body text")
+        if self.kind is NoteKind.clip and not (self.quoted_text or self.source_url):
+            raise ValueError("A web clip needs quoted text, a link, or both")
+        return self
+
+
+class NoteRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    project_id: uuid.UUID | None
+    kind: NoteKind
+    status: NoteStatus
+    body: str
+    quoted_text: str | None
+    source_url: str | None
+    locator: str | None
+    ai_locked: bool
+    revision: int
+    captured_at: datetime
+    device: str | None
+    owner_id: uuid.UUID
+    created_at: datetime
+    updated_at: datetime
+
+
+class NotePatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    base_revision: int = Field(ge=1)
+    body: str = Field(min_length=1, max_length=20000)
+
+    @field_validator("body")
+    @classmethod
+    def _strip_body(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("body cannot be blank")
+        return stripped
+
+
+class NoteLock(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ai_locked: bool
+
+
+class NoteRevisionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    revision: int
+    body: str
+    quoted_text: str | None
+    edited_by: str | None
+    created_at: datetime
+

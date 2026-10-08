@@ -23,6 +23,7 @@ from sqlalchemy import select, text
 from app import task_queue as q
 from app import task_registry as registry
 from app import task_runner
+from gate_helpers import approve_earlier_gates
 from app.config import get_settings
 from app.database import SessionLocal
 from app.main import app
@@ -101,6 +102,7 @@ def test_m0_exit_create_share_log_and_run_a_gated_task(fake_llm, bulk_search, mo
     assert task_runner.run_one_task() is False and bulk_search == []
 
     # 5. only a supervisor's approval releases it -------------------------------------------------------
+    approve_earlier_gates(project_id, "G2")  # G1 (setup, not audited); gates go in order (M0.5.10)
     approve = lambda who: who.post(f"/api/projects/{project_id}/gates/G2/approve", json={"note": "Strategy is sound"})  # noqa: E731
     assert approve(coauthor).status_code == 403 and approve(reviewer).status_code == 403
     assert task_runner.run_one_task() is False

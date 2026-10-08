@@ -12,6 +12,7 @@ import pytest
 from pydantic import SecretStr
 
 from app.database import Base, engine
+from tests.llm_replies import chat_reply
 
 
 @pytest.fixture(autouse=True)
@@ -31,7 +32,7 @@ class FakeLLMEndpoint:
 
     def __init__(self):
         self.requests = []
-        self.handler = lambda request: {"choices": [{"message": {"content": "Fake answer [S1]."}}]}
+        self.handler = lambda request: chat_reply("Fake answer [S1].")
 
     def respond(self, request):
         import httpx

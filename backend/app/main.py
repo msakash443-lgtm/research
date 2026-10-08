@@ -12,7 +12,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from app.database import Base, engine
 from app.config import get_settings
 from app.middleware import ContentLengthLimitMiddleware
-from app.routers import audit, auth, connectors, criteria, gates, members, prisma, profile, projects, research_runs, screening, searches, seeds, sources, stage
+from app.routers import audit, auth, clusters, connectors, coverage, criteria, exports, extraction_schemas, extractions, gates, members, notes, prisma, profile, projects, replication, research_runs, screening, searches, seeds, sources, stage, usage
 
 # Production settings (session secret, HTTPS, Postgres, ...) are validated in Settings.
 settings = get_settings()
@@ -54,6 +54,8 @@ if settings.cors_origins:
 app.include_router(auth.router, prefix="/api")
 app.include_router(projects.router, prefix="/api")
 app.include_router(audit.router, prefix="/api")
+app.include_router(usage.router, prefix="/api")
+app.include_router(exports.router, prefix="/api")
 app.include_router(gates.router, prefix="/api")
 app.include_router(stage.router, prefix="/api")
 app.include_router(profile.router, prefix="/api")
@@ -61,12 +63,18 @@ app.include_router(profile.catalogue, prefix="/api")
 app.include_router(connectors.router, prefix="/api")
 app.include_router(criteria.router, prefix="/api")
 app.include_router(screening.router, prefix="/api")
+app.include_router(extractions.router, prefix="/api")
+app.include_router(extraction_schemas.router, prefix="/api")
+app.include_router(clusters.router, prefix="/api")
+app.include_router(coverage.router, prefix="/api")
+app.include_router(replication.router, prefix="/api")
 app.include_router(prisma.router, prefix="/api")
 app.include_router(searches.router, prefix="/api")
 app.include_router(seeds.router, prefix="/api")
 app.include_router(members.router, prefix="/api")
 app.include_router(sources.router, prefix="/api")
 app.include_router(research_runs.router, prefix="/api")
+app.include_router(notes.router, prefix="/api")
 
 
 @app.middleware("http")

@@ -1,4 +1,4 @@
-import { $, el, formatDate } from "../dom.js";
+import { $, el, formatDate, toast } from "../dom.js";
 import { request, projectApi } from "../api.js";
 
 let offset = 0;
@@ -17,6 +17,30 @@ async function loadPage(ctx, append) {
   const page = await request(projectApi(ctx.project.id, `/audit?${params.toString()}`));
   rows = append ? rows.concat(page) : page;
   return page;
+}
+
+// The vault is built by the server (verified sources only) and arrives as a zip; fetch it so a refusal
+// (feature off, no access) shows as a message instead of navigating to a JSON error page.
+async function downloadObsidianVault(ctx, button) {
+  if (button.disabled) return;
+  button.disabled = true;
+  try {
+    const response = await fetch(projectApi(ctx.project.id, "/export/obsidian"));
+    if (response.status === 404) throw new Error("Obsidian export is not enabled on this server.");
+    if (!response.ok) throw new Error("The Obsidian export failed.");
+    const name = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") || "")?.[1] || "obsidian-vault.zip";
+    const url = URL.createObjectURL(await response.blob());
+    const link = el("a", { href: url, attrs: { download: name } });
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 10000);
+    toast("Vault downloaded. Unzip it and open the folder in Obsidian (verified sources only).");
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function table(ctx) {
@@ -57,6 +81,13 @@ async function render(root, ctx) {
     el("a", { className: "quiet-button", text: "Export CSV", href: projectApi(ctx.project.id, "/audit/export?format=csv"), attrs: { download: "" } }),
     el("a", { className: "quiet-button", text: "Export JSON", href: projectApi(ctx.project.id, "/audit/export?format=json"), attrs: { download: "" } })
   );
+  const obsidian = el("button", {
+    className: "quiet-button",
+    text: "Export to Obsidian",
+    attrs: { type: "button", title: "Download a vault of verified sources, answers and context as Markdown notes" },
+  });
+  obsidian.addEventListener("click", () => downloadObsidianVault(ctx, obsidian));
+  exportLinks.append(obsidian);
   title.append(exportLinks);
   panel.append(title);
 

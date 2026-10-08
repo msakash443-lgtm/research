@@ -8,7 +8,8 @@ from sqlalchemy import select
 
 from app.database import SessionLocal
 from app.main import app
-from app.models import AuditEvent, Gate, GateCode, Project, ProjectMember, ProjectRole, User
+from app.models import AuditEvent, Gate, GateCode, Project, ProjectMember, ProjectRole, User, utcnow
+from gate_helpers import approve_earlier_gates
 
 
 def _login(email):
@@ -68,6 +69,7 @@ def test_supervisor_approves_a_normal_gate_and_it_is_recorded(team):
 @pytest.mark.parametrize("code", ["G7", "G8", "G11"])
 def test_owner_only_gates_refuse_a_supervisor_but_accept_the_owner(team, code):
     clients, _, project_id = team
+    approve_earlier_gates(project_id, code)
 
     assert clients["supervisor"].post(_url(project_id, code, "approve")).status_code == 403
     assert clients["owner"].post(_url(project_id, code, "approve")).status_code == 200
@@ -87,6 +89,7 @@ def test_co_authors_and_reviewers_can_never_decide_any_gate(team, role):
 def test_rejection_needs_a_reason_and_can_be_followed_by_approval(team):
     clients, _, project_id = team
     url = lambda verb: _url(project_id, "G2", verb)  # noqa: E731
+    approve_earlier_gates(project_id, "G2")
 
     assert clients["owner"].post(url("reject")).status_code == 422
     assert clients["owner"].post(url("reject"), json={"note": "   "}).status_code == 422
@@ -99,6 +102,7 @@ def test_rejection_needs_a_reason_and_can_be_followed_by_approval(team):
 
 def test_an_approved_gate_cannot_be_decided_again(team):
     clients, _, project_id = team
+    approve_earlier_gates(project_id, "G3")
     clients["owner"].post(_url(project_id, "G3", "approve"))
 
     assert clients["owner"].post(_url(project_id, "G3", "approve")).status_code == 409
@@ -195,7 +199,8 @@ def test_a_concurrent_decision_cannot_overwrite_an_approval(race_db):
     first, second = race_db(), race_db()
     try:
         p1, p2 = first.get(Project, project_id), second.get(Project, project_id)
-        ensure_gates(first, p1)
+        g1 = next(g for g in ensure_gates(first, p1) if g.code == GateCode.G1)
+        g1.status, g1.decided_by, g1.decided_at = GateStatus.approved, "test-setup", utcnow()  # gates go in order
         first.commit()
         # Both requests have read G2 as pending before either writes. Keep the second read alive:
         # the session's identity map is weak, and a reloaded row would hide the race window.

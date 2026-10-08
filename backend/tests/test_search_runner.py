@@ -71,7 +71,7 @@ def test_run_records_query_filters_counts_and_results():
         assert row.n_results == 5
         assert row.counts == {
             "retrieved": 5, "repeated_ids": 0, "unique": 5, "duplicates_removed": 0,
-            "reported_total": 1234, "truncated": False, "skipped_records": 0,
+            "reported_total": 1234, "truncated": False, "skipped_records": 0, "cache_bypassed": True,
         }
         assert [r["id"] for r in row.results] == [f"openalex:W{i}" for i in range(5)]
         assert row.exact is True and row.caveats == []

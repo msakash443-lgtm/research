@@ -1,5 +1,6 @@
 import { $, el, label, toast, formatDate, emptyCard, confirmAction } from "../dom.js";
 import { request, projectApi } from "../api.js";
+import { actorName, provenanceBadge } from "../provenance.js";
 
 // Selection survives re-renders within this step but resets on project switch (module state).
 let selected = new Set();
@@ -94,6 +95,52 @@ function openMergeDialog(ctx, sources) {
   dialog.showModal();
 }
 
+// Open-access full text (plan M2.7.1/M2.7.7). The server stores a PDF only when its licence permits;
+// otherwise it keeps the link, and the card says which happened and why.
+function fulltextText(source) {
+  const access = source.fulltext_access;
+  if (!access) return null;
+  const licence = access.licence || "unknown";
+  if (access.status === "stored") return `Full text stored · licence ${licence}`;
+  if (access.status === "link_only") return `Open-access copy found, but its licence (${licence}) doesn't allow storing a copy: link only`;
+  if (access.status === "no_pdf") return "Open-access page found, but no PDF link";
+  if (access.status === "no_oa") return "No open-access copy found";
+  return null;
+}
+
+function fulltextFetchButton(ctx, source) {
+  const button = el("button", { className: "quiet-button", text: source.fulltext_access ? "Look for open-access PDF again" : "Fetch open-access PDF" });
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    try {
+      await request(projectApi(ctx.project.id, `/sources/${source.id}/fulltext/fetch`), { method: "POST", body: "{}" });
+      toast("Full-text fetch queued. A PDF is stored only if its licence allows it.");
+      await ctx.refresh();
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      button.disabled = false;
+    }
+  });
+  return button;
+}
+
+function fulltextSection(ctx, source) {
+  const section = el("div", { className: "source-fulltext" });
+  const text = fulltextText(source);
+  if (text) {
+    const when = source.fulltext_access.checked_at ? ` · checked ${formatDate(source.fulltext_access.checked_at)}` : "";
+    section.append(el("p", { className: "source-locator", text: text + when }));
+  }
+  if (source.oa_url && /^https?:\/\//i.test(source.oa_url)) {
+    section.append(el("a", { className: "small", text: "Open-access copy", href: source.oa_url, target: "_blank", rel: "noopener noreferrer" }));
+  }
+  if (ctx.canWrite && source.doi && !source.fulltext_path) {
+    section.append(el("div", { className: "source-actions", children: [fulltextFetchButton(ctx, source)] }));
+  }
+  return section.childElementCount ? section : null;
+}
+
 function sourceCard(ctx, source) {
   const card = el("article", { className: "source-card" });
   const meta = [label(source.source_type), source.year].filter(Boolean).join(" · ");
@@ -106,12 +153,28 @@ function sourceCard(ctx, source) {
     card.append(el("h3", { text: source.title }));
   }
   card.append(el("p", { className: "verification-status small", text: verificationText(source) }));
+  // Agent-retrieved sources carry a provenance badge (X.17); retrieval uses no language model, and the
+  // human approval for a source is its verification.
+  if (source.origin === "retrieved") {
+    const byPerson = source.metadata_verified && source.verification_method === "human";
+    card.append(
+      provenanceBadge({
+        producer: actorName(ctx, source.created_by),
+        date: source.created_at,
+        approval: byPerson
+          ? { state: "approved", text: `Verified by a person${source.verified_at ? ` · ${formatDate(source.verified_at)}` : ""}` }
+          : { state: "pending", text: source.metadata_verified ? "Checked automatically, not yet by a person" : "Not verified" },
+      })
+    );
+  }
   if (source.evidence_excerpt) {
     card.append(el("p", { className: "evidence-excerpt", text: source.evidence_excerpt }));
     if (source.excerpt_locator) card.append(el("p", { className: "source-locator", text: `Location: ${source.excerpt_locator}` }));
   } else {
     card.append(el("p", { className: "source-locator", text: "No evidence excerpt saved yet; the agent will not use this source for factual claims." }));
   }
+  const fulltext = fulltextSection(ctx, source);
+  if (fulltext) card.append(fulltext);
   if (ctx.canWrite && !(source.metadata_verified && source.verification_method === "human")) {
     card.append(verificationActions(ctx, source));
   }

@@ -14,25 +14,50 @@ Failure policy (plan rule 22: fail loudly, never return placeholder data):
 * After `breaker_threshold` consecutive calls that exhausted their retries, the circuit opens and
   calls fail at once with `CircuitOpenError` until `breaker_cooldown` passes; then one trial call
   is allowed (success closes the circuit, failure reopens it).
+* Optional response cache (off unless `cache_ttl_seconds` > 0, i.e. `CONNECTOR_CACHE_TTL_SECONDS`): a
+  repeat of the same connector + method + path + params + body within the TTL is answered from memory
+  *before* the rate gate, breaker and network. Only successful JSON replies are stored (never errors or
+  404s). `cache_hits`/`cache_misses` and `last_from_cache` let callers record that an answer was cached;
+  a search that must be fresh passes `fresh=True` or runs inside `bypass_cache()`. Headers are not part of the key.
 * Redirects are not followed. Error messages carry the connector name and status only, never the
   URL, query or headers (they can hold API keys or the researcher's search terms).
 """
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
+import copy
+import hashlib
+import json
 import random
 import threading
 import time
-from dataclasses import dataclass
+from collections import OrderedDict
+from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
 from datetime import datetime, timezone
 from typing import Any, Callable
 
 import httpx
 
+from app.config import get_settings
 from app.connectors.base import ConnectorError
 
 RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+
+# Set while a block of code must see live answers (a database search). Per thread/task, never global.
+_BYPASS_CACHE: contextvars.ContextVar[bool] = contextvars.ContextVar("connector_bypass_cache", default=False)
+
+
+@contextlib.contextmanager
+def bypass_cache():
+    """Inside this block every connector request skips the response cache (and refreshes it)."""
+    token = _BYPASS_CACHE.set(True)
+    try:
+        yield
+    finally:
+        _BYPASS_CACHE.reset(token)
 
 
 class NotFoundError(ConnectorError):
@@ -53,12 +78,14 @@ class HttpPolicy:
     min_interval_seconds: float = 0.0  # rate gate: minimum spacing between request starts
     breaker_threshold: int = 5
     breaker_cooldown_seconds: float = 60.0
+    cache_ttl_seconds: float = field(default_factory=lambda: get_settings().connector_cache_ttl_seconds)  # 0 = no cache
+    cache_max_entries: int = 256
 
     def __post_init__(self) -> None:
         if self.timeout_seconds <= 0 or self.max_retries < 0 or self.breaker_threshold < 1:
             raise ValueError("invalid HttpPolicy")
         if min(self.backoff_base_seconds, self.backoff_max_seconds, self.max_retry_after_seconds,
-               self.min_interval_seconds, self.breaker_cooldown_seconds) < 0:
+               self.min_interval_seconds, self.breaker_cooldown_seconds, self.cache_ttl_seconds) < 0 or self.cache_max_entries < 1:
             raise ValueError("invalid HttpPolicy")
 
 
@@ -101,6 +128,10 @@ class ConnectorHttpClient:
         self._failures = 0
         self._open_until: float | None = None
         self._trial_in_flight = False
+        self._cache: OrderedDict[str, tuple[float, Any]] = OrderedDict()
+        self.cache_hits = 0
+        self.cache_misses = 0
+        self.last_from_cache = False
         self._client = httpx.Client(
             base_url=base_url,
             headers=headers,
@@ -152,19 +183,71 @@ class ConnectorHttpClient:
         cap = min(self.policy.backoff_max_seconds, self.policy.backoff_base_seconds * (2**attempt))
         return self._rng.uniform(0, cap)
 
-    def get_json(self, path: str, params: dict[str, Any] | None = None, headers: dict[str, str] | None = None) -> Any:
-        return self._request_json("GET", path, params, headers, None)
+    def get_json(
+        self, path: str, params: dict[str, Any] | None = None, headers: dict[str, str] | None = None, *, fresh: bool = False
+    ) -> Any:
+        return self._request_json("GET", path, params, headers, None, fresh)
+
+    def get_text(
+        self, path: str, params: dict[str, Any] | None = None, headers: dict[str, str] | None = None, *, fresh: bool = False
+    ) -> str:
+        """GET a text reply (e.g. an Atom feed); same retry/gate/breaker/cache policy as `get_json`."""
+        return self._request_json("GET", path, params, headers, None, fresh, as_text=True)
 
     def post_json(
-        self, path: str, body: Any, params: dict[str, Any] | None = None, headers: dict[str, str] | None = None
+        self, path: str, body: Any, params: dict[str, Any] | None = None, headers: dict[str, str] | None = None,
+        *, fresh: bool = False,
     ) -> Any:
         """POST a JSON body for read-only batch lookups; same retry/gate/breaker policy as `get_json`."""
-        return self._request_json("POST", path, params, headers, body)
+        return self._request_json("POST", path, params, headers, body, fresh)
 
-    def _request_json(self, method: str, path: str, params, headers, body) -> Any:
+    # --- cache ---------------------------------------------------------------
+
+    def _cache_key(self, method: str, path: str, params, body, as_text: bool = False) -> str:
+        raw = json.dumps([self.name, method, path, params, body, as_text], sort_keys=True, default=str)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def _cache_get(self, key: str) -> tuple[bool, Any]:
+        with self._lock:
+            entry = self._cache.get(key)
+            if entry is None:
+                return False, None
+            stored_at, value = entry
+            if self._clock() - stored_at >= self.policy.cache_ttl_seconds:
+                del self._cache[key]
+                return False, None
+            self._cache.move_to_end(key)
+            return True, copy.deepcopy(value)
+
+    def _cache_put(self, key: str, value: Any) -> None:
+        with self._lock:
+            self._cache[key] = (self._clock(), copy.deepcopy(value))
+            self._cache.move_to_end(key)
+            while len(self._cache) > self.policy.cache_max_entries:
+                self._cache.popitem(last=False)
+
+    def _request_json(self, method: str, path: str, params, headers, body, fresh: bool = False, *, as_text: bool = False) -> Any:
+        caching = self.policy.cache_ttl_seconds > 0
+        fresh = fresh or _BYPASS_CACHE.get()
+        key = self._cache_key(method, path, params, body, as_text) if caching else ""
+        if caching and not fresh:
+            hit, value = self._cache_get(key)
+            if hit:
+                self.cache_hits += 1
+                self.last_from_cache = True
+                return value
+        self.last_from_cache = False
+        if caching:
+            self.cache_misses += 1
+        result = self._request_json_network(method, path, params, headers, body, as_text)
+        if caching:
+            self._cache_put(key, result)
+        return result
+
+    def _request_json_network(self, method: str, path: str, params, headers, body, as_text: bool = False) -> Any:
         self._before_call()
         try:
-            result = self._get_json_with_retries(method, path, params, headers, body)
+            result = self._get_json_with_retries(method, path, params, headers, body, as_text)
         except NotFoundError:
             self._record(True)  # the service is healthy; the record just isn't there
             raise
@@ -177,7 +260,7 @@ class ConnectorHttpClient:
         self._record(True)
         return result
 
-    def _get_json_with_retries(self, method, path, params, headers, body) -> Any:
+    def _get_json_with_retries(self, method, path, params, headers, body, as_text: bool = False) -> Any:
         last = "no response"
         for attempt in range(self.policy.max_retries + 1):
             self._wait_for_slot()
@@ -195,6 +278,8 @@ class ConnectorHttpClient:
                     retry_after = parse_retry_after(response.headers.get("Retry-After"))
                 elif status >= 400:
                     raise ConnectorError(f"{self.name}: request rejected (HTTP {status})")
+                elif as_text:
+                    return response.text
                 else:
                     try:
                         return response.json()

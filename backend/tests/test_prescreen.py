@@ -210,13 +210,13 @@ def _claimed(pid, monkeypatch):
 
 
 def test_the_handler_writes_suggestions(world, monkeypatch):
-    monkeypatch.setattr(handlers, "OpenAICompatibleLLM", lambda settings: ScriptedLLM([answer("include", "I1", 0.9)] * 3))
+    monkeypatch.setattr(handlers, "OpenAICompatibleLLM", lambda settings, **kw: ScriptedLLM([answer("include", "I1", 0.9)] * 3))
     handlers.handle_screening_prescreen(_claimed(world["pid"], monkeypatch))
     assert len(rows(world)) == 3
 
 
 def test_the_handler_fails_the_task_when_some_records_failed(world, monkeypatch):
-    monkeypatch.setattr(handlers, "OpenAICompatibleLLM", lambda settings: ScriptedLLM([answer("include", "I1")] + ["bad"] * 3 + [answer("include", "I1")]))
+    monkeypatch.setattr(handlers, "OpenAICompatibleLLM", lambda settings, **kw: ScriptedLLM([answer("include", "I1")] + ["bad"] * 3 + [answer("include", "I1")]))
     with pytest.raises(PermanentTaskError, match="1 record"):
         handlers.handle_screening_prescreen(_claimed(world["pid"], monkeypatch))
     assert len(rows(world)) == 2  # what worked is kept; the failed one is left for a person
@@ -224,7 +224,7 @@ def test_the_handler_fails_the_task_when_some_records_failed(world, monkeypatch)
 
 def test_the_handler_fails_loudly_when_no_model_is_configured(world, monkeypatch):
     class Unconfigured(OpenAICompatibleLLM):
-        def __init__(self, settings):
+        def __init__(self, settings, **kw):
             super().__init__(settings, api_key=None, api_base_url=None, model=None)
 
     monkeypatch.setattr(handlers, "OpenAICompatibleLLM", Unconfigured)

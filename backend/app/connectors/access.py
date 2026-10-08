@@ -39,7 +39,7 @@ _ENTRIES = (
     ConnectorInfo("openalex", "OpenAlex", AccessKind.official_api, implemented=True),
     ConnectorInfo("crossref", "Crossref", AccessKind.official_api, implemented=True),
     ConnectorInfo("semantic_scholar", "Semantic Scholar", AccessKind.official_api, implemented=True),
-    ConnectorInfo("arxiv", "arXiv", AccessKind.official_api),
+    ConnectorInfo("arxiv", "arXiv", AccessKind.official_api, implemented=True),
     ConnectorInfo("unpaywall", "Unpaywall", AccessKind.official_api, implemented=True),
     ConnectorInfo("pubmed", "PubMed / Europe PMC", AccessKind.official_api),
     ConnectorInfo("core", "CORE", AccessKind.official_api),

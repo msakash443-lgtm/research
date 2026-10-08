@@ -34,9 +34,11 @@ class Settings(BaseSettings):
     # explicit decision that the third-party model may see participant data (Q4).
     participant_data_requires_local_model: bool = True
     research_run_limit_per_day: int = 20
+    # Web/scholar-retrieval runs cost more and reach outside services, so they get a lower daily cap (M0.9.2).
+    research_run_retrieval_limit_per_day: int = Field(default=5, ge=0)
+    # Total model tokens a project may use before further calls are refused. 0 = no limit (M0.9.1).
+    project_token_budget: int = Field(default=0, ge=0)
     research_worker_poll_seconds: float = 2
-    research_run_lease_seconds: int = 900
-    research_run_max_attempts: int = 3
     task_lease_seconds: int = 300
     task_retry_base_seconds: int = 5
     task_retry_max_seconds: int = 300
@@ -55,8 +57,28 @@ class Settings(BaseSettings):
     connectors_allow_scraping: bool = False
     # Contact address sent to scholarly APIs' "polite pool" (OpenAlex now, Crossref later). Optional; no placeholder.
     connector_contact_email: str | None = None
+    # Seconds a connector may answer an identical request from memory (M1.3.3). 0 = off, so searches stay live.
+    connector_cache_ttl_seconds: float = Field(default=0, ge=0)
     # Optional Semantic Scholar API key (sent as x-api-key). Without one the shared, heavily throttled pool is used.
     semantic_scholar_api_key: SecretStr | None = None
+    # Object storage for PDFs/full text (M0.10.2). Only "local" exists yet; any other value fails loudly.
+    object_storage_backend: str = "local"
+    object_storage_root: str = "./data/objects"
+    object_storage_max_bytes: int = Field(default=50 * 1024 * 1024, gt=0)
+    # Open-access full-text fetch (M2.7.1): Unpaywall licences under which a PDF may be stored. Anything
+    # else (unknown, "implied-oa", "publisher-specific-oa") keeps the link and metadata only.
+    fulltext_store_licences: list[str] = ["cc0", "pd", "public-domain", "cc-by", "cc-by-sa", "cc-by-nd", "cc-by-nc", "cc-by-nc-sa", "cc-by-nc-nd"]
+    fulltext_fetch_timeout_seconds: float = Field(default=60, gt=0)
+    # PDF text extraction (M2.7.3): refuse PDFs with more pages than this rather than parse them.
+    fulltext_max_pages: int = Field(default=2000, gt=0)
+    # Thematic clustering (M3.8.1): embeddings from an OpenAI-compatible /embeddings endpoint. Off while
+    # EMBEDDING_MODEL is unset. The base URL and key default to LLM_API_BASE_URL / LLM_API_KEY.
+    embedding_model: str | None = None
+    embedding_api_base_url: str | None = None
+    embedding_batch_size: int = Field(default=64, ge=1, le=2048)
+    cluster_max_sources: int = Field(default=1000, ge=2)
+    # Obsidian vault export (X.34.1): GET /api/projects/{id}/export/obsidian. Off by default; 404 while off.
+    obsidian_export_enabled: bool = False
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

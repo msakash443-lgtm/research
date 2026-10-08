@@ -1,0 +1,17 @@
+{
+  "name": "default",
+  "version": 1,
+  "label": "Default extraction schema",
+  "description": "Spec Appendix B: question, theory, constructs, measures, sample, method, findings, limitations, future research.",
+  "fields": [
+    {"key": "research_question", "type": "string", "description": "The paper's stated research question or objective."},
+    {"key": "theory_used", "type": "list", "description": "Theories the paper uses or tests."},
+    {"key": "constructs", "type": "list", "description": "Constructs studied, each with the authors' definition ({name, definition})."},
+    {"key": "measures", "type": "list", "description": "Measures/scales used ({construct, scale, reliability or null}).", "critical": true},
+    {"key": "sample", "type": "object", "description": "Sample ({n, population, country}).", "critical": true},
+    {"key": "method", "type": "object", "description": "Design and analysis ({design, analysis})."},
+    {"key": "key_findings", "type": "list", "description": "Findings ({statement, effect_size or null, p_or_ci or null}).", "critical": true},
+    {"key": "limitations", "type": "list", "description": "Limitations the authors state."},
+    {"key": "future_research", "type": "list", "description": "Future-research statements by the authors."}
+  ]
+}

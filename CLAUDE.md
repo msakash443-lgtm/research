@@ -1,5 +1,7 @@
 # Workspace instructions
 
+- Tool-neutral rules live in `AGENTS.md` (canonical) and `plan.md` §1 / §1.8; this file is the Claude Code copy. Keep them in sync.
+
 - `plan.md` is the master plan for this workspace. Read it before starting any task and follow its §1 Rules.
 - Claim a task in `plan.md` (status `[~]`, owner, date) **before** editing code, and save `plan.md` after every status change — do not wait until the end of the session.
 - New work you discover goes into `plan.md` as a new task; don't widen the current change.

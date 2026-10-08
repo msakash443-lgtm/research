@@ -21,6 +21,9 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-research_ai}:${POSTGRES_PASSWORD:-change-me}@db:5432/${POSTGRES_DB:-research_ai}
       RUN_RESEARCH_INLINE: "false"
+      OBJECT_STORAGE_ROOT: /data/objects
+    volumes:
+      - object_data:/data/objects
     ports:
       - "8000:8080"
     depends_on:
@@ -39,9 +42,13 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-research_ai}:${POSTGRES_PASSWORD:-change-me}@db:5432/${POSTGRES_DB:-research_ai}
       RUN_RESEARCH_INLINE: "false"
+      OBJECT_STORAGE_ROOT: /data/objects
+    volumes:
+      - object_data:/data/objects
     depends_on:
       db:
         condition: service_healthy
 
 volumes:
   postgres_data:
+  object_data:

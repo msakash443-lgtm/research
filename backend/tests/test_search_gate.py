@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app import task_handlers, task_runner
+from gate_helpers import approve_earlier_gates
 from app.config import get_settings
 from app.connectors.base import ConnectorBase, ConnectorError, PaperRecord, SearchPage, SearchRequest
 from app.database import SessionLocal
@@ -60,6 +61,7 @@ def team():
         for uid, role in ((co_id, ProjectRole.co_author), (sup_id, ProjectRole.supervisor), (rev_id, ProjectRole.reviewer)):
             db.add(ProjectMember(project_id=uuid.UUID(pid), user_id=uuid.UUID(uid), role=role))
         db.commit()
+    approve_earlier_gates(pid, "G2")  # G1; gates go in order (M0.5.10)
     return {"owner": owner, "owner_id": owner_id, "co": co, "sup": sup, "rev": rev, "pid": pid}
 
 

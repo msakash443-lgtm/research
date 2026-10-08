@@ -9,6 +9,7 @@ from sqlalchemy import select
 from app import task_queue as q
 from app import task_registry as registry
 from app import task_runner, worker
+from gate_helpers import approve_earlier_gates
 from app.database import SessionLocal
 from app.gates import ensure_gates, release_tasks_for_approved_gates
 from app.main import app
@@ -60,6 +61,7 @@ def _task(task_id):
 
 
 def _approve(team, who, code="G2"):
+    approve_earlier_gates(team["project"], code)  # gates go in order (M0.5.10)
     return team[who].post(f"/api/projects/{team['project']}/gates/{code}/approve", json={"note": "ok"})
 
 
@@ -95,6 +97,7 @@ def test_approving_the_gate_releases_the_task_and_it_then_runs(gated_type, team)
 
 def test_rejecting_the_gate_keeps_the_task_blocked(gated_type, team):
     task_id = _enqueue(team["project"])
+    approve_earlier_gates(team["project"], "G2")
 
     rejected = team["owner"].post(f"/api/projects/{team['project']}/gates/G2/reject", json={"note": "search too narrow"})
 

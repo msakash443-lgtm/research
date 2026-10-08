@@ -281,3 +281,55 @@ def test_a_run_resumed_after_a_crash_does_not_duplicate_retrieved_sources(arc, f
     with SessionLocal() as db:
         actions = [e.action for e in db.scalars(select(AuditEvent).where(AuditEvent.project_id == p))]
     assert actions.count("sources.retrieved") == 1  # the retry stored nothing, so it records nothing
+
+
+# ---- true concurrent races (M0.6.10) -------------------------------------------------------
+
+def test_losing_a_true_enqueue_race_returns_the_winners_task_instead_of_an_error():
+    p = _project()
+    with SessionLocal() as winner:
+        won = q.enqueue_task(winner, p, "demo", idempotency_key="race:1")
+        winner.commit()
+        won_id = won.id
+
+    with SessionLocal() as loser:
+        real_scalar = loser.scalar
+        calls = []
+
+        def stale_first_check(*args, **kwargs):
+            calls.append(1)
+            return None if len(calls) == 1 else real_scalar(*args, **kwargs)  # the SELECT ran before the winner committed
+
+        loser.scalar = stale_first_check
+        got = q.enqueue_task(loser, p, "demo", idempotency_key="race:1")
+        loser.commit()
+        assert got.id == won_id
+    assert _count(Task, project_id=p) == 1
+
+
+def test_losing_an_ingest_race_skips_that_item_and_keeps_the_rest(arc):
+    p = _project()
+    run = _new_run(p)
+    items = _items()
+    with SessionLocal() as other:  # a concurrent attempt already stored item 0 under the same key
+        other.add(Source(project_id=p, title="Web page", ingest_key=f"arc:{run}:{executor._item_identity_hash(items[0])}"))
+        other.commit()
+
+    with SessionLocal() as db:
+        real_scalars = db.scalars
+        hidden = []
+
+        def stale_keys(statement, *args, **kwargs):
+            # Hide the already-stored key from the ingest_key lookup only, whatever order the lookups run in.
+            if "ingest_key LIKE" in str(statement):
+                hidden.append(1)
+                return type('Empty', (), {'all': lambda self: []})()
+            return real_scalars(statement, *args, **kwargs)
+
+        db.scalars = stale_keys
+        result = executor._ingest_arc_sources(db, db.get(Project, p), db.get(ResearchRun, run), get_settings())
+        db.commit()
+
+    assert hidden, "the stale ingest_key lookup never ran, so the race path was not exercised"
+    assert result["added"] == 2  # only what this call stored; the raced item is the other attempt's
+    assert _count(Source, project_id=p) == 3

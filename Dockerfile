@@ -7,6 +7,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN addgroup --system app && adduser --system --ingroup app app
+# Object storage root (M0.10.2); docker-compose.yml mounts a shared volume here.
+RUN mkdir -p /data/objects && chown -R app:app /data
 
 COPY backend/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt

@@ -2,18 +2,22 @@ from __future__ import annotations
 
 import uuid
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from fastapi.responses import Response
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app import audit
 from app.database import get_db
 from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_access
-from app.connectors.factory import enabled_lookup_names
+from app.connectors.factory import enabled_lookup_names, unpaywall_unavailable_reason
 from app.models import Project, Source, SourceExcerpt, Task, TaskStatus, User, excerpt_hash, utcnow
-from app.task_handlers import SOURCE_CHECK
+from app.task_handlers import FULLTEXT_FETCH, SOURCE_CHECK
 from app.task_queue import enqueue_task
+from app.refmanager import parse_bibtex, parse_ris, to_bibtex, to_ris
 from app.schemas import SourceCreate, SourceMerge, SourceRead
 from app.source_merge import SourceMergeError, merge_sources
 
@@ -43,6 +47,7 @@ def source_response(source: Source) -> SourceRead:
         oa_url=source.oa_url,
         source_ids=source.source_ids,
         fulltext_path=source.fulltext_path,
+        fulltext_access=source.fulltext_access,
         quality_flags=source.quality_flags,
         evidence_excerpt=excerpt.content if excerpt else None,
         excerpt_locator=excerpt.locator if excerpt else None,
@@ -174,3 +179,111 @@ def queue_source_check(
     audit.record(db, actor=actor, action="source.check_requested", project_id=project.id, payload={"source_id": str(source_id), "task_id": str(task.id)})
     db.commit()
     return SourceCheckQueued(task_id=task.id, status=task.status.value)
+
+
+@router.post("/{source_id}/fulltext/fetch", response_model=SourceCheckQueued, status_code=status.HTTP_202_ACCEPTED)
+def queue_fulltext_fetch(
+    source_id: uuid.UUID,
+    project: Project = Depends(project_access(WRITE_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Queue an open-access full-text fetch (Unpaywall) for a source with a DOI.
+
+    The PDF is stored only where its licence permits; otherwise the link and licence are kept.
+    The outcome appears on the source as `fulltext_access` (and `fulltext_path` when stored).
+    """
+    source = db.scalar(select(Source).where(Source.id == source_id, Source.project_id == project.id, Source.merged_into.is_(None)))
+    if source is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
+    if not source.doi:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This source has no DOI to look up")
+    reason = unpaywall_unavailable_reason()
+    if reason:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=reason)
+    if source.fulltext_path:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This source already has stored full text")
+    for task in db.scalars(select(Task).where(Task.project_id == project.id, Task.type == FULLTEXT_FETCH)):
+        if task.status in _OPEN and (task.payload or {}).get("source_id") == str(source_id):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A full-text fetch for this source is already waiting or running")
+    actor = audit.user_actor(user)
+    task = enqueue_task(db, project.id, FULLTEXT_FETCH, payload={"project_id": str(project.id), "source_id": str(source_id), "requested_by": actor}, actor=actor)
+    audit.record(db, actor=actor, action="source.fulltext_requested", project_id=project.id, payload={"source_id": str(source_id), "task_id": str(task.id)})
+    db.commit()
+    return SourceCheckQueued(task_id=task.id, status=task.status.value)
+
+
+class ReferenceImport(BaseModel):
+    format: Literal["bibtex", "ris"]
+    text: str = Field(min_length=1, max_length=2_000_000)
+
+
+class ReferenceImportResult(BaseModel):
+    created: int
+    skipped: list[str]
+
+
+@router.post("/import", response_model=ReferenceImportResult, status_code=status.HTTP_201_CREATED)
+def import_references(
+    body: ReferenceImport,
+    project: Project = Depends(project_access(WRITE_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Add sources from a BibTeX or RIS file. They arrive unverified; a bad or duplicate entry is
+    reported in `skipped` and the rest still import."""
+    parsed = (parse_bibtex if body.format == "bibtex" else parse_ris)(body.text)
+    skipped = list(parsed.skipped)
+    known_dois = set(db.scalars(select(Source.doi).where(Source.project_id == project.id, Source.doi.is_not(None), Source.merged_into.is_(None))))
+    actor = audit.user_actor(user)
+    created = 0
+    for record in parsed.records:
+        try:
+            item = SourceCreate(**record)
+        except (ValidationError, ValueError) as exc:
+            skipped.append(f"{str(record.get('title'))[:80]}: {exc.errors()[0]['loc'][0] if isinstance(exc, ValidationError) else exc}")
+            continue
+        if item.doi and item.doi in known_dois:
+            skipped.append(f"{item.title[:80]}: DOI already in this project")
+            continue
+        if item.doi:
+            known_dois.add(item.doi)
+        db.add(Source(project_id=project.id, created_by=actor, **item.model_dump(mode="json", exclude={"evidence_excerpt", "locator"})))
+        created += 1
+    audit.record(
+        db, actor=actor, action="sources.imported", project_id=project.id,
+        payload={"format": body.format, "created": created, "skipped": len(skipped)},
+    )
+    if created:
+        project.touch()
+    db.commit()
+    return ReferenceImportResult(created=created, skipped=skipped)
+
+
+@router.get("/export")
+def export_references(
+    format: Literal["bibtex", "ris"] = "bibtex",
+    project: Project = Depends(project_access(READ_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Verified sources as BibTeX or RIS. Unverified ones are left out (plan rule 24); how many is in
+    the `X-Unverified-Skipped` header."""
+    sources = db.scalars(select(Source).where(Source.project_id == project.id, Source.merged_into.is_(None)).order_by(Source.created_at)).all()
+    verified = [s for s in sources if s.metadata_verified]
+    records = [
+        {k: v for k, v in {"title": s.title, "authors": s.authors, "year": s.year, "doi": s.doi, "url": s.url,
+                           "venue": s.venue, "abstract": s.abstract, "source_type": s.source_type}.items() if v}
+        for s in verified
+    ]
+    audit.record(
+        db, actor=audit.user_actor(user), action="sources.exported", project_id=project.id,
+        payload={"format": format, "exported": len(verified), "unverified_skipped": len(sources) - len(verified)},
+    )
+    db.commit()
+    text = to_bibtex(records) if format == "bibtex" else to_ris(records)
+    ext = "bib" if format == "bibtex" else "ris"
+    return Response(
+        content=text, media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="sources.{ext}"', "X-Unverified-Skipped": str(len(sources) - len(verified))},
+    )

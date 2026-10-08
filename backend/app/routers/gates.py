@@ -7,15 +7,36 @@ from sqlalchemy.orm import Session
 from app import audit
 from app.database import get_db
 from app.dependencies import READ_ROLES, current_user, project_access, project_role
-from app.gates import ensure_gates, release_tasks_for_gate, required_roles
+from app.artifacts import stage_index
+from app.gates import (
+    GATE_STAGES, approved_later_gates, ensure_gates, pending_earlier_gates, reblock_tasks_for_gate, release_tasks_for_gate,
+    required_roles,
+)
 from app.models import Gate, GateCode, GateStatus, Project, ProjectRole, User, utcnow
-from app.schemas import GateDecision, GateRead
+from app.schemas import GateDecision, GateRead, GateReopen
 
 router = APIRouter(prefix="/projects/{project_id}/gates", tags=["gates"])
 
 
-def _gate_read(gate: Gate, role: ProjectRole | None) -> GateRead:
+def _reopen_problem(project: Project, gates: list[Gate], gate: Gate) -> str | None:
+    """Why an approved gate can't be reopened right now, or None if it can (role aside)."""
+    if gate.status != GateStatus.approved:
+        return f"Gate {gate.code.value} is not approved; there is nothing to reopen"
+    stage = GATE_STAGES[gate.code]
+    if stage_index(project.stage) >= stage_index(stage):
+        return (
+            f"The project has already reached '{stage.value}', which gate {gate.code.value} completes; "
+            "go back with a re-entry instead (owner)"
+        )
+    later = approved_later_gates(gates, gate.code)
+    if later:
+        return f"Reopen the later approved gate(s) first: {', '.join(c.value for c in later)}"
+    return None
+
+
+def _gate_read(gate: Gate, role: ProjectRole | None, project: Project, gates: list[Gate]) -> GateRead:
     roles = required_roles(gate.code)
+    waiting_for = pending_earlier_gates(gates, gate.code)
     return GateRead(
         code=gate.code,
         status=gate.status,
@@ -23,7 +44,9 @@ def _gate_read(gate: Gate, role: ProjectRole | None) -> GateRead:
         decided_at=gate.decided_at,
         note=gate.note,
         required_roles=sorted(roles, key=lambda r: r.value),
-        can_decide=role in roles and gate.status != GateStatus.approved,
+        can_decide=role in roles and gate.status != GateStatus.approved and not waiting_for,
+        waiting_for=waiting_for,
+        can_reopen=role in roles and _reopen_problem(project, gates, gate) is None,
     )
 
 
@@ -36,7 +59,7 @@ def list_gates(
     gates = ensure_gates(db, project)
     db.commit()
     role = project_role(db, project, user)
-    return [_gate_read(gate, role) for gate in gates]
+    return [_gate_read(gate, role, project, gates) for gate in gates]
 
 
 def decide_gate(
@@ -51,9 +74,19 @@ def decide_gate(
     role = project_role(db, project, user)
     if role not in required_roles(code):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Gate {code.value} cannot be decided by your role")
-    gate = next(g for g in ensure_gates(db, project) if g.code == code)
+    gates = ensure_gates(db, project)
+    gate = next(g for g in gates if g.code == code)
     if gate.status == GateStatus.approved:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Gate {code.value} is already approved")
+    waiting_for = pending_earlier_gates(gates, code)
+    if waiting_for:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": f"Gates are decided in order: approve {', '.join(c.value for c in waiting_for)} before {code.value}",
+                "waiting_for": [c.value for c in waiting_for],
+            },
+        )
     if outcome == GateStatus.rejected and not note:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Rejecting a gate needs a note explaining why")
 
@@ -81,7 +114,7 @@ def decide_gate(
     project.touch()
     db.commit()
     db.refresh(gate)
-    return _gate_read(gate, role)
+    return _gate_read(gate, role, project, ensure_gates(db, project))
 
 
 @router.post("/{code}/approve", response_model=GateRead)
@@ -104,3 +137,51 @@ def reject_gate(
     db: Session = Depends(get_db),
 ):
     return decide_gate(db, project, user, code, GateStatus.rejected, payload.note if payload else None)
+
+
+@router.post("/{code}/reopen", response_model=GateRead)
+def reopen_gate(
+    code: GateCode,
+    payload: GateReopen,
+    project: Project = Depends(project_access(READ_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Take back an approval before the project has acted on it (M0.5.10).
+
+    Only a person with the gate's required role, with a reason, while the project hasn't reached the
+    stage the gate completes and no later gate is approved. The gate goes back to pending, queued tasks
+    waiting on it are held again, and the audit log keeps the previous decision.
+    """
+    role = project_role(db, project, user)
+    if role not in required_roles(code):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Gate {code.value} cannot be reopened by your role")
+    db.refresh(project, with_for_update=True)  # serialise with stage changes on PostgreSQL
+    gates = ensure_gates(db, project)
+    gate = next(g for g in gates if g.code == code)
+    problem = _reopen_problem(project, gates, gate)
+    if problem:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=problem)
+    previous = {"decided_by": gate.decided_by, "decided_at": gate.decided_at.isoformat() if gate.decided_at else None, "note": gate.note}
+
+    # Conditional write, as in decide_gate: only an approval that is still in place is reopened.
+    written = db.execute(
+        update(Gate)
+        .where(Gate.id == gate.id, Gate.status == GateStatus.approved)
+        .values(status=GateStatus.pending, decided_by=None, decided_at=None, note=None)
+        .execution_options(synchronize_session=False)
+    ).rowcount
+    if written != 1:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Gate {code.value} is no longer approved")
+    actor = audit.user_actor(user)
+    audit.record(
+        db, actor=actor, action="gate.reopened", project_id=project.id,
+        payload={"gate": code.value, "role": role.value, "reason": payload.reason, "previous": previous},
+    )
+    reblock_tasks_for_gate(db, project.id, code, actor)
+    project.touch()
+    db.commit()
+    db.refresh(gate)
+    return _gate_read(gate, role, project, ensure_gates(db, project))

@@ -1,0 +1,15 @@
+{
+  "screening_prescreen@1": {
+    "eval": "screening",
+    "status": "unevaluated",
+    "reason": "The gold set is empty until the scholar supplies it (plan X.15, Q10)."
+  },
+  "evidence_synthesis@4": {
+    "eval": "none",
+    "reason": "No gold dataset type for synthesis answers yet; its citations are checked on every run by the citation guard (M1.10)."
+  },
+  "synonym_suggestions@1": {
+    "eval": "none",
+    "reason": "Suggestions are proposals the scholar edits before use (M1.5.3); there is no gold dataset type for them."
+  }
+}

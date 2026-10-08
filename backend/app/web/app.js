@@ -1,4 +1,4 @@
-import { $, el, toast, saveOnce, label } from "./js/dom.js";
+import { $, $$, el, toast, saveOnce, label, formatDate } from "./js/dom.js";
 import { errorCard } from "./js/steps/common.js";
 import { request, projectApi } from "./js/api.js";
 import { STAGES, STEPS, GROUPS, GUIDES, STEP_IDS, stepStatus } from "./js/workflow.js";
@@ -425,6 +425,115 @@ $("#idea-form").addEventListener("submit", (event) => {
   });
 });
 
+// Quick capture (X.31.1): always available once signed in, no project required. The capture
+// dialog assigns one client-generated id per open, so retrying a failed Save after a network
+// blip can't create a second note.
+function openCaptureDialog() {
+  const form = $("#capture-form");
+  form.reset();
+  form.elements.kind.value = "typed";
+  form.dataset.clientId = crypto.randomUUID();
+  $$(".tab-button[data-capture-kind]", form).forEach((button) => button.classList.toggle("active", button.dataset.captureKind === "typed"));
+  $("#capture-link-field").hidden = true;
+  $("#capture-quote-field").hidden = true;
+  $("#capture-dialog").showModal();
+  form.elements.body.focus();
+}
+
+$("#capture-button").addEventListener("click", openCaptureDialog);
+
+document.querySelectorAll("#capture-form .tab-button[data-capture-kind]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const form = $("#capture-form");
+    const kind = button.dataset.captureKind;
+    form.elements.kind.value = kind;
+    $$(".tab-button[data-capture-kind]", form).forEach((other) => other.classList.toggle("active", other === button));
+    $("#capture-link-field").hidden = kind !== "clip";
+    $("#capture-quote-field").hidden = kind !== "clip";
+  });
+});
+
+$("#capture-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  saveOnce(form, async () => {
+    const data = Object.fromEntries(new FormData(form));
+    data.ai_locked = form.elements.ai_locked.checked;
+    data.client_id = form.dataset.clientId;
+    data.captured_at = new Date().toISOString();
+    // The link/quote inputs are only hidden on the Note tab, so drop anything left in them from the Web link tab.
+    if (data.kind !== "clip") {
+      delete data.source_url;
+      delete data.quoted_text;
+    }
+    if (!data.body) delete data.body;
+    if (!data.source_url) delete data.source_url;
+    if (!data.quoted_text) delete data.quoted_text;
+    try {
+      await request("/api/notes", { method: "POST", body: JSON.stringify(data) });
+      $("#capture-dialog").close();
+      form.reset();
+      toast("Saved to your Inbox.");
+    } catch (error) {
+      toast(error.message);
+    }
+  });
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.altKey && event.shiftKey && event.code === "KeyN" && state.user && !document.querySelector("dialog[open]")) {
+    event.preventDefault();
+    openCaptureDialog();
+  }
+});
+
+function noteRow(note) {
+  const badge = el("span", { className: "note-kind-badge", text: note.kind === "clip" ? "Web link" : "Note" });
+  const statusBadge = el("span", { className: "note-status-badge", text: note.status });
+  const text = note.kind === "clip" ? note.quoted_text || note.source_url || "" : note.body;
+  const archiveButton = el("button", { className: "quiet-button small", type: "button", text: "Archive" });
+  archiveButton.hidden = note.status === "archived";
+  archiveButton.addEventListener("click", async () => {
+    try {
+      await request(`/api/notes/${note.id}/archive`, { method: "POST" });
+      await renderNotesList();
+    } catch (error) {
+      toast(error.message);
+    }
+  });
+  const meta = el("p", { className: "muted small", text: `${note.kind === "clip" ? "clipped" : "typed"} · ${formatDate(note.captured_at)}` });
+  const row = el("div", { className: "note-row" });
+  row.append(
+    el("div", { className: "note-row-head", children: [badge, statusBadge] }),
+    el("p", { className: "note-row-body", text: text || "(no text)" }),
+    note.source_url ? el("a", { href: note.source_url, target: "_blank", rel: "noopener", text: note.source_url }) : el("span"),
+    meta,
+    archiveButton
+  );
+  return row;
+}
+
+async function renderNotesList() {
+  const list = $("#notes-list");
+  list.replaceChildren();
+  try {
+    const notes = await request("/api/notes");
+    if (notes.length === 0) {
+      list.append(el("p", { className: "muted", text: "No notes yet. Press Capture (or Alt+Shift+N) to save one." }));
+      return;
+    }
+    list.append(...notes.map(noteRow));
+  } catch (error) {
+    list.append(errorCard(error.message));
+  }
+}
+
+$("#notes-button").addEventListener("click", () => {
+  $("#notes-dialog").showModal();
+  renderNotesList();
+});
+
+
 $("#reject-form").addEventListener("submit", (event) => {
   event.preventDefault();
   const form = event.currentTarget;
@@ -437,6 +546,25 @@ $("#reject-form").addEventListener("submit", (event) => {
       form.reset();
       dialog.close();
       toast(`${code} rejected.`);
+      await refresh();
+    } catch (error) {
+      toast(error.message);
+    }
+  });
+});
+
+$("#reopen-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const dialog = $("#reopen-dialog");
+  const code = dialog.dataset.gateCode;
+  saveOnce(form, async () => {
+    const reason = form.elements.reason.value.trim();
+    try {
+      await request(projectApi(state.activeProject.id, `/gates/${code}/reopen`), { method: "POST", body: JSON.stringify({ reason }) });
+      form.reset();
+      dialog.close();
+      toast(`${code} reopened.`);
       await refresh();
     } catch (error) {
       toast(error.message);

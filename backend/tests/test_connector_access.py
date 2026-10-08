@@ -73,8 +73,8 @@ def test_api_lists_access_kind_and_state(settings, monkeypatch):
 
 
 def test_enabled_but_unimplemented_is_not_usable(settings, monkeypatch):
-    monkeypatch.setattr(settings, "connectors_enabled", ["arxiv"])
-    row = next(r for r in _client().get("/api/connectors").json() if r["name"] == "arxiv")
+    monkeypatch.setattr(settings, "connectors_enabled", ["pubmed"])
+    row = next(r for r in _client().get("/api/connectors").json() if r["name"] == "pubmed")
     assert row["enabled"] is True and row["implemented"] is False and row["usable"] is False
 
 

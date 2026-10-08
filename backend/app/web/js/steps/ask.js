@@ -1,7 +1,10 @@
 import { $, el, label, toast, formatDate, emptyCard } from "../dom.js";
 import { request, projectApi } from "../api.js";
+import { actorName, provenanceBadge } from "../provenance.js";
 
-function renderResearchRun(run) {
+const AGENT_RESEARCH_RUN = "agent:research-run"; // app/audit.py AGENT_RESEARCH_RUN
+
+function renderResearchRun(ctx, run) {
   const card = el("article", { className: `run-card status-${run.status}` });
   const header = el("div", { className: "run-heading" });
   header.append(el("span", { className: "run-status", text: label(run.status) }), el("time", { text: formatDate(run.created_at) }));
@@ -13,15 +16,34 @@ function renderResearchRun(run) {
     card.append(plan);
   }
   if (run.answer) card.append(el("p", { className: "run-answer", text: run.answer }));
+  if (run.insufficient_evidence) card.append(el("p", { className: "run-answer", text: `The model found the evidence insufficient: ${run.insufficient_reason || "no reason given"}` }));
   if (run.error_message) card.append(el("p", { className: "run-error", text: run.error_message }));
-  const provenance = [
-    run.provider_model ? `Model ${run.provider_model}` : null,
-    run.prompt_version ? `Prompt ${run.prompt_version}` : null,
+  card.append(
+    provenanceBadge({
+      producer: actorName(ctx, AGENT_RESEARCH_RUN),
+      requestedBy: actorName(ctx, run.created_by),
+      model: run.provider_model,
+      promptVersion: run.prompt_version,
+      date: run.completed_at || run.created_at,
+      approval: runApproval(ctx, run),
+    })
+  );
+  const timing = [
+    typeof run.confidence === "number" ? `Model confidence ${Math.round(run.confidence * 100)}%` : null,
     run.started_at ? `Started ${formatDate(run.started_at)}` : null,
     run.completed_at ? `Completed ${formatDate(run.completed_at)}` : null,
   ].filter(Boolean);
-  if (provenance.length) card.append(el("p", { className: "source-locator", text: provenance.join(" · ") }));
+  if (timing.length) card.append(el("p", { className: "source-locator", text: timing.join(" · ") }));
   return card;
+}
+
+// Research answers have no approval step of their own yet, so the badge says so plainly rather than
+// implying one; a re-entry that made the answer stale (M0.5.4) is shown as well.
+function runApproval(ctx, run) {
+  const stale = (ctx.summary.staleArtifacts || []).find((a) => a.kind === "research_run" && a.ref_id === run.id);
+  if (stale) return { state: "stale", text: `Stale: ${stale.stale_reason || "an earlier stage was reopened"}. Re-run before relying on it.` };
+  if (run.status !== "completed") return { state: "pending", text: "Nothing to approve: this run produced no answer." };
+  return { state: "pending", text: "Not approved by a person. Research answers have no approval step yet; check the cited sources." };
 }
 
 function runsList(root, ctx) {
@@ -30,7 +52,7 @@ function runsList(root, ctx) {
   if (!runs.length) {
     list.replaceChildren(emptyCard("No research runs yet", "Ask a focused question after saving evidence notes. The run will retain the source snapshot used for its response."));
   } else {
-    list.replaceChildren(...runs.map(renderResearchRun));
+    list.replaceChildren(...runs.map((run) => renderResearchRun(ctx, run)));
   }
   return list;
 }

@@ -44,9 +44,11 @@ def test_success_path_stores_answer_and_sends_expected_request(fake_llm):
 
 
 def test_list_shaped_content_is_accepted(fake_llm):
-    fake_llm.handler = lambda r: {"choices": [{"message": {"content": [{"text": "Part one"}, {"text": "part two"}]}}]}
+    # Parts are joined with a newline, which is harmless whitespace between JSON tokens.
+    parts = [{"text": '{"answer": "Part one part two", "confidence": 0.5,'}, {"text": '"insufficient_evidence": {"insufficient": false, "reason": ""}}'}]
+    fake_llm.handler = lambda r: {"choices": [{"message": {"content": parts}}]}
 
-    assert _run()["answer"] == "Part one\npart two"
+    assert _run()["answer"] == "Part one part two"
 
 
 def _assert_failed_loudly(run, message):

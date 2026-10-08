@@ -11,3 +11,6 @@ venv/
 
 # Secrets
 .env
+
+# Local object storage (M0.10.2)
+/data/

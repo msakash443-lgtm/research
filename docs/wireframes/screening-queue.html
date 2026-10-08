@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Screening Queue Wireframe</title>
+<link rel="stylesheet" href="wireframe.css">
+<style>
+  .layout { display:grid; grid-template-columns:300px minmax(0,1fr) 320px; gap:14px; padding:14px 20px; align-items:start; }
+  .queue { max-height:calc(100vh - 230px); overflow:auto; }
+  .qitem { display:grid; grid-template-columns:auto 1fr; gap:8px; padding:9px 12px; border-bottom:1px solid var(--line); cursor:pointer; }
+  .qitem:hover { background:#f6f8f9; }
+  .qitem[aria-current="true"] { background:#eaf0f7; box-shadow:inset 3px 0 0 var(--navy); }
+  .qitem .t { font-size:13px; font-weight:650; color:var(--navy); }
+  .qitem .m { font-size:12px; color:var(--muted); display:flex; gap:6px; flex-wrap:wrap; margin-top:3px; }
+  .record h1 { font-size:21px; letter-spacing:-.3px; margin:4px 0 6px; line-height:1.25; }
+  .abstract { font-size:15.5px; line-height:1.6; max-width:72ch; }
+  .decide { position:sticky; bottom:0; display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:12px 14px; border-top:1px solid var(--line); background:#fff; border-radius:0 0 10px 10px; }
+  .decide button { display:inline-flex; gap:6px; align-items:center; }
+  .decide kbd { background:transparent; color:inherit; border-color:rgba(255,255,255,.5); }
+  .decide .quiet kbd { color:var(--navy); border-color:#c8d0d8; }
+  .inc { background:var(--ok); } .exc { background:var(--bad); } .may { background:#6b5a00; }
+  .crit li { margin:4px 0; font-size:14px; }
+  .crit code { font-weight:700; color:var(--navy); }
+  .ai-card { border:1px solid #d6cff0; background:var(--ai-bg); border-radius:10px; padding:12px 14px; }
+  .ai-card h3 { margin:0 0 6px; font-size:14px; color:var(--ai); }
+  .history { font-size:13px; margin:0; padding-left:18px; }
+  .counts { display:flex; gap:14px; flex-wrap:wrap; font-size:14px; }
+  .counts b { color:var(--navy); }
+  .drawer { position:fixed; top:0; right:0; bottom:0; width:min(460px,100vw); background:#fff; border-left:1px solid var(--line); box-shadow:-12px 0 30px rgba(0,0,0,.12); z-index:40; overflow:auto; }
+  .conflict { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  @media (max-width:1100px) { .layout { grid-template-columns:260px minmax(0,1fr); } .side { grid-column:1 / -1; } }
+  @media (max-width:760px) { .layout { grid-template-columns:1fr; padding:12px 16px; } .queue { max-height:240px; } }
+</style>
+</head>
+<body>
+<div class="wf-banner">
+  <span><strong>WIREFRAME</strong> · Screening queue (before M2.3) · invented example records, not real papers · nothing is saved</span>
+  <span class="row">
+    <label>View as
+      <select id="role">
+        <option value="owner">Owner (Priya)</option>
+        <option value="supervisor">Supervisor (Dr. Nair)</option>
+      </select>
+    </label>
+    <label><input type="checkbox" id="pin-toggle" checked> Show walkthrough questions</label>
+    <a href="index.html">All wireframes</a>
+  </span>
+</div>
+
+<header class="topbar">
+  <div class="row">
+    <a class="brand" href="index.html">Research<span>AI</span></a>
+    <span class="crumbs"><a href="#" onclick="wfToast('Would go to the project overview.');return false;">Remote work &amp; gender wage gap</a> › Screening › <strong>Title/abstract</strong></span>
+  </div>
+  <div class="row">
+    <span class="role-chip" id="role-chip">owner</span>
+    <button class="quiet" id="help-btn" title="Keyboard shortcuts (?)">Shortcuts <kbd>?</kbd></button>
+  </div>
+</header>
+
+<div class="gatebar" id="gatebar">
+  <div>
+    <strong>G3 · Approve the included set</strong><span class="pin" title="Q1">Q1</span>
+    <span id="gate-status" class="muted"></span>
+  </div>
+  <div class="row">
+    <span class="counts" id="counts"></span>
+    <button id="gate-btn" disabled>Ask for G3 approval</button>
+  </div>
+</div>
+
+<div class="layout">
+  <!-- Left: queue -->
+  <section class="panel" aria-label="Queue">
+    <div class="panel-head">
+      <div class="tabs" role="tablist" id="tabs">
+        <button role="tab" data-tab="todo" aria-selected="true">To screen</button>
+        <button role="tab" data-tab="maybe">Maybe</button>
+        <button role="tab" data-tab="done">Decided</button>
+        <button role="tab" data-tab="audit">AI-exclude audit</button>
+        <button role="tab" data-tab="conflict">Conflicts</button>
+      </div>
+    </div>
+    <div class="panel-body small row" id="bulk-bar" style="border-bottom:1px solid var(--line)">
+      <span class="muted" id="bulk-count">0 selected</span><span class="spacer"></span>
+      <button class="quiet" id="bulk-maybe" disabled>Mark Maybe</button>
+      <button class="quiet" id="bulk-exclude" disabled>Exclude…</button>
+      <span class="pin" title="Q5">Q5</span>
+    </div>
+    <div class="queue" id="queue" role="listbox" aria-label="Records"></div>
+  </section>
+
+  <!-- Centre: record -->
+  <section class="panel record" aria-label="Record" id="record-panel">
+    <div class="panel-body" id="record"></div>
+    <div class="decide" id="decide-bar">
+      <button class="inc" data-act="include">Include <kbd>I</kbd></button>
+      <button class="exc" data-act="exclude">Exclude… <kbd>E</kbd></button>
+      <button class="may" data-act="maybe">Maybe <kbd>M</kbd></button>
+      <span class="spacer"></span>
+      <button class="quiet" data-act="prev">← Previous <kbd>K</kbd></button>
+      <button class="quiet" data-act="next">Next → <kbd>J</kbd></button>
+      <button class="quiet" data-act="undo">Undo <kbd>U</kbd></button>
+      <span class="pin" title="Q3">Q3</span>
+    </div>
+  </section>
+
+  <!-- Right: criteria + AI suggestion -->
+  <aside class="side" style="display:grid;gap:14px">
+    <section class="panel">
+      <div class="panel-head">Criteria <span class="muted small">approved at G2 · v1</span></div>
+      <div class="panel-body">
+        <ul class="crit" style="margin:0;padding-left:16px">
+          <li><code>I1</code> Empirical study of remote or hybrid work</li>
+          <li><code>I2</code> Reports pay or earnings by gender</li>
+          <li><code>E1</code> Not empirical (opinion, editorial, review)</li>
+          <li><code>E2</code> No results split by gender</li>
+          <li><code>E3</code> Not about remote or hybrid work</li>
+          <li><code>E4</code> Before 2010</li>
+        </ul>
+      </div>
+    </section>
+    <section class="ai-card" id="ai-card" aria-live="polite"></section>
+    <section class="panel">
+      <div class="panel-head">History of this record <span class="pin" title="Q4">Q4</span></div>
+      <div class="panel-body"><ol class="history" id="history"></ol></div>
+    </section>
+  </aside>
+</div>
+
+<section class="questions" aria-label="Walkthrough questions">
+  <h2>Questions for the walkthrough (orange pins on the screen)</h2>
+  <ol>
+    <li><span class="pin">Q1</span> <span><strong>Where do I approve?</strong> Is it clear that G3 lives in the bar at the top, that it opens only when nothing is left to screen and the AI-exclude audit is done, and that the supervisor (switch "View as") is the one who approves?</span></li>
+    <li><span class="pin">Q2</span> <span><strong>Where do I see the source?</strong> Is "Open source record" (or <kbd>O</kbd>) enough at this stage, given full texts come only at the full-text stage?</span></li>
+    <li><span class="pin">Q3</span> <span><strong>How do I go back?</strong> <kbd>K</kbd>/Previous, Undo, the Decided tab and the browser Back button all work. Which do you expect to use? Is "Undo" (which adds a new entry, never erases) understood?</span></li>
+    <li><span class="pin">Q4</span> <span>The history keeps every decision, including undone ones. Useful here, or only in the audit export?</span></li>
+    <li><span class="pin">Q5</span> <span>Bulk actions: should bulk <em>Exclude</em> exist at all at title/abstract, or only bulk Maybe?</span></li>
+    <li><span class="pin">Q6</span> <span>Should the AI suggestion show <em>before</em> you decide, or only <em>after</em> (to avoid being nudged)? Try the switch in the AI card.</span></li>
+    <li><span class="pin">Q7</span> <span>Conflicts: the two reviewers' reasons are hidden until both have decided. Is the conflict view clear enough to resolve from?</span></li>
+  </ol>
+</section>
+
+<!-- Exclude reason picker -->
+<dialog id="reason-dialog" aria-labelledby="reason-title">
+  <div class="panel-head" id="reason-title">Exclude: pick the reason</div>
+  <div class="panel-body">
+    <p class="muted small" style="margin:0">Press a number, or click. Every exclusion needs a reason (it goes into the PRISMA counts).</p>
+    <div id="reason-list" style="display:grid;gap:6px"></div>
+    <label class="small">Note (optional, stays in the audit file)<input id="reason-note" style="width:100%;padding:8px;border:1px solid #cdd5dc;border-radius:6px"></label>
+    <div class="row"><span class="spacer"></span><button class="quiet" id="reason-cancel">Cancel <kbd>Esc</kbd></button></div>
+  </div>
+</dialog>
+
+<!-- Shortcuts -->
+<dialog id="help-dialog" aria-labelledby="help-title">
+  <div class="panel-head" id="help-title">Keyboard shortcuts</div>
+  <div class="panel-body small">
+    <div><kbd>I</kbd> Include · <kbd>E</kbd> Exclude (then <kbd>1</kbd>–<kbd>4</kbd> for the reason) · <kbd>M</kbd> Maybe</div>
+    <div><kbd>J</kbd> Next · <kbd>K</kbd> Previous · <kbd>U</kbd> Undo my last decision on this record</div>
+    <div><kbd>O</kbd> Open source record · <kbd>A</kbd> Show/hide AI suggestion · <kbd>?</kbd> This help · <kbd>Esc</kbd> Close</div>
+    <div class="row"><span class="spacer"></span><button id="help-close">Close</button></div>
+  </div>
+</dialog>
+
+<!-- Source drawer -->
+<aside class="drawer" id="drawer" hidden aria-label="Source record">
+  <div class="panel-head">Source record <span class="pin" title="Q2">Q2</span><button class="quiet" id="drawer-close">Close <kbd>Esc</kbd></button></div>
+  <div class="panel-body" id="drawer-body"></div>
+</aside>
+
+<script src="wireframe.js"></script>
+<script>
+const REASONS = { E1: "Not empirical (opinion, editorial, review)", E2: "No results split by gender", E3: "Not about remote or hybrid work", E4: "Before 2010" };
+const RECORDS = [
+  { id:"r1", title:"Working from home and the gender pay gap: panel evidence from IT firms in Kerala", authors:"A. Menon, R. Thomas", year:2022, venue:"Journal of Labour Studies (example)", doi:"10.0000/example.1", verified:"Verified by an automatic check · 4 Oct",
+    abstract:"Using a three-wave panel of 2,140 employees in 31 IT firms, we estimate how the shift to remote work after 2020 changed hourly earnings for women and men. Women who moved to fully remote work saw slower wage growth than comparable men, an effect concentrated among mothers of young children.",
+    ai:{ d:"include", code:"I2", conf:0.91, why:"Empirical panel study of remote work; reports earnings separately for women and men." } },
+  { id:"r2", title:"Hybrid work is here to stay: an editorial", authors:"J. Kapoor", year:2023, venue:"Management Review (example)", doi:"10.0000/example.2", verified:"Not verified: the agent can't cite this source",
+    abstract:"This editorial argues that hybrid work will remain the norm and discusses what managers should expect over the coming decade.",
+    ai:{ d:"exclude", code:"E1", conf:0.88, why:"An editorial; no data are collected or analysed." } },
+  { id:"r3", title:"Telework and household labour during the pandemic", authors:"S. Pillai, M. George", year:2021, venue:"Gender & Society Letters (example)", doi:"10.0000/example.3", verified:"Verified by a person · 3 Oct",
+    abstract:"A survey of 860 dual-earner couples on the division of childcare and housework while one or both partners teleworked. Earnings are reported for households, not by individual gender.",
+    ai:{ d:"maybe", code:null, conf:0.42, why:"Low confidence (0.42): the model first answered 'exclude' (E2). Earnings appear only at household level; unclear whether a gender split is in the full text." } },
+  { id:"r4", title:"Office rents and remote work in Indian metros", authors:"K. Iyer", year:2022, venue:"Urban Economics Notes (example)", doi:"10.0000/example.4", verified:"Not verified: the agent can't cite this source",
+    abstract:"We relate the share of remote-capable jobs to commercial rent changes in six Indian cities between 2019 and 2022.",
+    ai:{ d:"exclude", code:"E2", conf:0.79, why:"No gender breakdown of pay or earnings is reported." } },
+  { id:"r5", title:"Remote work options and women's earnings: a field experiment", authors:"L. Das, P. Varghese", year:2024, venue:"Experimental Labour (example)", doi:"10.0000/example.5", verified:"Verified by an automatic check · 5 Oct",
+    abstract:"Job adverts randomly offered remote options. Women applied more often to remote-option jobs and accepted offers with 6% lower pay on average; men's accepted pay was unchanged.",
+    ai:{ d:"include", code:"I1", conf:0.86, why:"Randomised field experiment on remote options with earnings by gender." } },
+  { id:"r6", title:"Home-based work in the 1990s textile industry", authors:"B. Nambiar", year:1998, venue:"Historical Labour Review (example)", doi:"10.0000/example.6", verified:"Verified by a person · 3 Oct",
+    abstract:"An oral-history study of women doing home-based piecework in Kerala's textile sector in the 1990s.",
+    ai:{ d:"exclude", code:"E4", conf:0.95, why:"Published before 2010." } },
+  { id:"r7", title:"Who gets to work from home? Occupational sorting and pay", authors:"N. Joseph", year:2020, venue:"Labour Economics Working Papers (example)", doi:"10.0000/example.7", verified:"Verified by an automatic check · 4 Oct",
+    abstract:"Using national labour-force data, we show remote-capable occupations pay more, and examine how this differs by gender and caste.",
+    ai:{ d:"include", code:"I2", conf:0.74, why:"Empirical; reports pay by gender in remote-capable occupations." } },
+  { id:"r8", title:"A review of telework research 2000–2020", authors:"F. Mathew", year:2021, venue:"Work Futures (example)", doi:"10.0000/example.8", verified:"Not verified: the agent can't cite this source",
+    abstract:"A narrative review of two decades of telework research, summarising productivity, wellbeing and career outcomes.",
+    ai:{ d:"exclude", code:"E1", conf:0.83, why:"Narrative review, not a primary empirical study." } },
+];
+// The AI-exclude audit sample (M2.5) and one conflict (M2.4), shown as their own tabs.
+const AUDIT = [ { id:"a1", title:"Remote work and firm productivity in Bengaluru (example)", ai:"E3", conf:0.92, verdict:null },
+                { id:"a2", title:"Gendered effects of commuting time on job search (example)", ai:"E3", conf:0.81, verdict:null },
+                { id:"a3", title:"Teleworking teachers' wellbeing (example)", ai:"E2", conf:0.77, verdict:null } ];
+const CONFLICT = { title:"Flexible schedules and the motherhood penalty (example)", a:{ who:"Priya", d:"include", code:"I2" }, b:{ who:"Arun", d:"exclude", code:"E3" }, resolved:null };
+
+const state = { tab:"todo", current:"r1", selected:new Set(), aiMode:"before", role:"owner", gate:"open", decisions:{} };
+RECORDS.forEach(r => { state.decisions[r.id] = []; });
+
+const $ = id => document.getElementById(id);
+function finalOf(id) { // latest human row wins; an undo clears it
+  const h = state.decisions[id]; if (!h.length) return null; const last = h[h.length - 1]; return last.d === "undo" ? null : last;
+}
+function counts() {
+  const c = { todo:0, include:0, exclude:0, maybe:0 };
+  RECORDS.forEach(r => { const f = finalOf(r.id); if (!f) c.todo++; else c[f.d]++; });
+  return c;
+}
+function listFor(tab) {
+  if (tab === "todo") return RECORDS.filter(r => !finalOf(r.id));
+  if (tab === "maybe") return RECORDS.filter(r => finalOf(r.id)?.d === "maybe");
+  if (tab === "done") return RECORDS.filter(r => finalOf(r.id));
+  return [];
+}
+const label = d => ({ include:"Included", exclude:"Excluded", maybe:"Maybe" })[d];
+const chipClass = d => ({ include:"ok", exclude:"bad", maybe:"warn" })[d];
+
+function renderQueue() {
+  const q = $("queue"); q.innerHTML = "";
+  if (state.tab === "audit") return renderAudit(q);
+  if (state.tab === "conflict") return renderConflict(q);
+  const list = listFor(state.tab);
+  if (!list.length) { q.innerHTML = '<div class="panel-body muted small">Nothing here.' + (state.tab === "todo" ? " Everything is screened. Check the Maybe tab and the AI-exclude audit, then ask for G3." : "") + '</div>'; }
+  list.forEach(r => {
+    const f = finalOf(r.id);
+    const item = document.createElement("div");
+    item.className = "qitem"; item.setAttribute("role", "option");
+    item.setAttribute("aria-current", r.id === state.current ? "true" : "false");
+    const showAi = state.aiMode === "before" || f;
+    item.innerHTML = `<input type="checkbox" aria-label="Select for bulk action" ${state.selected.has(r.id) ? "checked" : ""}>
+      <div><div class="t"></div><div class="m"><span>${r.year}</span>
+      ${f ? `<span class="chip ${chipClass(f.d)}">${label(f.d)}${f.code ? " · " + f.code : ""}</span>` : ""}
+      ${showAi ? `<span class="chip ai">AI: ${r.ai.d}${r.ai.code ? " " + r.ai.code : ""}</span>` : ""}</div></div>`;
+    item.querySelector(".t").textContent = r.title;
+    item.querySelector("input").addEventListener("click", e => { e.stopPropagation(); e.target.checked ? state.selected.add(r.id) : state.selected.delete(r.id); renderBulk(); });
+    item.addEventListener("click", () => go(r.id));
+    q.appendChild(item);
+  });
+}
+function renderAudit(q) {
+  const box = document.createElement("div"); box.className = "panel-body small";
+  box.innerHTML = `<p style="margin-top:0">AI exclusions don't count until a person checks a random sample (10%, at least 3). <strong>${AUDIT.filter(a => a.verdict).length} of ${AUDIT.length}</strong> checked.</p>`;
+  AUDIT.forEach(a => {
+    const row = document.createElement("div"); row.style.cssText = "border-top:1px solid var(--line);padding:8px 0";
+    row.innerHTML = `<div style="font-weight:650;color:var(--navy)"></div><div class="muted">AI: exclude ${a.ai} · confidence ${a.conf}</div>
+      <div class="row" style="margin-top:6px">${a.verdict ? `<span class="chip ${a.verdict === "agree" ? "ok" : "bad"}">${a.verdict === "agree" ? "You agreed" : "You disagreed: back in the queue"}</span>`
+      : `<button class="quiet" data-v="agree">Agree: exclude</button><button class="quiet" data-v="disagree">Disagree</button>`}</div>`;
+    row.firstElementChild.textContent = a.title;
+    row.querySelectorAll("button").forEach(b => b.addEventListener("click", () => { a.verdict = b.dataset.v; wfToast(a.verdict === "agree" ? "Recorded: you agree with the AI exclusion." : "Recorded: disagreement. The record goes back to the queue and counts against AI–human agreement."); renderAll(); }));
+    box.appendChild(row);
+  });
+  q.appendChild(box);
+}
+function renderConflict(q) {
+  const box = document.createElement("div"); box.className = "panel-body small";
+  const c = CONFLICT;
+  box.innerHTML = `<p style="margin-top:0">Two reviewers disagreed. Reasons were hidden from each other until both decided. <span class="pin" title="Q7">Q7</span></p>
+    <div style="font-weight:650;color:var(--navy)">${c.title}</div>
+    <div class="conflict" style="margin:8px 0">
+      <div class="panel panel-body"><div class="muted">${c.a.who}</div><span class="chip ok">Include · ${c.a.code}</span></div>
+      <div class="panel panel-body"><div class="muted">${c.b.who}</div><span class="chip bad">Exclude · ${c.b.code}</span></div>
+    </div>
+    ${c.resolved ? `<span class="chip plain">Resolved: ${c.resolved}</span>` : `<div class="row"><button class="quiet" data-r="Include (I2)">Resolve: Include</button><button class="quiet" data-r="Exclude (E3)">Resolve: Exclude</button></div>`}
+    <p class="muted">Agreement so far (Cohen's kappa): 0.78 on 40 double-screened records.</p>`;
+  box.querySelectorAll("button").forEach(b => b.addEventListener("click", () => { c.resolved = b.dataset.r; wfToast("Conflict resolved. Both original decisions stay in the audit file."); renderAll(); }));
+  q.appendChild(box);
+}
+
+function renderRecord() {
+  const r = RECORDS.find(x => x.id === state.current);
+  const f = finalOf(r.id);
+  const idx = RECORDS.indexOf(r);
+  const box = $("record");
+  box.innerHTML = `<div class="row small muted"><span>Record ${idx + 1} of ${RECORDS.length}</span>
+      ${f ? `<span class="chip ${chipClass(f.d)}">Your decision: ${label(f.d)}${f.code ? " · " + f.code : ""}</span>` : `<span class="chip plain">Not screened yet</span>`}</div>
+    <h1></h1>
+    <div class="muted small" id="rec-meta"></div>
+    <p class="abstract" id="rec-abstract"></p>
+    <div class="row"><button class="quiet" id="open-source">Open source record <kbd>O</kbd></button><span class="pin" title="Q2">Q2</span>
+      <span class="muted small">Full text comes at the full-text stage.</span></div>`;
+  box.querySelector("h1").textContent = r.title;
+  $("rec-meta").textContent = `${r.authors} · ${r.year} · ${r.venue}`;
+  $("rec-abstract").textContent = r.abstract;
+  $("open-source").addEventListener("click", openDrawer);
+
+  const ai = $("ai-card");
+  const show = state.aiMode === "before" || f;
+  ai.innerHTML = `<h3>AI suggestion: not a decision <span class="pin" title="Q6">Q6</span></h3>
+    ${show ? `<div class="row"><span class="chip ${chipClass(r.ai.d)}">${label(r.ai.d)}${r.ai.code ? " · " + r.ai.code : ""}</span><span class="small">confidence ${r.ai.conf}</span></div>
+      <p class="small" style="margin:8px 0" id="ai-why"></p>
+      <div class="provenance">model gpt-x · prompt screening_prescreen@1 · 5 Oct 14:02</div>`
+    : `<p class="small" style="margin:6px 0">Hidden until you decide, so it can't nudge you.</p>`}
+    <label class="small row" style="margin-top:8px;font-weight:600">Show AI suggestion
+      <select id="ai-mode" style="width:auto;padding:4px"><option value="before">before I decide</option><option value="after">after I decide</option></select></label>`;
+  if (show) $("ai-why").textContent = r.ai.why;
+  $("ai-mode").value = state.aiMode;
+  $("ai-mode").addEventListener("change", e => { state.aiMode = e.target.value; renderAll(); });
+
+  const h = $("history"); h.innerHTML = "";
+  const rows = state.decisions[r.id].slice().reverse();
+  const ai_li = document.createElement("li"); ai_li.className = "muted"; ai_li.textContent = `AI suggested ${r.ai.d}${r.ai.code ? " " + r.ai.code : ""} (${r.ai.conf}) · 5 Oct 14:02`;
+  rows.forEach(x => { const li = document.createElement("li"); li.textContent = (x.d === "undo" ? "Undone" : label(x.d) + (x.code ? " · " + x.code : "")) + ` · ${x.who} · ${x.at}` + (x.note ? ` · “${x.note}”` : ""); h.appendChild(li); });
+  if (show) h.appendChild(ai_li);
+  if (!h.children.length) h.innerHTML = '<li class="muted">No decisions yet.</li>';
+}
+
+function renderGate() {
+  const c = counts();
+  $("counts").innerHTML = `<span>To screen <b>${c.todo}</b></span><span>Included <b>${c.include}</b></span><span>Excluded <b>${c.exclude}</b></span><span>Maybe <b>${c.maybe}</b></span>`;
+  const auditDone = AUDIT.every(a => a.verdict), conflictDone = !!CONFLICT.resolved;
+  const missing = [];
+  if (c.todo) missing.push(`${c.todo} to screen`);
+  if (c.maybe) missing.push(`${c.maybe} maybe`);
+  if (!auditDone) missing.push(`audit ${AUDIT.filter(a => a.verdict).length}/${AUDIT.length}`);
+  if (!conflictDone) missing.push("1 conflict");
+  const btn = $("gate-btn"), status = $("gate-status");
+  if (state.gate === "approved") { status.textContent = " · Approved by Dr. Nair (supervisor) · 7 Oct. Screening is locked; changes need re-opening the gate."; btn.hidden = true; return; }
+  btn.hidden = false;
+  if (state.gate === "requested") {
+    status.textContent = " · Waiting for approval from the owner or a supervisor.";
+    if (state.role === "supervisor") { btn.textContent = "Approve G3"; btn.disabled = false; }
+    else { btn.textContent = "Approval requested"; btn.disabled = true; }
+    return;
+  }
+  status.textContent = missing.length ? ` · Opens when done: ${missing.join(" · ")}` : " · Ready: everything is screened and audited.";
+  btn.textContent = "Ask for G3 approval"; btn.disabled = missing.length > 0;
+}
+function renderBulk() {
+  const n = state.selected.size;
+  $("bulk-count").textContent = `${n} selected`;
+  $("bulk-maybe").disabled = $("bulk-exclude").disabled = !n || state.gate !== "open";
+}
+function renderTabs() { document.querySelectorAll("#tabs button").forEach(b => b.setAttribute("aria-selected", b.dataset.tab === state.tab ? "true" : "false")); }
+function renderAll() {
+  renderTabs(); renderQueue(); renderRecord(); renderGate(); renderBulk();
+  $("role-chip").textContent = state.role;
+  const locked = state.gate !== "open";
+  document.querySelectorAll("#decide-bar [data-act=include],#decide-bar [data-act=exclude],#decide-bar [data-act=maybe],#decide-bar [data-act=undo]").forEach(b => b.disabled = locked);
+}
+
+function now() { const d = new Date(); return d.toTimeString().slice(0, 5); }
+function decide(d, code, note) {
+  if (state.gate !== "open") { wfToast("Screening is locked while G3 is requested or approved."); return; }
+  state.decisions[state.current].push({ d, code, note, who: state.role === "owner" ? "Priya" : "Dr. Nair", at: now() });
+  wfToast(`${label(d)}${code ? " · " + code : ""}. Saved. Press U to undo.`);
+  const next = listFor("todo").find(r => r.id !== state.current);
+  if (state.tab === "todo" && next) go(next.id); else renderAll();
+}
+function undo() {
+  const h = state.decisions[state.current];
+  if (!finalOf(state.current)) { wfToast("Nothing to undo on this record."); return; }
+  h.push({ d:"undo", who: "Priya", at: now() });
+  wfToast("Undone. The earlier decision stays in the history.");
+  renderAll();
+}
+function step(delta) {
+  // J/K walk every record in order, decided or not, so "previous" always reaches the one you just decided.
+  const i = Math.min(RECORDS.length - 1, Math.max(0, RECORDS.findIndex(r => r.id === state.current) + delta));
+  go(RECORDS[i].id);
+}
+function go(id) { state.current = id; renderAll(); if (location.hash !== "#" + id) location.hash = id; }
+window.addEventListener("hashchange", () => { const m = location.hash.match(/^#(r\d+)$/); if (m) { state.current = m[1]; closeDrawer(); renderAll(); } });
+
+function openExclude(ids) {
+  const dlg = $("reason-dialog"), list = $("reason-list");
+  list.innerHTML = ""; $("reason-note").value = "";
+  $("reason-title").textContent = ids ? `Exclude ${ids.length} records: pick one reason (each still gets its own row in the audit file)` : "Exclude: pick the reason";
+  Object.entries(REASONS).forEach(([code, text], i) => {
+    const b = document.createElement("button"); b.className = "quiet"; b.style.textAlign = "left";
+    b.innerHTML = `<kbd>${i + 1}</kbd> <strong>${code}</strong> `; b.append(text);
+    b.addEventListener("click", () => pick(code));
+    list.appendChild(b);
+  });
+  function pick(code) {
+    dlg.close(); document.removeEventListener("keydown", num, true);
+    const note = $("reason-note").value.trim() || null;
+    if (ids) { ids.forEach(id => state.decisions[id].push({ d:"exclude", code, note, who:"Priya", at:now() })); state.selected.clear(); wfToast(`${ids.length} records excluded · ${code}.`); renderAll(); }
+    else decide("exclude", code, note);
+  }
+  function num(e) { if (e.target.id === "reason-note") return; const n = parseInt(e.key, 10); const code = Object.keys(REASONS)[n - 1]; if (code) { e.preventDefault(); pick(code); } }
+  document.addEventListener("keydown", num, true);
+  dlg.addEventListener("close", () => document.removeEventListener("keydown", num, true), { once:true });
+  dlg.showModal();
+}
+function openDrawer() {
+  const r = RECORDS.find(x => x.id === state.current);
+  const body = $("drawer-body");
+  body.innerHTML = `<h3 style="margin-top:0"></h3><div class="muted small" id="d-meta"></div>
+    <p class="small"><strong>DOI</strong> <a href="#" onclick="wfToast('Would open https://doi.org/${r.doi} in a new tab.');return false;">${r.doi}</a></p>
+    <p class="small"><strong>Verification</strong> ${r.verified}</p>
+    <p class="small"><strong>Found by</strong> OpenAlex search “remote work AND gender AND (wage OR earnings)” · 2 Oct</p>
+    <p class="small"><strong>Full text</strong> <span class="chip plain">Not fetched yet</span> Comes at the full-text stage (open-access copy, or you upload it).</p>
+    <p class="small muted">From here: “View in Sources” would open the full source card with all checks.</p>`;
+  body.querySelector("h3").textContent = r.title;
+  $("d-meta").textContent = `${r.authors} · ${r.year} · ${r.venue}`;
+  $("drawer").hidden = false; $("drawer-close").focus();
+}
+function closeDrawer() { $("drawer").hidden = true; }
+
+document.querySelectorAll("#tabs button").forEach(b => b.addEventListener("click", () => { state.tab = b.dataset.tab; renderAll(); }));
+document.querySelectorAll("#decide-bar button").forEach(b => b.addEventListener("click", () => {
+  const a = b.dataset.act;
+  if (a === "include") decide("include", null, null);
+  else if (a === "maybe") decide("maybe", null, null);
+  else if (a === "exclude") openExclude(null);
+  else if (a === "prev") step(-1); else if (a === "next") step(1); else if (a === "undo") undo();
+}));
+$("bulk-maybe").addEventListener("click", () => { state.selected.forEach(id => state.decisions[id].push({ d:"maybe", who:"Priya", at:now() })); wfToast(`${state.selected.size} records marked Maybe.`); state.selected.clear(); renderAll(); });
+$("bulk-exclude").addEventListener("click", () => { const ids = [...state.selected]; openExclude(ids); });
+$("gate-btn").addEventListener("click", () => {
+  if (state.gate === "open") { state.gate = "requested"; wfToast("G3 requested. Screening is locked until a supervisor or the owner decides. Switch 'View as' to Supervisor to see the approval."); }
+  else if (state.gate === "requested" && state.role === "supervisor") { state.gate = "approved"; wfToast("G3 approved. Extraction can start; this approval is in the audit log."); }
+  renderAll();
+});
+$("role").addEventListener("change", e => { state.role = e.target.value; renderAll(); });
+$("help-btn").addEventListener("click", () => $("help-dialog").showModal());
+$("help-close").addEventListener("click", () => $("help-dialog").close());
+$("reason-cancel").addEventListener("click", () => $("reason-dialog").close());
+$("drawer-close").addEventListener("click", closeDrawer);
+document.addEventListener("keydown", e => {
+  if (wfTyping(e) || document.querySelector("dialog[open]") || e.ctrlKey || e.metaKey || e.altKey) return;
+  const k = e.key.toLowerCase();
+  if (k === "escape") return closeDrawer();
+  const map = { i: () => decide("include", null, null), e: () => openExclude(null), m: () => decide("maybe", null, null), j: () => step(1), k: () => step(-1), u: undo, o: openDrawer,
+    a: () => { state.aiMode = state.aiMode === "before" ? "after" : "before"; renderAll(); }, "?": () => $("help-dialog").showModal() };
+  if (map[k]) { e.preventDefault(); map[k](); }
+});
+const start = location.hash.match(/^#(r\d+)$/); if (start) state.current = start[1];
+renderAll();
+</script>
+</body>
+</html>

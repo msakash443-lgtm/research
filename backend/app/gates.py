@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app import audit
 from app.models import Gate, GateCode, GateStatus, Project, ProjectRole, ProjectStage, Task, TaskStatus
+from app.task_registry import REQUIRED_GATES
 
 OWNER_OR_SUPERVISOR = frozenset({ProjectRole.owner, ProjectRole.supervisor})
 OWNER_ONLY = frozenset({ProjectRole.owner})
@@ -62,6 +63,46 @@ def ensure_gates(db: Session, project: Project) -> list[Gate]:
 def gate_is_approved(db: Session, project_id, code: GateCode) -> bool:
     """True only if a person has approved this gate. A missing gate row counts as not approved."""
     return db.scalar(select(Gate.status).where(Gate.project_id == project_id, Gate.code == code)) == GateStatus.approved
+
+
+# ---- ordering and reopening (M0.5.10, Decisions log 2026-10-07) ------------------------------------
+
+GATE_ORDER: list[GateCode] = list(GateCode)
+
+
+def pending_earlier_gates(gates: list[Gate], code: GateCode) -> list[GateCode]:
+    """Earlier gates not yet approved. A gate can be decided only when this is empty (gates go in order)."""
+    status = {g.code: g.status for g in gates}
+    return [c for c in GATE_ORDER[: GATE_ORDER.index(code)] if status.get(c) != GateStatus.approved]
+
+
+def approved_later_gates(gates: list[Gate], code: GateCode) -> list[GateCode]:
+    """Later gates already approved. Reopening `code` waits until these are reopened (no cascade)."""
+    status = {g.code: g.status for g in gates}
+    return [c for c in GATE_ORDER[GATE_ORDER.index(code) + 1 :] if status.get(c) == GateStatus.approved]
+
+
+def reblock_tasks_for_gate(db: Session, project_id, code: GateCode, actor: str) -> int:
+    """A reopened gate holds its tasks again: queued tasks of a type that needs `code` go back to `blocked`.
+
+    A task already running finishes its attempt (it was released by a then-valid approval); if it is
+    retried, the worker's claim-time gate check blocks it. The caller commits.
+    """
+    types = [task_type for task_type, gate in REQUIRED_GATES.items() if gate == code]
+    if not types:
+        return 0
+    queued = db.scalars(
+        select(Task).where(Task.project_id == project_id, Task.status == TaskStatus.queued, Task.type.in_(types))
+    ).all()
+    for task in queued:
+        task.status = TaskStatus.blocked
+        task.blocked_by_gate = code
+    if queued:
+        audit.record(
+            db, actor=actor, action="task.blocked", project_id=project_id,
+            payload={"gate": code.value, "blocked": len(queued), "task_ids": [str(t.id) for t in queued], "via": "gate.reopened"},
+        )
+    return len(queued)
 
 
 def release_tasks_for_gate(db: Session, project_id, code: GateCode, actor: str) -> int:

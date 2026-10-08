@@ -59,7 +59,8 @@ def enqueue_task(
 
     Callers can't forget the gate: it comes from the type's registration. With an
     `idempotency_key`, asking again for the same key in the same project returns the existing
-    task and adds nothing (a unique index backs this up). The caller commits.
+    task and adds nothing (a unique index backs this up, and losing a true race returns the winner's
+    task rather than an error). The caller commits.
     """
     if idempotency_key is not None:
         existing = db.scalar(select(Task).where(Task.project_id == project_id, Task.idempotency_key == idempotency_key))
@@ -76,15 +77,13 @@ def enqueue_task(
         idempotency_key=idempotency_key,
     )
     try:
-        # The lookup above is only an optimization: another request can insert the same
-        # key before this one reaches the database. Keep that unique-index conflict inside
-        # a savepoint so the caller's transaction stays usable.
-        with db.begin_nested():
+        with db.begin_nested():  # savepoint: a lost race rolls back only this insert, not the caller's work
             db.add(task)
             db.flush()
     except IntegrityError:
         if idempotency_key is None:
             raise
+        # Another request inserted the same key between our SELECT and INSERT: hand back its task.
         existing = db.scalar(select(Task).where(Task.project_id == project_id, Task.idempotency_key == idempotency_key))
         if existing is None:
             raise

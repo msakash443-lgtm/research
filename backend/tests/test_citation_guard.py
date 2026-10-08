@@ -18,6 +18,7 @@ from app.config import get_settings
 from app.connectors.base import ConnectorBase, PaperRecord, SearchPage
 from app.main import app
 from app.prompt_registry import load_prompt
+from tests.llm_replies import chat_reply
 
 TITLE = "Remote work and worker productivity: evidence from a field experiment"
 AUTHORS = ["Ada Lovelace", "Grace Hopper"]
@@ -134,7 +135,7 @@ def test_citing_a_source_the_run_does_not_have_is_blocked(world, fake_llm):
     c, pid = world
     sid = add_source(c, pid)
     assert c.post(f"/api/projects/{pid}/sources/{sid}/verify").status_code == 200
-    fake_llm.handler = lambda request: {"choices": [{"message": {"content": "Productivity rose [S1][S2]."}}]}
+    fake_llm.handler = lambda request: chat_reply("Productivity rose [S1][S2].")
 
     assert_blocked(research(c, pid), rejections(c, pid), 2, "unknown_citation_index", "cited [S2], which doesn't match any source")
 
@@ -145,7 +146,7 @@ def test_every_source_in_a_grouped_citation_is_checked(world, fake_llm, citation
     verified = add_source(c, pid, title="A verified study", doi="10.1234/one")
     add_source(c, pid, title="An unverified study", doi="10.1234/two")
     assert c.post(f"/api/projects/{pid}/sources/{verified}/verify").status_code == 200
-    fake_llm.handler = lambda request: {"choices": [{"message": {"content": f"Productivity rose {citation}."}}]}
+    fake_llm.handler = lambda request: chat_reply(f"Productivity rose {citation}.")
 
     run = research(c, pid)
 
@@ -174,7 +175,7 @@ def test_the_prompt_tells_the_model_which_sources_it_may_cite(world, fake_llm):
     assert "Verified — may be cited." in blocks["A verified study"]
     assert "NOT VERIFIED — do not cite this source." in blocks["An unverified study"]
     assert "Verified — may be cited." not in blocks["An unverified study"]
-    assert run["prompt_version"] == "evidence_synthesis@3"
+    assert run["prompt_version"] == "evidence_synthesis@4"
 
 
 def test_older_prompt_versions_render_without_the_citation_marker():

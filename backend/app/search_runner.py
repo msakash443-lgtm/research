@@ -33,6 +33,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import audit
+from app.connectors.http import bypass_cache
 from app.config import get_settings
 from app.connectors.access import is_enabled
 from app.connectors.base import Connector, ConnectorError, PaperRecord, SearchRequest
@@ -123,7 +124,8 @@ def _execute(
     max_results: int,
 ) -> SearchQuery:
     try:
-        records, total, truncated = _collect(connector, text, filters, max_results)
+        with bypass_cache():  # a search is always live, never answered from the connector cache (M1.3.7)
+            records, total, truncated = _collect(connector, text, filters, max_results)
     except ConnectorError as exc:
         audit.record(
             db,
@@ -136,6 +138,7 @@ def _execute(
     results, counts = _summarise(records)
     counts["reported_total"] = total
     counts["truncated"] = truncated
+    counts["cache_bypassed"] = True
     counts["skipped_records"] = int(getattr(connector, "skipped_records", 0) or 0)
     row = SearchQuery(
         project_id=project.id,

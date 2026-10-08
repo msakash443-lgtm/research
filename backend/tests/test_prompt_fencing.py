@@ -132,7 +132,7 @@ def test_the_request_sent_to_the_model_fences_an_injected_source(fake_llm):
 
     run = client.post(f"/api/projects/{project_id}/research-runs", json={"question": "A long enough question?"}).json()
 
-    assert run["status"] == "completed" and run["prompt_version"] == "evidence_synthesis@3"
+    assert run["status"] == "completed" and run["prompt_version"] == "evidence_synthesis@4"
     body = json.loads(fake_llm.requests[0].content)
     system, user = (m["content"] for m in body["messages"])
     assert INJECTION not in system

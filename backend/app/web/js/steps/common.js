@@ -14,6 +14,19 @@ export function gateCard(ctx, code) {
     el("span", { className: "gate-status", text: label(gate.status) })
   );
   if (gate.note) row.append(el("p", { className: "small muted gate-note", text: `Note: ${gate.note}` }));
+  if (gate.status !== "approved" && (gate.waiting_for || []).length > 0) {
+    row.append(el("p", { className: "small muted gate-waiting", text: `Waits for ${gate.waiting_for.join(", ")}` }));
+  }
+  if (gate.can_reopen) {
+    const reopen = el("button", { className: "quiet-button", text: "Reopen" });
+    reopen.addEventListener("click", () => {
+      const dialog = $("#reopen-dialog");
+      dialog.dataset.gateCode = gate.code;
+      $("#reopen-gate-label").textContent = `${gate.code} · ${GATE_NAMES[gate.code]}`;
+      dialog.showModal();
+    });
+    row.append(reopen);
+  }
   if (gate.can_decide && gate.status !== "approved") {
     const approve = el("button", { text: "Approve" });
     approve.addEventListener("click", async () => {
