@@ -57,6 +57,12 @@ def test_an_answer_that_breaks_the_abstention_rules_is_rejected_not_repaired(fak
     assert run["status"] == "failed" and run["answer"] is None
 
 
+def test_a_blank_answer_fails_the_run_instead_of_completing_it(fake_llm):
+    fake_llm.handler = lambda r: _content(structured("   ", 0.9))
+    run = _run(*_setup())
+    assert run["status"] == "failed" and run["answer"] is None and run["error_message"]
+
+
 def test_citation_rules_still_apply_to_the_structured_answer(fake_llm):
     fake_llm.handler = lambda r: chat_reply("Output rose [S9].")
     run = _run(*_setup())

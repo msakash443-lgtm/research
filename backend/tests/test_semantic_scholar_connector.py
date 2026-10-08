@@ -250,3 +250,40 @@ def test_api_key_only_travels_as_a_header():
 def test_invalid_max_related():
     with pytest.raises(ValueError):
         SemanticScholarConnector(max_related=0)
+
+
+# --- bulk Boolean search (M1.5.5) -------------------------------------------------
+
+
+def test_boolean_search_uses_the_bulk_endpoint_with_filters_and_tokens():
+    c, server = connector(lambda r: {"total": 2500, "token": "NEXT.tok-1", "data": [paper(1), paper(2)]})
+    page = c.boolean_search(SearchRequest(query='("remote work" | telework) + (wellbeing)', limit=10, filters={"year_from": 2015}))
+    req = server.requests[0]
+    assert req.url.path.endswith("/paper/search/bulk")
+    assert req.url.params["query"] == '("remote work" | telework) + (wellbeing)' and req.url.params["year"] == "2015-"
+    assert "token" not in req.url.params and "limit" not in req.url.params and "offset" not in req.url.params
+    assert [r.external_id for r in page.records] == [pid(1), pid(2)]
+    assert (page.total, page.next_cursor) == (2500, "NEXT.tok-1") and c.last_search_capped is False
+
+    c.boolean_search(SearchRequest(query="x", cursor="NEXT.tok-1"))
+    assert server.requests[1].url.params["token"] == "NEXT.tok-1"
+
+
+def test_boolean_search_last_page_and_bad_input():
+    c, server = connector(lambda r: {"total": 1, "token": None, "data": [paper(1)]})
+    assert c.boolean_search(SearchRequest(query="x")).next_cursor is None
+    c2, _ = connector(lambda r: {"total": 0, "token": "t", "data": []})
+    assert c2.boolean_search(SearchRequest(query="x")).next_cursor is None  # an empty page never loops
+    for bad in (SearchRequest(query="x", cursor="a b"), SearchRequest(query="x", filters={"fieldsOfStudy": "x"})):
+        with pytest.raises(ConnectorError):
+            c.boolean_search(bad)
+    assert len(server.requests) == 1
+    c3, _ = connector(lambda r: [])
+    with pytest.raises(ConnectorError):
+        c3.boolean_search(SearchRequest(query="x"))
+
+
+def test_relevance_search_is_unchanged_for_title_lookups():
+    c, server = connector(lambda r: {"total": 1, "data": [paper(1)]})
+    c.search(SearchRequest(query="A paper title"))
+    assert server.requests[0].url.path.endswith("/paper/search")

@@ -49,6 +49,7 @@ def source_response(source: Source) -> SourceRead:
         fulltext_path=source.fulltext_path,
         fulltext_access=source.fulltext_access,
         quality_flags=source.quality_flags,
+        found_via=source.found_via,
         evidence_excerpt=excerpt.content if excerpt else None,
         excerpt_locator=excerpt.locator if excerpt else None,
         created_at=source.created_at,

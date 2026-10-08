@@ -51,7 +51,8 @@ def with_abstention(schema: dict, *, answer_fields: list[str]) -> dict:
             "else": {
                 "properties": {
                     "insufficient_evidence": {"properties": {"reason": {"maxLength": 0}}},
-                    **{name: {"not": {"type": "null"}, "minLength": 1, "minItems": 1} for name in answer_fields},
+                    # A whitespace-only string is not an answer (M0.8.7); `pattern` only applies to strings.
+                    **{name: {"not": {"type": "null"}, "minLength": 1, "minItems": 1, "pattern": r"\S"} for name in answer_fields},
                 }
             },
         }

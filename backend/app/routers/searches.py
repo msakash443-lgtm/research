@@ -25,6 +25,7 @@ from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_acce
 from app.models import Project, SearchQuery, Task, TaskStatus, User
 from app.search_query import BooleanQuery, ConceptBlock, QueryError
 from app.search_query_adapters import adapt
+from app.search_rerun import rerun_refusal
 from app.llm_usage import ProjectMeter
 from app.synonym_suggest import SuggestionError, suggest_synonyms
 from app.search_limits import DEFAULT_MAX_RESULTS, HARD_MAX_RESULTS
@@ -117,6 +118,9 @@ def queue_rerun(
     )
     if latest is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Search not found")
+    refusal = rerun_refusal(latest)
+    if refusal:
+        raise HTTPException(status.HTTP_409_CONFLICT, refusal)
     _usable(latest.database)
     if any((t.payload or {}).get("search_id") == str(search_id) for t in _open_tasks(db, project)):
         raise HTTPException(status.HTTP_409_CONFLICT, "This search already has a run waiting or in progress")

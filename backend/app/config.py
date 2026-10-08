@@ -61,6 +61,12 @@ class Settings(BaseSettings):
     connector_cache_ttl_seconds: float = Field(default=0, ge=0)
     # Optional Semantic Scholar API key (sent as x-api-key). Without one the shared, heavily throttled pool is used.
     semantic_scholar_api_key: SecretStr | None = None
+    # Optional NCBI E-utilities key for the PubMed connector (raises its rate limit from 3 to 10 requests a second).
+    ncbi_api_key: SecretStr | None = None
+    # CORE API key (M1.4.6). CORE has no anonymous access: enabling `core` without a key fails when it is used.
+    core_api_key: SecretStr | None = None
+    # Optional OpenCitations access token (sent as the `authorization` header).
+    opencitations_access_token: SecretStr | None = None
     # Object storage for PDFs/full text (M0.10.2). Only "local" exists yet; any other value fails loudly.
     object_storage_backend: str = "local"
     object_storage_root: str = "./data/objects"
@@ -108,6 +114,8 @@ class Settings(BaseSettings):
         bad = unknown_connectors(self.connectors_enabled)
         if bad:
             raise ValueError("CONNECTORS_ENABLED names an unknown connector: " + ", ".join(bad))
+        if "core" in self.connectors_enabled and not (self.core_api_key and self.core_api_key.get_secret_value().strip()):
+            raise ValueError("CORE_API_KEY must be set in production when 'core' is in CONNECTORS_ENABLED")
         if self.arc_retrieval_enabled:
             if not self.arc_retrieval_base_url or not self.arc_retrieval_base_url.startswith("https://"):
                 raise ValueError("ARC_RETRIEVAL_BASE_URL must use HTTPS in production when ARC_RETRIEVAL_ENABLED is true")

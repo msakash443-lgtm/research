@@ -1,6 +1,8 @@
 """Semantic Scholar connector (official Graph API, https://api.semanticscholar.org/api-docs).
 
 Search, lookup by id (S2 paper id or DOI), batch lookup, references and citations (each paged).
+`search` is relevance search (no operators); `boolean_search` is the bulk endpoint that applies
+AND / OR / phrases, which database searches use (M1.5.5).
 Full text is not offered (`get_fulltext` raises `NotSupportedError`); the open-access PDF link is
 returned as `oa_url`.
 
@@ -47,6 +49,7 @@ _PAPER_ID = re.compile(r"^[0-9a-f]{40}$")
 _YEAR = re.compile(r"^\d{4}$")
 _TYPE = re.compile(r"^[A-Za-z]{3,40}$")
 _OFFSET = re.compile(r"^\d{1,6}$")
+_TOKEN = re.compile(r"^[A-Za-z0-9_\-=+/.]{1,500}$")  # bulk-search continuation token
 
 
 def paper_ref(value: str) -> str:
@@ -230,6 +233,34 @@ class SemanticScholarConnector(ConnectorBase):
             records=tuple(records),
             total=total if isinstance(total, int) and total >= 0 else None,
             next_cursor=str(nxt) if has_next and nxt < MAX_SEARCH_WINDOW else None,
+        )
+
+    def boolean_search(self, request: SearchRequest) -> SearchPage:
+        """Boolean search over titles and abstracts (`/paper/search/bulk`, M1.5.5).
+
+        Takes the bulk syntax the `semantic_scholar` adapter writes (`+` AND, `|` OR, quoted phrases,
+        `*` prefix). Results are not ranked by relevance. Each page holds up to 1,000 records
+        whatever `limit` says (the API has no page size); the cursor is the API's continuation token,
+        so there is no 1,000-result window here. `search` stays the relevance search used for
+        title look-ups (the citation verifier).
+        """
+        params = self._search_params(request.filters)
+        params.update(query=request.query, fields=FIELDS)
+        if request.cursor is not None:
+            if not _TOKEN.match(request.cursor):
+                raise ConnectorError("Invalid cursor for Semantic Scholar bulk search")
+            params["token"] = request.cursor
+        data = self._http.get_json("/paper/search/bulk", params)
+        if not isinstance(data, dict):
+            raise ConnectorError("Semantic Scholar returned an unexpected reply")
+        records = self._records(data.get("data") if data.get("data") is not None else [])
+        total = data.get("total")
+        token = data.get("token")
+        self.last_search_capped = False
+        return SearchPage(
+            records=tuple(records),
+            total=total if isinstance(total, int) and total >= 0 else None,
+            next_cursor=token if isinstance(token, str) and _TOKEN.match(token) and data.get("data") else None,
         )
 
     def get_by_id(self, external_id: str) -> PaperRecord | None:

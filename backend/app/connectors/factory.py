@@ -5,13 +5,16 @@ from __future__ import annotations
 from app.config import get_settings
 from app.connectors.base import Connector, ConnectorError
 from app.connectors.arxiv import ArxivConnector
+from app.connectors.core import CoreConnector
 from app.connectors.crossref import CrossrefConnector
 from app.connectors.openalex import OpenAlexConnector
+from app.connectors.opencitations import OpenCitationsConnector
+from app.connectors.pubmed import PubMedConnector
 from app.connectors.semantic_scholar import SemanticScholarConnector
 from app.connectors.unpaywall import UnpaywallConnector
 
-# Connectors that can run a keyword search. Unpaywall resolves DOIs only, so it is not listed.
-SEARCHABLE = ("openalex", "crossref", "semantic_scholar", "arxiv")
+# Connectors that can run a keyword search. Unpaywall and OpenCitations look works up by id only.
+SEARCHABLE = ("openalex", "crossref", "semantic_scholar", "arxiv", "pubmed", "core")
 
 
 # Services the citation verifier asks, in this order.
@@ -35,7 +38,13 @@ def build_connector(name: str) -> Connector:
         return SemanticScholarConnector(api_key=settings.semantic_scholar_api_key)
     if name == "arxiv":
         return ArxivConnector()
-    raise ConnectorError(f"No searchable connector named '{name}'")
+    if name == "pubmed":
+        return PubMedConnector(contact_email=settings.connector_contact_email, api_key=settings.ncbi_api_key)
+    if name == "core":
+        return CoreConnector(api_key=settings.core_api_key)
+    if name == "opencitations":
+        return OpenCitationsConnector(access_token=settings.opencitations_access_token)
+    raise ConnectorError(f"No connector named '{name}'")
 
 
 def unpaywall_unavailable_reason() -> str | None:

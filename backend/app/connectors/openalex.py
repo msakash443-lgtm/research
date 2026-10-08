@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from urllib.parse import quote
 
 from app.connectors.base import (
     ConnectorBase,
@@ -230,6 +231,26 @@ class OpenAlexConnector(ConnectorBase):
         wid = work_id(external_id)
         try:
             work = self._http.get_json(f"/works/{wid}", self._params())
+        except NotFoundError:
+            return None
+        if not isinstance(work, dict):
+            raise ConnectorError("OpenAlex returned an unexpected reply")
+        record = to_record(work)
+        if record is None:
+            raise ConnectorError("OpenAlex returned a work that cannot be represented (no title)")
+        return record
+
+    def get_by_doi(self, doi: str) -> PaperRecord | None:
+        """The work with this DOI (`/works/doi:...`), or None when OpenAlex has none. Used to find a start
+        paper for snowballing (M1.9) when only its DOI is known."""
+        try:
+            bare = normalize_doi(doi)
+        except ValueError:
+            bare = None
+        if not bare:
+            raise ConnectorError("Not a valid DOI")
+        try:
+            work = self._http.get_json(f"/works/doi:{quote(bare, safe='/()-._:;')}", self._params())
         except NotFoundError:
             return None
         if not isinstance(work, dict):

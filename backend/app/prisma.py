@@ -7,6 +7,8 @@ Numbers come from stored search runs, never from a model (plan rule 24):
 * duplicates removed = identified minus the unique records across **all** runs, using the same
   rules as `dedupe` (same DOI, else same title+year+first author; two different DOIs never match).
 * A run that hit its cap is listed in `warnings`; its numbers are a lower bound.
+* Snowballing (M1.9) is PRISMA 2020's "other methods: citation searching", reported apart from the
+  database searches under `other_methods`: works fetched, and new records it added to the project.
 
 Screening, exclusions by reason and inclusion need the screening records of M2.1, which do not
 exist yet, so they are reported as unavailable (`null`), not as zero.
@@ -19,7 +21,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Project, SearchQuery
+from app.models import Project, SearchQuery, SnowballRun
 
 
 def _latest_runs(db: Session, project: Project) -> list[SearchQuery]:
@@ -59,6 +61,22 @@ def _unique_across(runs: list[SearchQuery]) -> int:
     return len(groups)
 
 
+def _snowball_runs(db: Session, project: Project) -> list[SnowballRun]:
+    return list(db.scalars(select(SnowballRun).where(SnowballRun.project_id == project.id).order_by(SnowballRun.run_at, SnowballRun.id)))
+
+
+def _citation_searching(db: Session, project: Project) -> dict[str, Any]:
+    runs = _snowball_runs(db, project)
+    return {
+        "citation_searching": {
+            "runs": len(runs),
+            "identified": sum(int(r.counts.get("fetched") or 0) for r in runs),
+            "added": sum(int(r.counts.get("added") or 0) for r in runs),
+            "already_in_project": sum(int(r.counts.get("already_in_project") or 0) for r in runs),
+        }
+    }
+
+
 def flow_counts(db: Session, project: Project) -> dict[str, Any]:
     runs = _latest_runs(db, project)
     identified = sum(r.counts["retrieved"] for r in runs)
@@ -67,6 +85,10 @@ def flow_counts(db: Session, project: Project) -> dict[str, Any]:
         f"{r.database} search {r.version} stopped at its result cap; its numbers are a lower bound"
         for r in runs
         if r.counts.get("truncated")
+    ] + [
+        f"snowball run {r.id} stopped at its cap of {r.caps.get('max_new')} new records; its numbers are a lower bound"
+        for r in _snowball_runs(db, project)
+        if r.counts.get("capped")
     ]
     return {
         "identification": {
@@ -86,6 +108,7 @@ def flow_counts(db: Session, project: Project) -> dict[str, Any]:
             "duplicates_removed": identified - unique,
             "after_duplicates_removed": unique,
         },
+        "other_methods": _citation_searching(db, project),
         "screening": {"available": False, "screened": None, "excluded_by_reason": None, "included": None},
         "warnings": warnings,
     }

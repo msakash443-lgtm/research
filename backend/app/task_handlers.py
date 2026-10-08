@@ -12,7 +12,7 @@ from app.agent.executor import execute_research_run
 from app.database import SessionLocal
 from app.connectors.base import ConnectorError
 from app.connectors.factory import build_connector, build_unpaywall, enabled_lookup_names, unpaywall_unavailable_reason
-from app.models import GateCode, Project, ResearchRun, ResearchRunStatus, SearchQuery, Source, utcnow
+from app.models import GateCode, Project, ResearchRun, ResearchRunStatus, SearchQuery, SnowballRun, Source, utcnow
 from app.agent.llm import LLMConfigurationError, OpenAICompatibleLLM
 from app.llm_usage import ProjectMeter
 from app.config import get_settings
@@ -26,6 +26,8 @@ from app.safe_fetch import FetchRefused, fetch_pdf
 from app.search_query import BooleanQuery, QueryError
 from app.source_verification import verify_source
 from app.search_runner import SearchError, SearchFailed, rerun_search, run_search
+from app.screening import screening_locked
+from app.snowball import SnowballError, SnowballFailed, run_snowball
 from app.task_registry import ClaimedTask, PermanentTaskError, TaskOwnershipLost, register
 
 logger = logging.getLogger(__name__)
@@ -36,6 +38,7 @@ SOURCE_CHECK = "source_check"
 SCREENING_PRESCREEN = "screening_prescreen"
 THEMATIC_CLUSTERING = "thematic_clustering"
 FULLTEXT_FETCH = "fulltext_fetch"
+SNOWBALL_RUN = "snowball_run"
 
 
 def _research_run_abandoned(task: ClaimedTask) -> None:
@@ -240,6 +243,48 @@ def handle_fulltext_fetch(task: ClaimedTask) -> None:
         except (OaFetchError, FetchRefused) as exc:
             db.rollback()
             raise PermanentTaskError(str(exc)) from exc
+        task.ensure_owned(db)
+        db.commit()
+    finally:
+        db.close()
+
+
+@register(SNOWBALL_RUN, requires_gate=GateCode.G2)
+def handle_snowball_run(task: ClaimedTask) -> None:
+    """Chase citations from the start papers (M1.9). Bulk retrieval, so the task type needs gate G2."""
+    payload = task.payload or {}
+    try:
+        project_id = uuid.UUID(str(payload["project_id"]))
+        run_id = uuid.UUID(str(payload["run_id"]))
+        connector_name = str(payload["connector"])
+        directions = [str(d) for d in payload["directions"]]
+        rounds, max_per_paper, max_new = int(payload["rounds"]), int(payload["max_per_paper"]), int(payload["max_new"])
+        source_ids = [uuid.UUID(str(s)) for s in payload.get("source_ids") or []]
+    except (KeyError, ValueError, TypeError) as exc:
+        raise PermanentTaskError(
+            "A snowball_run task needs project_id, run_id, connector, directions, rounds, max_per_paper and max_new."
+        ) from exc
+    db = SessionLocal()
+    try:
+        if db.get(SnowballRun, run_id) is not None:
+            return  # an earlier attempt saved this run before the worker could report it; never run it twice
+        project = db.get(Project, project_id)
+        if project is None:
+            raise PermanentTaskError("The project for this snowball run no longer exists.")
+        if screening_locked(db, project):
+            raise PermanentTaskError("Gate G3 is approved, so no new records can enter screening. Reopen the screening stage first.")
+        try:
+            run_snowball(
+                db, project=project, actor=str(payload.get("actor") or audit.SYSTEM_WORKER), connector=build_connector(connector_name),
+                run_id=run_id, directions=directions, rounds=rounds, max_per_paper=max_per_paper, max_new=max_new,
+                include_seeds=bool(payload.get("include_seeds")), source_ids=source_ids, before_write=task.ensure_owned,
+            )
+        except SnowballFailed:
+            db.commit()  # keep the snowball.failed audit event, then let the queue retry with backoff
+            raise
+        except (SnowballError, ConnectorError) as exc:
+            db.rollback()
+            raise PermanentTaskError(f"The snowball run could not be done: {exc}") from exc
         task.ensure_owned(db)
         db.commit()
     finally:

@@ -141,6 +141,14 @@ function fulltextSection(ctx, source) {
   return section.childElementCount ? section : null;
 }
 
+// How snowballing found a source (M1.9.2). Titles are third-party text, so they go in as text only.
+function foundViaText(via) {
+  if (!via || via.method !== "snowball") return "";
+  const from = (via.via && via.via.title) || "an earlier paper";
+  const how = via.direction === "forward" ? "cites" : "is cited by";
+  return `Found via snowballing (round ${via.round}): it ${how} “${from}”`;
+}
+
 function sourceCard(ctx, source) {
   const card = el("article", { className: "source-card" });
   const meta = [label(source.source_type), source.year].filter(Boolean).join(" · ");
@@ -153,6 +161,8 @@ function sourceCard(ctx, source) {
     card.append(el("h3", { text: source.title }));
   }
   card.append(el("p", { className: "verification-status small", text: verificationText(source) }));
+  const via = foundViaText(source.found_via);
+  if (via) card.append(el("p", { className: "source-locator", text: via }));
   // Agent-retrieved sources carry a provenance badge (X.17); retrieval uses no language model, and the
   // human approval for a source is its verification.
   if (source.origin === "retrieved") {
