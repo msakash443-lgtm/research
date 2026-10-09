@@ -71,7 +71,7 @@ def test_v1_still_renders_byte_for_byte_as_the_original_inline_prompt():
 
 def test_published_prompt_files_are_immutable():
     actual = {
-        path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+        path.name: hashlib.sha256(path.read_text(encoding="utf-8").encode("utf-8")).hexdigest()
         for path in sorted(registry.PROMPT_DIR.glob("*.toml"))
     }
     assert actual == PUBLISHED_CHECKSUMS, "A published prompt changed or a new one was added without registering its checksum"

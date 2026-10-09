@@ -59,7 +59,10 @@ def test_a_well_formed_extraction_is_stored_unverified_with_its_schema_version(w
 
 
 def test_a_value_without_evidence_is_refused_with_every_problem(world):
-    body = {"fields": {"research_question": "Why?", "sample": {"n": 1}}, "evidence": {"sample": {"quote": "  ", "page": 1}}}
+    body = {
+        "fields": {"research_question": "Why?", "sample": {"n": 1, "population": "adults", "country": "UK"}},
+        "evidence": {"sample": {"quote": "  ", "page": 1}},
+    }
     r = create(world, body)
     assert r.status_code == 422
     assert r.json()["detail"] == [
@@ -67,6 +70,23 @@ def test_a_value_without_evidence_is_refused_with_every_problem(world):
         "sample: evidence needs a non-empty quote",
     ]
     assert world["owner"].get(f"/api/projects/{world['pid']}/extractions").json() == []
+
+
+def test_multibyte_evidence_is_counted_by_utf8_bytes_for_the_payload_limit(world):
+    body = {
+        "fields": {"research_question": "Q"},
+        "evidence": {"research_question": {"quote": "界" * 60_000, "page": 1}},
+    }
+    response = create(world, body)
+    assert response.status_code == 201, response.text
+
+
+def test_payload_larger_than_the_utf8_byte_limit_is_refused(world):
+    body = {
+        "fields": {"research_question": "Q"},
+        "evidence": {"research_question": {"quote": "界" * 70_000, "page": 1}},
+    }
+    assert create(world, body).status_code == 413
 
 
 @pytest.mark.parametrize(
@@ -101,7 +121,10 @@ def test_an_edit_replaces_fields_and_is_checked_again(world):
     eid = create(world).json()["id"]
     url = f"/api/projects/{world['pid']}/extractions/{eid}"
     assert world["owner"].put(url, json={"fields": {"method": {"design": "RCT"}}}).status_code == 422  # no evidence
-    new = {"fields": {"method": {"design": "RCT"}}, "evidence": {"method": {"quote": "a randomised trial", "section": "Design"}}}
+    new = {
+        "fields": {"method": {"design": "RCT", "analysis": "intention-to-treat"}},
+        "evidence": {"method": {"quote": "a randomised trial", "section": "Design"}},
+    }
     r = world["owner"].put(url, json=new)
     assert r.status_code == 200, r.text
     assert r.json()["fields_json"] == new["fields"] and r.json()["evidence_spans"] == new["evidence"]

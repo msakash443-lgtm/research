@@ -45,6 +45,28 @@ def test_well_formed_extraction_passes():
     assert xs.check_extraction(schema, fields, {"sample": GOOD_SPAN}) == []
 
 
+@pytest.mark.parametrize("page", ["", "   ", {}, [], True, False, 0, -1, 1.5])
+def test_invalid_page_locators_are_rejected(page):
+    schema = xs.load_schema()
+    span = {"quote": "A quoted passage", "page": page}
+    assert xs.check_extraction(schema, {"research_question": "Q?"}, {"research_question": span}) == [
+        "research_question: page must be a positive number or a non-empty printed label",
+    ]
+
+
+@pytest.mark.parametrize("page", [1, "iv", " 123 "])
+def test_positive_page_numbers_and_nonblank_printed_labels_are_accepted(page):
+    schema = xs.load_schema()
+    span = {"quote": "A quoted passage", "page": page}
+    assert xs.check_extraction(schema, {"research_question": "Q?"}, {"research_question": span}) == []
+
+
+def test_section_is_sufficient_when_page_is_absent():
+    schema = xs.load_schema()
+    span = {"quote": "A quoted passage", "section": "Methods"}
+    assert xs.check_extraction(schema, {"research_question": "Q?"}, {"research_question": span}) == []
+
+
 def test_non_null_field_without_evidence_is_rejected():
     schema = xs.load_schema()
     problems = xs.check_extraction(schema, {"research_question": "Does X cause Y?"}, {})
@@ -68,3 +90,45 @@ def test_wrong_type_unknown_field_and_orphan_evidence():
     assert "theory_used: expected list" in problems
     assert any(p.startswith("invented:") for p in problems)
     assert "method: evidence given for an empty field" in problems
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "expected"),
+    [
+        ("sample", {"n": "many", "population": [], "country": {}}, [
+            "sample.country: expected string",
+            "sample.n: expected integer",
+            "sample.population: expected string",
+        ]),
+        ("sample", {}, [
+            "sample.country: missing property",
+            "sample.n: missing property",
+            "sample.population: missing property",
+        ]),
+        ("measures", [{"construct": "trust", "scale": "X", "reliability": "high"}], [
+            "measures[0].reliability: expected number",
+        ]),
+        ("measures", [{"construct": "trust", "scale": "X"}], [
+            "measures[0].reliability: missing property",
+        ]),
+        ("constructs", [{"name": "trust", "definition": "belief", "extra": True}], [
+            "constructs[0].extra: unexpected property",
+        ]),
+        ("theory_used", ["resource dependence", 42], [
+            "theory_used[1]: expected string",
+        ]),
+    ],
+)
+def test_nested_values_are_checked_against_the_appendix_b_shape(key, value, expected):
+    schema = xs.load_schema()
+    assert xs.check_extraction(schema, {key: value}, {key: GOOD_SPAN}) == expected
+
+
+def test_appendix_b_nested_values_allow_declared_nulls():
+    schema = xs.load_schema()
+    fields = {
+        "measures": [{"construct": "trust", "scale": "X", "reliability": None}],
+        "key_findings": [{"statement": "No effect", "effect_size": None, "p_or_ci": None}],
+    }
+    evidence = {"measures": GOOD_SPAN, "key_findings": GOOD_SPAN}
+    assert xs.check_extraction(schema, fields, evidence) == []

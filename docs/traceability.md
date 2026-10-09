@@ -54,8 +54,8 @@
 ### §5.4 Extraction and evidence tables
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
 |---|---|---|---|---|---|
-| 5.4.1 | Versioned discipline schemas | M3.1.1–M3.1.2 | `extraction_schema.py`, `extraction_schemas/` | `test_extraction_schema.py` | M3.1 `[~]` (in progress) |
-| 5.4.2 | LLM extraction with evidence spans | M3.2.1, M3.3.1–M3.3.2 | — | — | `[ ]` |
+| 5.4.1 | Versioned discipline schemas with nested Appendix B value validation | M3.1.1–M3.1.2 | `extraction_schema.py`, `extraction_schemas/` | `test_extraction_schema.py`, `test_project_schemas.py` | M3.1 `[~]` (in progress) |
+| 5.4.2 | LLM extraction with evidence spans | M3.2.1, M3.3.1–M3.3.2 | `routers/extractions.py` (versioned extraction API) | `test_extractions.py` | M3.2 `[?]` (awaiting independent review) |
 | 5.4.3 | Verbatim span verification | M3.4.1–M3.4.2; groundwork M0.2.6 (immutable excerpts) | — | `test_excerpt_immutability.py` | M0.2.6 `[?]`, M3.4 `[ ]` |
 | 5.4.4 | Matrix view, every cell links to source; CSV/Excel | M3.5.1–M3.5.2, **X.14** | wireframe `docs/wireframes/evidence-table.html` (X.14, awaiting scholar walkthrough) | — | `[ ]` |
 | 5.4 gate | G4 verify critical fields, side-by-side PDF | M3.6.1–M3.6.2 | — | — | `[ ]` |
@@ -68,7 +68,7 @@
 | 5.5.2–3 | Construct inventory (jingle-jangle); theory map | M3.7.1 | — | — | `[ ]` |
 | 5.5.4 | Method/context matrices | M3.8.2 | `app/coverage_matrix.py`, `routers/coverage.py` | `tests/test_coverage_matrix.py` | `[?]` (API only; UI waits on a wireframe) |
 | 5.5.5 | Gap miner, ≥ 2 supporting papers | M3.9.1–M3.9.2 | — | — | `[ ]` |
-| 5.5.6 | Bibliometric views/exports | M3.12 | — | — | `[ ]` |
+| 5.5.6 | Bibliometric views/exports | M3.12, M3.12.1 | `GET /api/projects/{id}/bibliometrics/publication-trends` | `test_bibliometrics.py`, `test_role_matrix.py` | M3.12.1 `[?]` (API-only first slice; full suite has unrelated failures) |
 | 5.5 gate | G5 curate gaps | M3.9.3 | — | — | `[ ]` |
 | 5.5 QC | Contradiction detection | M3.10.1 | — | — | `[ ]` |
 | §4 inv. | Claim with no evidence can't be `verified` | M3.11.1–M3.11.3 | — | — | `[ ]` |

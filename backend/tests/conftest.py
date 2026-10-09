@@ -8,6 +8,10 @@ os.environ["AUTO_CREATE_SCHEMA"] = "true"
 os.environ["RUN_RESEARCH_INLINE"] = "true"
 os.environ["SESSION_SECRET"] = "test-session-secret-that-is-long-enough"
 
+from app.config import Settings
+
+Settings.model_config["env_file"] = None
+
 import pytest
 from pydantic import SecretStr
 

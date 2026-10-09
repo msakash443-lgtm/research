@@ -81,6 +81,7 @@ MATRIX = [
     ("PUT", "/api/projects/{p}/extraction-schemas/{n}", WRITE, 200),
     ("GET", "/api/projects/{p}/clusters", ALL, 200),
     ("GET", "/api/projects/{p}/coverage-matrix", ALL, 200),
+    ("GET", "/api/projects/{p}/bibliometrics/publication-trends", ALL, 200),
     ("GET", "/api/projects/{p}/export/replication", ALL, 200),
     ("GET", "/api/projects/{p}/clusters/{c}", ALL, 200),
     ("POST", "/api/projects/{p}/clusters", WRITE, 202),  # queues only

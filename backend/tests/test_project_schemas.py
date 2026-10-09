@@ -63,6 +63,34 @@ def test_copy_of_default_is_version_one_with_the_same_fields(world):
     assert [s["ref"] for s in world["c"].get(world["base"]).json()["project"]] == ["project:lab"]
 
 
+def test_copy_of_default_preserves_nested_value_validation(world):
+    assert copy(world).status_code == 201
+    response = extract(
+        world,
+        "project:lab",
+        {"sample": {"n": "many", "population": [], "country": {}}},
+        {"sample": {"quote": "Participants were recruited", "page": 2}},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == [
+        "sample.country: expected string",
+        "sample.n: expected integer",
+        "sample.population: expected string",
+    ]
+    missing_property = extract(
+        world,
+        "project:lab",
+        {"sample": {}},
+        {"sample": {"quote": "Participants were recruited", "page": 2}},
+    )
+    assert missing_property.status_code == 422
+    assert missing_property.json()["detail"] == [
+        "sample.country: missing property",
+        "sample.n: missing property",
+        "sample.population: missing property",
+    ]
+
+
 def test_copy_name_rules(world):
     assert copy(world, name="default").status_code == 409  # can't shadow a built-in
     assert copy(world).status_code == 201
@@ -136,6 +164,29 @@ def test_an_extraction_made_with_an_older_version_must_be_redone(world):
         json={"fields": {"sample_size": 2}, "evidence": {"sample_size": {"quote": "two", "page": 1}}},
     )
     assert r.status_code == 409 and "project:lab@2" in r.json()["detail"]
+
+
+def test_stale_extraction_update_returns_conflict_before_new_schema_validation(world):
+    copy(world)
+    row = extract(
+        world,
+        "project:lab",
+        {"research_question": "Why?"},
+        {"research_question": {"quote": "The paper asks why", "page": 1}},
+    ).json()
+    edit(world, "lab", [SAMPLE_SIZE])
+
+    response = world["c"].put(
+        f"/api/projects/{world['pid']}/extractions/{row['id']}",
+        json={
+            "fields": {"research_question": "Updated question"},
+            "evidence": {"research_question": {"quote": "The paper asks why", "page": 1}},
+        },
+    )
+
+    assert response.status_code == 409
+    assert "project:lab@1" in response.json()["detail"]
+    assert "project:lab@2" in response.json()["detail"]
 
 
 def test_a_project_schema_can_be_copied_again(world):

@@ -74,7 +74,10 @@ def _checked(db: Session, project: Project, schema_name: str, fields: dict[str, 
         schema = project_schemas.resolve(db, project.id, schema_name)
     except SchemaError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
-    if len(json.dumps({"fields": fields, "evidence": evidence}, default=str)) > MAX_PAYLOAD_BYTES:
+    payload_bytes = json.dumps(
+        {"fields": fields, "evidence": evidence}, default=str, ensure_ascii=False
+    ).encode("utf-8")
+    if len(payload_bytes) > MAX_PAYLOAD_BYTES:
         raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Extraction is too large")
     problems = check_extraction(schema, fields, evidence)
     if problems:
@@ -158,12 +161,17 @@ def update_extraction(
     if row.verified_by_human:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This extraction has been verified and can't be edited.")
     name = row.schema_version.partition("@")[0]
-    version = _checked(db, project, name, payload.fields, payload.evidence)
+    try:
+        current_schema = project_schemas.resolve(db, project.id, name)
+    except SchemaError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    version = schema_version(current_schema)
     if version != row.schema_version:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"This extraction was made with {row.schema_version}; the schema is now {version}. Create a new extraction instead.",
         )
+    _checked(db, project, name, payload.fields, payload.evidence)
     before = sorted(k for k, v in row.fields_json.items() if v is not None)
     row.fields_json = payload.fields
     row.evidence_spans = payload.evidence
