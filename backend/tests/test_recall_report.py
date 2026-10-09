@@ -192,7 +192,7 @@ def test_pure_report_on_gold_papers():
 
 def test_x15_fixture_gold_set_can_be_reported():
     """Once the scholar's gold set (X.15) is filled in, its known-relevant papers feed `report` directly."""
-    from backend.tests.gold.loader import load_gold_set
+    from tests.gold.loader import load_gold_set
 
     papers = [p for p in load_gold_set()["papers"] if p.get("known_relevant")]
     if not papers:

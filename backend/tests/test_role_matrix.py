@@ -16,6 +16,9 @@ from fastapi.testclient import TestClient
 from app.database import SessionLocal
 from app.main import app
 from app.models import Cluster, ClusterRun, Extraction, Project, ProjectMember, ProjectExtractionSchema, ProjectRole, ProjectStage, SearchQuery, SeedPaper
+from tests.test_fulltext import make_pdf
+
+UPLOAD_PDF = make_pdf([["Role matrix upload body text."]])
 
 ALL = {"owner", "co_author", "supervisor", "reviewer"}
 WRITE = {"owner", "co_author"}
@@ -29,6 +32,7 @@ MATRIX = [
     ("POST", "/api/projects/{p}/context", WRITE, 201),
     ("GET", "/api/projects/{p}/sources", ALL, 200),
     ("GET", "/api/projects/{p}/usage", ALL, 200),
+    ("PUT", "/api/projects/{p}/usage/budget", MANAGE, 200),  # owner only: sets this project's own token-budget override
     ("POST", "/api/projects/{p}/searches/suggest-synonyms", WRITE, 200),
     ("POST", "/api/projects/{p}/sources", WRITE, 201),
     ("POST", "/api/projects/{p}/sources/{s}/verify", WRITE, 200),
@@ -37,6 +41,7 @@ MATRIX = [
     ("GET", "/api/projects/{p}/sources/export", ALL, 200),
     ("POST", "/api/projects/{p}/sources/{s}/check", WRITE, 202),
     ("POST", "/api/projects/{p}/sources/{s}/fulltext/fetch", WRITE, 202),  # queues only
+    ("POST", "/api/projects/{p}/sources/{s}/fulltext/upload", WRITE, 201),  # raw PDF body; _call gives each principal a fresh source (write-once)
     ("GET", "/api/projects/{p}/searches", ALL, 200),
     ("GET", "/api/projects/{p}/seeds", ALL, 200),
     ("POST", "/api/projects/{p}/seeds", WRITE, 201),
@@ -93,6 +98,7 @@ MATRIX = [
 ]
 
 BODIES = {
+    ("PUT", "/api/projects/{p}/usage/budget"): {"override": 5000},
     ("PUT", "/api/projects/{p}/criteria"): {"framework": "custom", "criteria": [{"kind": "include", "text": "Peer-reviewed studies"}]},
     ("PUT", "/api/projects/{p}/profile"): {"discipline": "economics", "overrides": {"databases": ["openalex"]}},
     ("POST", "/api/projects/{p}/stage/reenter"): {"stage": "scoped", "reason": "Rework the scope"},
@@ -215,6 +221,14 @@ def _call(world, principal, method, template):
         # there must be a decision to take back; the owner records it, whoever is being tested
         owner_body = {"source_id": world["ids"]["s"], "decision": "maybe"}
         world["clients"]["owner"].post(f"/api/projects/{world['ids']['p']}/screening/decisions", json=owner_body)
+    if (method, template) == ("POST", "/api/projects/{p}/sources/{s}/fulltext/upload"):
+        # Upload is write-once per source: give every principal under test a fresh, never-uploaded
+        # source so a successful call from one principal doesn't 409 the next.
+        fresh = world["clients"]["owner"].post(
+            f"/api/projects/{world['ids']['p']}/sources", json={"title": "Upload target", "evidence_excerpt": "x"}
+        ).json()
+        path = path.replace(f"/sources/{world['ids']['s']}/", f"/sources/{fresh['id']}/")
+        return world["clients"][principal].post(path, content=UPLOAD_PDF, headers={"content-type": "application/pdf"})
     return world["clients"][principal].request(method, path, json=body)
 
 

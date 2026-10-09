@@ -8,8 +8,8 @@ Effective settings = the profile's values, with any setting the project has set 
 (a list replaces the whole list; it is not merged). The profile name and version are reported with the
 effective settings so work can later record exactly which configuration it used.
 
-The two shipped profiles are examples, not endorsements: which disciplines, guidelines and styles ship
-first is an open question (plan Q3).
+The shipped profiles are the disciplines the product owner chose (plan Q3, Decisions log 2026-10-09).
+Their values are defaults; a project can override any setting.
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ PROFILE_DIR = Path(__file__).resolve().parent / "profiles"
 KNOWN_DATABASES = frozenset({
     "openalex", "crossref", "semantic_scholar", "arxiv", "unpaywall", "pubmed", "europe_pmc", "core",
     "opencitations", "scopus", "web_of_science", "ieee_xplore", "econlit", "repec",
+    "psycinfo", "ssrn", "jstor", "business_source_complete", "mla_international_bibliography",
 })
 KNOWN_REPORTING_GUIDELINES = frozenset({
     "PRISMA-2020", "PRISMA-ScR", "PRISMA-P", "MOOSE", "STROBE", "CONSORT", "COREQ", "SRQR", "ENTREQ", "CHEERS",

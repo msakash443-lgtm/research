@@ -5,7 +5,7 @@
 > that prove it. **plan.md is the source of truth for status**; this table is a snapshot and must be
 > updated whenever a task is added, finished or dropped (plan.md rule 31).
 >
-> Snapshot: 2026-10-07 (refreshed; first written 2026-10-03) · test baseline **1279 passed, 3 skipped** (full run 2026-10-07; plan.md header still says 1267 from the last task) · tests live in `backend/tests/`.
+> Snapshot: 2026-10-09 (refreshed; first written 2026-10-03) · test baseline **2000 passed, 6 skipped** (full run 2026-10-09) · tests live in `backend/tests/`. **M0 closed 2026-10-09** (plan.md M0 header `[x]`); M0-scoped rows below refreshed. M1–M7/X rows not re-verified this pass — still as of 2026-10-07.
 > Status here follows plan.md as of the snapshot date; where the two disagree, plan.md wins.
 
 **Status key:** `[x]` done · `[?]` built, awaiting review · `[~]` in progress · `[ ]` not started ·
@@ -46,7 +46,7 @@
 | 5.3.1 | AI pre-screen with rationale + confidence | M2.2.1–M2.2.3 | `POST …/screening/prescreen`, task `screening_prescreen` | `test_prescreen.py` | `[?]` (not tried against a real model) |
 | 5.3.2 | Active-learning prioritisation | M2.6 | — | — | `[ ]` |
 | 5.3.3 | Dual screen, kappa, conflict queue | M2.4.1–M2.4.2 | — | — | `[ ]` |
-| 5.3.4 | OA full-text fetch; paywalled → manual upload | M2.7.1–M2.7.4 | — | — | `[ ]` |
+| 5.3.4 | OA full-text fetch; paywalled → manual upload | M2.7.1–M2.7.4 | `POST …/sources/{id}/fulltext/fetch`, `POST …/sources/{id}/fulltext/upload` | `test_oa_fetch.py`, `test_fulltext_upload.py` | `[?]` (M2.7.4, full-text screening stage, still open) |
 | 5.3 UI | Keyboard-first screening queue | M2.3.1–M2.3.2, **X.14** (wireframe first) | wireframe `docs/wireframes/screening-queue.html` (X.14, awaiting scholar walkthrough) | — | `[ ]` |
 | 5.3 gate | No AI auto-exclude without sampling audit; G3 | M2.5.1, M2.8.1 | — | — | `[ ]` |
 | 5.3 QC | Stop AI pre-screen when agreement drops | M2.5.2, M2.9 | — | — | `[ ]` |
@@ -149,13 +149,13 @@
 
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
 |---|---|---|---|---|---|
-| §3.2 | Orchestrator: durable queue, pause, retry, re-entry | M0.2.1, M0.6.1–M0.6.5, M0.6.8–M0.6.10, X.1.1 | worker | `test_task_queue.py`, `test_task_queue_postgres.py` (real PostgreSQL: double claim, backoff, lease expiry) | M0.6.1–.3, .5, .8 `[x]`; M0.6.4 `[?]`; M0.6.9 `[!]`; M0.6.10 `[~]`; X.1.1 `[?]` |
-| §3.2 | Object store for PDFs | M0.10.2, M0.10.3, M0.10.4 | `app/object_storage.py` | `test_object_storage.py` | M0.10.2 `[x]`; M0.10.3, M0.10.4 `[ ]` |
+| §3.2 | Orchestrator: durable queue, pause, retry, re-entry | M0.2.1, M0.6.1–M0.6.5, M0.6.8–M0.6.10, X.1.1 | worker | `test_task_queue.py`, `test_task_queue_postgres.py` (real PostgreSQL: double claim, backoff, lease expiry) | M0.6.1–.11 `[x]` (M0 closed 2026-10-09); X.1.1 `[?]` |
+| §3.2 | Object store for PDFs | M0.10.2, M0.10.3, M0.10.4 | `app/object_storage.py` | `test_object_storage.py` | M0.10.1–.4 `[x]` (M0.10.3 S3 backend, M0.10.4 Windows-safe keys; not verified against a real AWS/MinIO/R2 endpoint) |
 | §3.3 | Citation verifier | M1.10.1–M1.10.6; human verify M0.2.4 | `POST .../sources/{id}/verify`, `POST .../sources/{id}/check` | `test_source_verify.py`, `test_citation_verifier.py`, `test_source_verification.py`, `test_citation_guard.py` | M0.2.4, M1.10.1–.2 `[x]`; M1.10.3–.5 `[?]` |
-| §3.3 | Provenance logger (append-only) | M0.4.1–M0.4.5 | `GET .../audit`, `.../audit/export` | `test_audit_event_model.py`, `test_audit_wiring.py`, `test_audit_append_only.py`, `test_audit_api.py`, `test_created_by.py` | `[x]` (human review on X.30 `[!]`) |
-| §3.3 | Config service (discipline profile) | M0.7.1–M0.7.2 | project `discipline` / `config_json` | `test_discipline.py` | `[x]` |
-| §3.3 | Cost / rate limiter | M0.9.1–M0.9.2 | — | — | `[ ]` |
-| §4 | Paper model fields | M0.10.1 | — | — | `[ ]` |
+| §3.3 | Provenance logger (append-only) | M0.4.1–M0.4.5 | `GET .../audit`, `.../audit/export` | `test_audit_event_model.py`, `test_audit_wiring.py`, `test_audit_append_only.py`, `test_audit_api.py`, `test_created_by.py` | `[x]` (human sign-off X.30 "Audit log" area **approved 2026-10-09**) |
+| §3.3 | Config service (discipline profile) | M0.7.1–M0.7.3 | project `discipline` / `config_json` | `test_discipline.py` | `[x]` (M0.7.3 reviewed 2026-10-09; 6 shipped profiles per Q3) |
+| §3.3 | Cost / rate limiter | M0.9.1–M0.9.3 | `GET .../usage`, `PUT .../usage/budget` | `test_llm_usage.py`, `test_retrieval_run_cap.py`, `test_project_token_budget_override.py` | `[x]` |
+| §4 | Paper model fields | M0.10.1 | — | `test_source_paper_fields.py` | `[x]` |
 | §6 | Connector interface, caching, backoff, ToS flags | M1.3.1–M1.3.4 | — | — | `[ ]` |
 | §6 | **ORCID/ROR author disambiguation** | X.18 *(new)* | — | — | `[ ]` |
 | §7.1 | Retrieval-grounded; untrusted-text fencing | M1.2.1–M1.2.5, M3.3.1 | `untrusted_text.py`, `note_guard.py` | `test_untrusted_text.py`, `test_prompt_fencing.py`, `test_arc_fencing.py`, `test_adversarial.py` | M1.2.1–.5 `[x]`; M3.3.1 `[ ]` |
@@ -166,8 +166,8 @@
 | §7.6 | Versioned prompts; log `prompt_version` + `model_id` | M0.8.1, M0.2.3 | `GET .../research-runs` (`provider_model`, `input_snapshot`) | `test_run_read_fields.py`, `test_prompts.py`, `test_prompt_provenance.py` | M0.2.3, M0.8.1 `[x]` |
 | §7.7 | Evaluation harness / gold datasets | X.5, **X.15** | — | — | `[ ]` |
 | §7.8 | Bias & coverage warnings | X.6 | — | — | `[ ]` |
-| §7.9 | Data privacy / local model | M0.8.4, M0.8.8, M5.6 | `LOCAL_LLM_*` settings; local/private-host rule (`config.local_llm_url_problem`) | `test_llm_participant_data.py` | M0.8.4 `[x]`; M0.8.8 `[?]`; M5.6 `[ ]` |
-| App. C | Stage state machine | M0.5.1, M0.5.7 | `stage` on project responses | `test_project_stage.py`, `test_stage_advance.py`, `test_reentry.py` | M0.5.1, M0.5.8 `[x]` (forward advance only when the stage's gate is approved); re-entry M0.5.5 `[?]` |
+| §7.9 | Data privacy / local model | M0.8.4, M0.8.8, M5.6 | `LOCAL_LLM_*` settings; local/private-host rule (`config.local_llm_url_problem`) | `test_llm_participant_data.py` | M0.8.4, M0.8.8 `[x]`; M5.6 `[ ]` |
+| App. C | Stage state machine | M0.5.1, M0.5.7 | `stage` on project responses | `test_project_stage.py`, `test_stage_advance.py`, `test_reentry.py` | `[x]` (M0.5.1–M0.5.13 all closed; re-entry M0.5.5 owner-only choice human-confirmed 2026-10-09 via X.30) |
 
 ### §8 Gates (each must **block** the next step until a human approves)
 | Gate | Stage | Gate task | Enforcement | Tests | Status |
@@ -183,8 +183,8 @@
 | G9 | After analysis | M6.9 *(new)* | ″ | — | `[ ]` |
 | G10 | Per manuscript section | M6.11 *(new)* | ″ | — | `[ ]` |
 | G11 | Before submission | M7.5 | ″ | — | `[ ]` |
-| all | Who may approve (role matrix) | M0.3.2, M0.3.4 | `project_access` role sets | `test_project_access.py`, `test_role_matrix.py` | `[x]` (human review X.30 `[!]`) |
-| all | Gates decided in order; reopen before the stage is reached | M0.5.10, M0.5.11, M0.5.13 | `decide_gate` 409 with `waiting_for`; `POST …/gates/{code}/reopen` | `test_gate_reopen.py` | M0.5.10, M0.5.11, M0.5.13 `[?]` (M0.5.13: decide locks the project row like reopen; found in review 2026-10-08) |
+| all | Who may approve (role matrix) | M0.3.2, M0.3.4 | `project_access` role sets | `test_project_access.py`, `test_role_matrix.py` | `[x]` (human sign-off X.30 "Access control" area **approved 2026-10-09**) |
+| all | Gates decided in order; reopen before the stage is reached | M0.5.10, M0.5.11, M0.5.13 | `decide_gate` 409 with `waiting_for`; `POST …/gates/{code}/reopen` | `test_gate_reopen.py` | `[x]` (M0.5.10, M0.5.11, M0.5.13 all closed) |
 
 ### §9 Integrity and ethics
 | Requirement | Tasks | Tests | Status |
@@ -225,8 +225,8 @@
 | 13.1 | Idea → verified evidence table + ranked gaps, full search log, PRISMA | M3.13.1, X.16 | `[ ]` |
 | 13.2 | Every citation resolves; unverifiable can't be exported | M1.10.3, M6.4 | `[ ]` (research-run answers already blocked, M1.10.3 `[?]`; export not built) |
 | 13.3 | Every number traceable to an analysis run | M6.3, M5.3 | `[ ]` |
-| 13.4 | Every AI artifact shows who/what/when/model + approval | M0.4, M0.8.1, **X.17**, X.38 | `[?]` (data `[?]`, UI `[?]` X.17; research answers have no approval step yet, X.38) |
-| 13.5 | Re-enter any stage; downstream flagged stale | M0.5.5 | `[?]` (owner-only; `test_reentry.py`) |
+| 13.4 | Every AI artifact shows who/what/when/model + approval | M0.4, M0.8.1, **X.17**, X.38 | `[x]` data (M0.4, M0.8.1 closed), `[?]` UI (X.17 badge, awaiting review); research answers still have no approval step (X.38, open) |
+| 13.5 | Re-enter any stage; downstream flagged stale | M0.5.5 | `[x]` (owner-only; human-confirmed 2026-10-09 via X.30; `test_reentry.py`) |
 | 13.6 | One-action audit/replication package | X.8.1 | `[?]` (`GET …/export/replication`) |
 | all | Automated acceptance suite | X.10 | `[ ]` |
 
@@ -239,7 +239,7 @@
 | N1 | Every citation clicks through to a verified source; unverifiable is **blocked**, not warned | M1.10.3, M1.13, M3.5.1, M6.4 | Partly built: a research-run answer citing an unverified source is blocked and audited (M1.10.3 `[?]`); the `evidence_synthesis.v3` prompt only allows verified sources (M1.10.5 `[?]`); source cards show verification status with check buttons (M1.13.1 `[?]`). Export and claims are not built, so "blocked at export" is untested. |
 | N2 | Every AI output shows producer, model, date, approval status | M0.4, M0.8.1, X.17 | Data recorded (`created_by`, `provider_model`, `prompt_version` via M0.8.1, audit events); the Activity step shows the audit trail; X.17 (`[?]`) adds a per-output badge (producer, requester, model, prompt, date, approval/stale) on research runs and agent-retrieved sources. Research answers can't be approved yet (X.38). |
 | N3 | The 11 gates block the next step until approved | M0.5.2–M0.5.4 + per-gate tasks in §8 table | Built for the gate mechanism (M0.5.2–.4 `[x]`: human-only approval, blocked tasks, stage advance needs the gate); only G2 and G3 have stage features behind them so far. Stage-by-stage gate tasks (§8) remain open. |
-| N4 | Changing an earlier stage marks downstream work stale | M0.5.5 | Built, awaiting review (M0.5.5 `[?]`: owner-only re-entry, stale artifacts, gates reset). |
+| N4 | Changing an earlier stage marks downstream work stale | M0.5.5 | Built and human-confirmed (M0.5.5 `[x]`: owner-only re-entry, stale artifacts, gates reset; owner-only design choice confirmed by the user 2026-10-09 via X.30). |
 | N5 | Every number in a draft links to an analysis run | M6.3 | Not built (M6). |
 
 ---

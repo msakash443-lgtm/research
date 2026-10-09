@@ -106,10 +106,25 @@ class Settings(BaseSettings):
     core_api_key: SecretStr | None = None
     # Optional OpenCitations access token (sent as the `authorization` header).
     opencitations_access_token: SecretStr | None = None
-    # Object storage for PDFs/full text (M0.10.2). Only "local" exists yet; any other value fails loudly.
+    # Object storage for PDFs/full text (M0.10.2/M0.10.3). "local" or "s3"; any other value fails loudly.
     object_storage_backend: str = "local"
     object_storage_root: str = "./data/objects"
     object_storage_max_bytes: int = Field(default=50 * 1024 * 1024, gt=0)
+    # S3-compatible backend (M0.10.3): any service that speaks the S3 REST API with SigV4 auth (AWS S3,
+    # MinIO, Cloudflare R2, Backblaze B2's S3-compatible endpoint, …). Only read when
+    # OBJECT_STORAGE_BACKEND=s3; credentials are never logged. `path_style` addresses objects as
+    # `<endpoint>/<bucket>/<key>` (works for every S3-compatible service and for AWS outside new
+    # public buckets); set it false for virtual-hosted-style (`<bucket>.<endpoint-host>/<key>`).
+    object_storage_s3_endpoint_url: str | None = None
+    object_storage_s3_bucket: str | None = None
+    object_storage_s3_region: str = "us-east-1"
+    object_storage_s3_access_key_id: str | None = None
+    object_storage_s3_secret_access_key: SecretStr | None = None
+    object_storage_s3_path_style: bool = True
+    # Conditional PUT (`If-None-Match: *`) is the write-once mechanism; a backend that rejects the
+    # header (400/405/501) falls back to check-then-put automatically. Set false to skip straight to
+    # the fallback for a backend known not to support conditional writes.
+    object_storage_s3_conditional_put: bool = True
     # Open-access full-text fetch (M2.7.1): Unpaywall licences under which a PDF may be stored. Anything
     # else (unknown, "implied-oa", "publisher-specific-oa") keeps the link and metadata only.
     fulltext_store_licences: list[str] = ["cc0", "pd", "public-domain", "cc-by", "cc-by-sa", "cc-by-nd", "cc-by-nc", "cc-by-nc-sa", "cc-by-nc-nd"]
@@ -138,6 +153,20 @@ class Settings(BaseSettings):
                     f"LOCAL_LLM_API_BASE_URL {problem}. Participant data may only go to a self-hosted model: use a "
                     "local/private address, or set LOCAL_LLM_ALLOW_PUBLIC_HOST=true if this public address is your own server"
                 )
+        if self.object_storage_backend == "s3":
+            missing = [
+                name
+                for name, value in (
+                    ("OBJECT_STORAGE_S3_ENDPOINT_URL", self.object_storage_s3_endpoint_url),
+                    ("OBJECT_STORAGE_S3_BUCKET", self.object_storage_s3_bucket),
+                    ("OBJECT_STORAGE_S3_ACCESS_KEY_ID", self.object_storage_s3_access_key_id),
+                )
+                if not value
+            ]
+            if not self.object_storage_s3_secret_access_key or not self.object_storage_s3_secret_access_key.get_secret_value():
+                missing.append("OBJECT_STORAGE_S3_SECRET_ACCESS_KEY")
+            if missing:
+                raise ValueError("OBJECT_STORAGE_BACKEND=s3 requires " + ", ".join(missing))
         if self.environment != "production":
             return self
 

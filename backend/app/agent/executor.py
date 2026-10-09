@@ -153,7 +153,7 @@ def _ingest_arc_sources(
 ) -> dict[str, Any]:
     """Save sources found by the ARC retrieval service. Failure never fails the run."""
     if ensure_owned is not None:
-        ensure_owned()
+        ensure_owned(db)
     try:
         retrieved = ArcRetrievalClient(settings).retrieve(run.question)
     except ArcRetrievalError as exc:
@@ -168,7 +168,7 @@ def _ingest_arc_sources(
         return {"status": "failed", "added": 0, "error": str(exc)}
 
     if ensure_owned is not None:
-        ensure_owned()
+        ensure_owned(db)
     existing_urls = set(
         db.scalars(select(Source.url).where(Source.project_id == project.id, Source.url.is_not(None))).all()
     )
@@ -187,7 +187,7 @@ def _ingest_arc_sources(
     new_sources = 0
     for item in retrieved:
         if ensure_owned is not None:
-            ensure_owned()
+            ensure_owned(db)
         if added >= MAX_ARC_SOURCES_PER_RUN:
             break
         ingest_key = key_prefix + _item_identity_hash(item)
@@ -446,7 +446,13 @@ def execute_research_run(
                 system_prompt, user_prompt = _agent_prompts(prompt, run, context, source_snapshot, nonce=nonce)
                 if ensure_owned is not None:
                     ensure_owned()
-                reply = OpenAICompatibleLLM(settings, meter=ProjectMeter(run.project_id, settings, purpose="research_run", run_id=run.id)).complete_json(system_prompt, user_prompt, EVIDENCE_SYNTHESIS_SCHEMA)
+                reply = OpenAICompatibleLLM(
+                    settings,
+                    meter=ProjectMeter(
+                        run.project_id, settings, purpose="research_run", run_id=run.id,
+                        budget_override=project.token_budget_override,
+                    ),
+                ).complete_json(system_prompt, user_prompt, EVIDENCE_SYNTHESIS_SCHEMA)
                 abstained = bool(reply["insufficient_evidence"]["insufficient"])
                 # Both the answer and an abstention reason are model text: check whichever is stored.
                 answer = reply["insufficient_evidence"]["reason"] if abstained else reply["answer"]

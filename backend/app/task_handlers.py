@@ -167,7 +167,10 @@ def handle_screening_prescreen(task: ClaimedTask) -> None:
             raise PermanentTaskError("The project for this pre-screen no longer exists.")
         try:
             result = run_prescreen(
-                db, project, llm=OpenAICompatibleLLM(settings, meter=ProjectMeter(project.id, settings, purpose="prescreen")), min_confidence=settings.prescreen_min_confidence,
+                db, project, llm=OpenAICompatibleLLM(
+                    settings,
+                    meter=ProjectMeter(project.id, settings, purpose="prescreen", budget_override=project.token_budget_override),
+                ), min_confidence=settings.prescreen_min_confidence,
                 actor=str(payload.get("actor") or audit.SYSTEM_WORKER), ensure_owned=task.ensure_owned,
             )
         except (LLMConfigurationError, PrescreenError) as exc:
@@ -199,7 +202,10 @@ def handle_thematic_clustering(task: ClaimedTask) -> None:
         project = db.get(Project, project_id)
         if project is None:
             raise PermanentTaskError("The project for this clustering no longer exists.")
-        embedder = OpenAICompatibleEmbeddings(settings, meter=ProjectMeter(project.id, settings, purpose="clustering"))
+        embedder = OpenAICompatibleEmbeddings(
+            settings,
+            meter=ProjectMeter(project.id, settings, purpose="clustering", budget_override=project.token_budget_override),
+        )
         try:
             run_clustering(
                 db, project, embedder=embedder, k=k, seed=seed, actor=str(payload.get("actor") or audit.SYSTEM_WORKER),

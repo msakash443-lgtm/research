@@ -2,6 +2,26 @@
 
 > **Read first, any tool or person:** before editing code, read `plan.md` §1 and §1.8, claim one task by hand-editing its line (`[~]`, `owner: @you`, `since: <date>`) and saving `plan.md`, then work. Append one Work Log line at the end. Commits are manual, made by the developer: leave changes in the working tree with a suggested message; never commit/push/stash/reset unless the user asks. This file is the canonical copy; `CLAUDE.md` repeats it for Claude Code.
 
+## Assistant Checklist (every AI coding assistant, every session)
+
+**Do**
+- **Read the code first.** Before editing, read the files you will change, their tests, and the `plan.md` task line.
+- **Show the plan before making changes.** State which files you will touch and what will change, then edit.
+- **Ask before deleting anything:** files, code, tests, data, migrations or branches, including untracked files (`plan.md` rule 44).
+- **Make one change at a time.** Work on one task and one logical change, and verify it before starting the next (rule 36).
+- **Write a test** for every behaviour change or bug fix. It must fail without the change. For docs-only changes, say that no test applies.
+- **Run the test**, then the full `pytest -q` from the repo root. Report the real result, including failures and their output (rule 37).
+- **Say when uncertain.** Mark unverified claims as unverified, and ask rather than guess (rule 35).
+- **Clearly say what changed:** files changed, behaviour changed, tests run with their results, and a suggested commit message (rules 42, 45).
+
+**Don't**
+- **Touch `.env` or other secret files.** Don't read, edit, print or copy them. Document new settings in `.env.example` with placeholder values.
+- **Add new packages unnecessarily.** Use the standard library or existing dependencies first. Ask before adding anything to `backend/requirements.txt`.
+- **Fake tests or claim tests passed when they didn't.** No test that can't fail, and no `skip`/`xfail` just to make the suite pass. Never report a run that didn't happen.
+- **Leave TODOs "for later."** No `TODO`/`FIXME`, stubs or placeholders in the diff. Discovered work goes into `plan.md` as a new task (rule 8).
+- **Rewrite working code unnecessarily.** Make the smallest change that meets the task's acceptance check (rule 36).
+- **Put secrets in code.** Keys, tokens and passwords never go in code, tests, docs, prompts, fixtures or logs. Read them through `Settings` (`backend/app/config.py`).
+
 ## Project Overview
 
 A research-automation platform for literature review / evidence synthesis. Per `docs/research-automation-spec.md`, the goal is to "automate the repeatable, high-volume work of research (searching, screening, extracting, organizing, formatting, tracking) so the scholar can spend time on judgment-heavy work." Core design stance: the system is modeled on how a research scholar thinks — every module maps to a scholarly decision, produces an auditable artifact, and **the human stays the accountable author** (AI proposes, human decides; every consequential step has an approval gate).
@@ -55,7 +75,7 @@ Workspace root also holds: `plan.md` (the living task plan — read before any c
 | `backend/app/agent/` | `executor.py` (run orchestration), `llm.py`, `arc_client.py` (HTTP-only ARC client), `context.py` |
 | `backend/app/connectors/` | External scholarly APIs: `openalex.py`, `crossref.py`, `semantic_scholar.py`, `unpaywall.py`, `factory.py`, `access.py` (enable-gating) |
 | `backend/app/prompts/` | Versioned prompt templates (`evidence_synthesis.v1.toml`, `.v2.toml`) |
-| `backend/app/profiles/` | Discipline profiles (`health_sciences.toml`, `economics.toml`) |
+| `backend/app/profiles/` | Discipline profiles (`economics.toml`, `management.toml`, `social_sciences.toml`, `psychology.toml`, `commerce.toml`, `english_literature.toml`) |
 | `backend/app/{dedupe,merge,source_merge,citation_verifier,doi,search_query,search_query_adapters,search_runner,known_items,prisma}.py` | Pure, DB/network-free business-logic modules (each paired 1:1 with a test file) |
 | `backend/app/{audit_guard,excerpt_guard,untrusted_text,answer_guard}.py` | Integrity guards: append-only audit, immutable excerpts, untrusted-text fencing, LLM-output validation |
 | `backend/app/web/` | Static UI (`index.html`, `app.js`, `styles.css`), served at `/` and `/assets` |

@@ -45,9 +45,14 @@ def parse_usage(data: object) -> tuple[int | None, int | None, int | None]:
 
 
 class ProjectMeter:
-    def __init__(self, project_id: uuid.UUID, settings: Settings, *, purpose: str, run_id: uuid.UUID | None = None):
+    def __init__(
+        self, project_id: uuid.UUID, settings: Settings, *, purpose: str, run_id: uuid.UUID | None = None,
+        budget_override: int | None = None,
+    ):
         self.project_id, self.purpose, self.run_id = project_id, purpose, run_id
-        self.budget = settings.project_token_budget
+        # None = no project-specific override, use the global default; 0 or a positive number is the
+        # project's own budget (0 means "no limit" here too, same as the global setting).
+        self.budget = settings.project_token_budget if budget_override is None else budget_override
 
     def before_call(self) -> None:
         if not self.budget:

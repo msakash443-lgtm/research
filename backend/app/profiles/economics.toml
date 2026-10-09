@@ -1,12 +1,11 @@
-# Example discipline profile: economics. The values are illustrative defaults to be confirmed (plan Q3),
-# and are not an endorsement of any database or guideline. Projects can override any setting.
+# Discipline profile: Economics (chosen by the product owner, plan Q3, 2026-10-09). Projects can override any setting.
 name = "economics"
-version = 1
+version = 2
 label = "Economics"
 description = "Quantitative empirical economics: identification-focused methods, working-paper repositories alongside journals."
 
 [settings]
-citation_style = "chicago-author-date"
+citation_style = "apa"
 databases = ["openalex", "crossref", "semantic_scholar", "repec", "econlit"]
 methods = [
   "difference_in_differences",

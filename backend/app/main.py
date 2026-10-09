@@ -35,7 +35,12 @@ app = FastAPI(
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
 )
-app.add_middleware(ContentLengthLimitMiddleware, max_body_bytes=settings.max_request_body_bytes)
+app.add_middleware(
+    ContentLengthLimitMiddleware,
+    max_body_bytes=settings.max_request_body_bytes,
+    upload_path_suffix="/fulltext/upload",
+    upload_max_bytes=settings.object_storage_max_bytes,
+)
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
 app.add_middleware(
     SessionMiddleware,

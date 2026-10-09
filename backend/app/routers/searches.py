@@ -181,7 +181,7 @@ def suggest_search_synonyms(
 ):
     """Ask the model for extra terms for one concept. Proposals only: nothing is saved or searched."""
     settings = get_settings()
-    llm = OpenAICompatibleLLM(settings, meter=ProjectMeter(project.id, settings, purpose="synonyms"))
+    llm = OpenAICompatibleLLM(settings, meter=ProjectMeter(project.id, settings, purpose="synonyms", budget_override=project.token_budget_override))
     try:
         result = suggest_synonyms(llm, body.block, project.title)
     except LLMConfigurationError as exc:

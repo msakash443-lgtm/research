@@ -4,22 +4,27 @@ import uuid
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import Response
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app import audit
+from app.config import get_settings
 from app.database import get_db
 from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_access
 from app.connectors.factory import enabled_lookup_names, unpaywall_unavailable_reason
+from app.fulltext import FullTextError, extract_pdf_text
 from app.models import Project, Source, SourceExcerpt, Task, TaskStatus, User, excerpt_hash, utcnow
+from app.object_storage import ObjectConflict, fulltext_key, get_object_store
 from app.task_handlers import FULLTEXT_FETCH, SOURCE_CHECK
 from app.task_queue import enqueue_task
 from app.refmanager import parse_bibtex, parse_ris, to_bibtex, to_ris
 from app.schemas import SourceCreate, SourceMerge, SourceRead
 from app.source_merge import SourceMergeError, merge_sources
+
+PDF_SIGNATURE = b"%PDF-"
 
 _OPEN = {TaskStatus.queued, TaskStatus.running, TaskStatus.blocked, TaskStatus.paused}
 router = APIRouter(prefix="/projects/{project_id}/sources", tags=["sources"])
@@ -212,6 +217,75 @@ def queue_fulltext_fetch(
     audit.record(db, actor=actor, action="source.fulltext_requested", project_id=project.id, payload={"source_id": str(source_id), "task_id": str(task.id)})
     db.commit()
     return SourceCheckQueued(task_id=task.id, status=task.status.value)
+
+
+@router.post("/{source_id}/fulltext/upload", response_model=SourceRead, status_code=status.HTTP_201_CREATED)
+async def upload_fulltext(
+    source_id: uuid.UUID,
+    request: Request,
+    project: Project = Depends(project_access(WRITE_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """A person uploads a PDF directly for a source the open-access fetch couldn't reach (paywalled;
+    `fulltext_access.status` in `no_oa`/`no_pdf`/`link_only` flags these, M2.7.1).
+
+    The body is the raw PDF bytes (`Content-Type: application/pdf`), not a multipart form. **Size**:
+    `ContentLengthLimitMiddleware` rejects a declared length over `object_storage_max_bytes` before
+    this handler runs; the handler also reads the body as a stream and aborts past the same cap, so a
+    missing or false Content-Length (or chunked transfer) can't exhaust memory either. **Type/scan**:
+    the bytes must start with the PDF signature and must be a PDF `pypdf` can open and extract text
+    from (the same check M3.4's span verification will rely on) — a non-PDF file, a corrupted one, or
+    one with no text layer (a scan with no OCR) is refused, not stored. There is no virus/malware
+    scanner in this deployment; this is a structural-validity check only.
+    """
+    content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if content_type != "application/pdf":
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Upload must be a PDF (Content-Type: application/pdf)")
+    source = db.scalar(select(Source).where(Source.id == source_id, Source.project_id == project.id, Source.merged_into.is_(None)))
+    if source is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
+    if source.fulltext_path:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This source already has stored full text")
+    settings = get_settings()
+    max_bytes = settings.object_storage_max_bytes
+    declared = request.headers.get("content-length")
+    if declared is not None:
+        try:
+            if int(declared) > max_bytes:
+                raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="File is too large")
+        except ValueError:
+            pass
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > max_bytes:
+            raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="File is too large")
+    data = bytes(body)
+    if not data.startswith(PDF_SIGNATURE):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="The uploaded file is not a PDF")
+    try:
+        extract_pdf_text(data, max_pages=settings.fulltext_max_pages)
+    except FullTextError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"The uploaded PDF could not be read: {exc}") from exc
+    store = get_object_store(settings)
+    key = fulltext_key(project.id, source.id, "pdf")
+    try:
+        stored = store.put(key, data)
+    except ObjectConflict as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A different file is already stored for this source; it was not replaced") from exc
+    actor = audit.user_actor(user)
+    source.fulltext_path = stored.key
+    source.fulltext_access = {
+        "via": "manual_upload", "status": "stored", "uploaded_by": actor,
+        "checked_at": utcnow().isoformat(), "sha256": stored.sha256, "size": stored.size,
+    }
+    audit.record(
+        db, actor=actor, action="source.fulltext_uploaded", project_id=project.id,
+        payload={"source_id": str(source_id), "sha256": stored.sha256, "size": stored.size},
+    )
+    db.commit()
+    return source_response(_load_source(db, source.id))
 
 
 class ReferenceImport(BaseModel):

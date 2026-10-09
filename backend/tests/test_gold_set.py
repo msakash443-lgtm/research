@@ -2,7 +2,7 @@ import json
 
 import jsonschema
 import pytest
-from backend.tests.gold.loader import csv_to_gold_set, load_gold_set, HERE
+from tests.gold.loader import csv_to_gold_set, load_gold_set, HERE
 
 
 def test_gold_set_is_valid():

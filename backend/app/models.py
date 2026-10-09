@@ -81,7 +81,6 @@ class Project(Timestamped, Base):
     owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
     title: Mapped[str] = mapped_column(String(200))
     description: Mapped[str | None] = mapped_column(Text)
-    status: Mapped[str] = mapped_column(String(40), default="active")
     stage: Mapped[ProjectStage] = mapped_column(
         Enum(ProjectStage, name="project_stage"), default=ProjectStage.idea, server_default=ProjectStage.idea.value
     )
@@ -90,6 +89,9 @@ class Project(Timestamped, Base):
     config_json: Mapped[dict | None] = mapped_column(JSON)
     # Framework the screening criteria are organised by: pico, picoc, spider or custom (app/criteria.py). NULL = not chosen.
     criteria_framework: Mapped[str | None] = mapped_column(String(20))
+    # Owner-set override of settings.project_token_budget for this project only (M0.9.3); NULL = use the
+    # global default. 0 means "no limit" here too, same as the global setting.
+    token_budget_override: Mapped[int | None] = mapped_column()
     owner: Mapped[User] = relationship(back_populates="projects")
     context_items: Mapped[list["ResearchContextItem"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     sources: Mapped[list["Source"]] = relationship(back_populates="project", cascade="all, delete-orphan")

@@ -43,6 +43,64 @@ async function downloadObsidianVault(ctx, button) {
   }
 }
 
+function purposeTable(usage) {
+  const node = el("table", { className: "versions-table" });
+  const head = el("tr");
+  ["Purpose", "Calls", "Tokens"].forEach((h) => head.append(el("th", { text: h })));
+  node.append(head);
+  usage.by_purpose.forEach((row) => {
+    const tr = el("tr");
+    tr.append(el("td", { text: row.purpose }), el("td", { text: String(row.calls) }), el("td", { text: String(row.tokens) }));
+    node.append(tr);
+  });
+  return node;
+}
+
+async function usagePanel(ctx) {
+  const box = el("div", { className: "panel" });
+  box.append(el("h2", { text: "Model usage" }));
+  try {
+    const usage = await request(projectApi(ctx.project.id, "/usage"));
+    const dl = el("dl", { className: "effective-settings" });
+    dl.append(
+      el("dt", { text: "Tokens used" }), el("dd", { text: String(usage.tokens_used) }),
+      el("dt", { text: "Budget" }), el("dd", { text: usage.token_budget === null ? "No limit" : `${usage.token_budget} tokens` })
+    );
+    box.append(dl);
+    if (usage.by_purpose.length > 0) box.append(purposeTable(usage));
+    if (ctx.isOwner) {
+      const row = el("div", { className: "form-actions" });
+      const input = el("input", {
+        attrs: {
+          type: "number", min: "0", step: "1",
+          placeholder: usage.default_budget === null ? "Use the default (no limit)" : `Use the default (${usage.default_budget})`,
+        },
+      });
+      if (usage.budget_override !== null) input.value = String(usage.budget_override);
+      const save = el("button", { text: "Save" });
+      save.addEventListener("click", async () => {
+        save.disabled = true;
+        try {
+          const override = input.value.trim() === "" ? null : Number(input.value);
+          await request(projectApi(ctx.project.id, "/usage/budget"), { method: "PUT", body: JSON.stringify({ override }) });
+          toast("Token budget saved.");
+          box.replaceWith(await usagePanel(ctx));
+        } catch (error) {
+          toast(error.message);
+        } finally {
+          save.disabled = false;
+        }
+      });
+      row.append(input, save);
+      box.append(row);
+      box.append(el("p", { className: "muted small", text: "Leave blank to use this server's default budget for every project. 0 means no limit for this project." }));
+    }
+  } catch (error) {
+    box.append(el("p", { className: "muted small", text: error.message }));
+  }
+  return box;
+}
+
 function table(ctx) {
   const node = el("table", { className: "versions-table", attrs: { id: "activity-table" } });
   const head = el("tr");
@@ -115,7 +173,7 @@ async function render(root, ctx) {
     panel.append(more);
   }
 
-  root.replaceChildren(panel);
+  root.replaceChildren(await usagePanel(ctx), panel);
 }
 
 export default { render };
