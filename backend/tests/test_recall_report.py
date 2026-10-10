@@ -190,6 +190,30 @@ def test_pure_report_on_gold_papers():
     assert data["recall"] == 0.5 and data["missed_papers"][0]["id"] == "g2"
 
 
+def test_rounding_does_not_inflate_meets_target_at_boundary():
+    """189 of 199 is ~94.975%, which rounds to 0.950 for display, but is below the 0.95 target."""
+    gold = [GoldPaper(id=f"g{i}", title=f"Gold title number {i}", doi=f"10.1234/{i}") for i in range(199)]
+    # First 189 entries found in run
+    found_entries = [entry(i, doi=f"10.1234/{i}") for i in range(189)]
+    data = report(gold, [_Run(found_entries)], target=0.95)
+    assert data["checked"] == 199
+    assert data["found"] == 189
+    assert data["missed"] == 10
+    assert data["recall"] == 0.95  # Display rounded to 3 decimal places
+    assert data["meets_target"] is False
+    assert data["status"] == "below_target"
+
+
+def test_exact_target_match_meets_target():
+    """95 of 100 is exactly 0.950, which meets the 0.95 target."""
+    gold = [GoldPaper(id=f"g{i}", title=f"Gold title number {i}", doi=f"10.1234/{i}") for i in range(100)]
+    found_entries = [entry(i, doi=f"10.1234/{i}") for i in range(95)]
+    data = report(gold, [_Run(found_entries)], target=0.95)
+    assert data["recall"] == 0.95
+    assert data["meets_target"] is True
+    assert data["status"] == "meets_target"
+
+
 def test_x15_fixture_gold_set_can_be_reported():
     """Once the scholar's gold set (X.15) is filled in, its known-relevant papers feed `report` directly."""
     from tests.gold.loader import load_gold_set

@@ -148,20 +148,20 @@ def report(gold: Iterable[GoldPaper], runs: list[RunLike], target: float = DEFAU
             missed.append({"id": paper.id, "title": paper.title, "doi": paper.doi, "reasons": _reasons(paper, runs, capped)})
 
     checked = len(found) + len(missed)
-    recall = round(len(found) / checked, 3) if runs and checked else None
+    exact_recall = (len(found) / checked) if runs and checked else None
     if not gold:
         state = "no_gold_set"
     elif not runs:
         state = "not_searched"
-    elif recall is None:
+    elif exact_recall is None:
         state = "nothing_checkable"
     else:
-        state = "meets_target" if recall >= target else "below_target"
+        state = "meets_target" if exact_recall >= target else "below_target"
     return {
         "target": target,
         "status": state,
-        "meets_target": None if recall is None else recall >= target,
-        "recall": recall,
+        "meets_target": None if exact_recall is None else exact_recall >= target,
+        "recall": round(exact_recall, 3) if exact_recall is not None else None,
         "gold_papers": len(gold),
         "checked": checked if runs else 0,
         "found": len(found),
