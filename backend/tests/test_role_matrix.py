@@ -15,7 +15,20 @@ from fastapi.testclient import TestClient
 
 from app.database import SessionLocal
 from app.main import app
-from app.models import Cluster, ClusterRun, Extraction, Project, ProjectMember, ProjectExtractionSchema, ProjectRole, ProjectStage, SearchQuery, SeedPaper
+from app.models import (
+    SOURCE_ORIGIN_RETRIEVED,
+    Cluster,
+    ClusterRun,
+    Extraction,
+    Project,
+    ProjectMember,
+    ProjectExtractionSchema,
+    ProjectRole,
+    ProjectStage,
+    SearchQuery,
+    SeedPaper,
+    Source,
+)
 from tests.test_fulltext import make_pdf
 
 UPLOAD_PDF = make_pdf([["Role matrix upload body text."]])
@@ -41,6 +54,7 @@ MATRIX = [
     ("GET", "/api/projects/{p}/sources/export", ALL, 200),
     ("POST", "/api/projects/{p}/sources/{s}/check", WRITE, 202),
     ("POST", "/api/projects/{p}/sources/{s}/fulltext/fetch", WRITE, 202),  # queues only
+    ("POST", "/api/projects/{p}/sources/{s}/fulltext/arxiv/fetch", WRITE, 202),  # queues only
     ("POST", "/api/projects/{p}/sources/{s}/fulltext/upload", WRITE, 201),  # raw PDF body; _call gives each principal a fresh source (write-once)
     ("GET", "/api/projects/{p}/searches", ALL, 200),
     ("GET", "/api/projects/{p}/seeds", ALL, 200),
@@ -138,7 +152,7 @@ def world(monkeypatch, fake_llm):
     # Only the synonym-suggestion route calls a model here; give it a well-formed reply.
     fake_llm.handler = lambda r: {"choices": [{"message": {"content": '{"suggestions": []}'}}]}
 
-    monkeypatch.setattr(get_settings(), "connectors_enabled", ["openalex", "unpaywall"])
+    monkeypatch.setattr(get_settings(), "connectors_enabled", ["openalex", "unpaywall", "arxiv"])
     monkeypatch.setattr(get_settings(), "connector_contact_email", "matrix@example.com")
     monkeypatch.setattr(get_settings(), "obsidian_export_enabled", True)
     monkeypatch.setattr(get_settings(), "embedding_model", "test-embedding")  # only POST /clusters checks it; nothing is embedded here
@@ -230,6 +244,17 @@ def _call(world, principal, method, template):
         ).json()
         path = path.replace(f"/sources/{world['ids']['s']}/", f"/sources/{fresh['id']}/")
         return world["clients"][principal].post(path, content=UPLOAD_PDF, headers={"content-type": "application/pdf"})
+    if (method, template) == ("POST", "/api/projects/{p}/sources/{s}/fulltext/arxiv/fetch"):
+        fresh = world["clients"]["owner"].post(
+            f"/api/projects/{world['ids']['p']}/sources", json={"title": "arXiv fetch target"}
+        ).json()
+        with SessionLocal() as db:
+            source = db.get(Source, uuid.UUID(fresh["id"]))
+            source.origin = SOURCE_ORIGIN_RETRIEVED
+            source.source_ids = {"arxiv": "2101.00001"}
+            db.commit()
+        path = path.replace(f"/sources/{world['ids']['s']}/", f"/sources/{fresh['id']}/")
+        return world["clients"][principal].post(path)
     return world["clients"][principal].request(method, path, json=body)
 
 

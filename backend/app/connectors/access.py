@@ -44,9 +44,9 @@ _ENTRIES = (
     ConnectorInfo("pubmed", "PubMed / Europe PMC", AccessKind.official_api, implemented=True),
     ConnectorInfo("core", "CORE", AccessKind.official_api, implemented=True, note="Needs a (free) CORE API key."),
     ConnectorInfo("opencitations", "OpenCitations", AccessKind.official_api, implemented=True, note="Look-up and citations only; no keyword search."),
-    ConnectorInfo("scopus", "Scopus", AccessKind.licensed, note="Needs an institutional licence and key."),
-    ConnectorInfo("web_of_science", "Web of Science", AccessKind.licensed, note="Needs an institutional licence and key."),
-    ConnectorInfo("ieee_xplore", "IEEE Xplore", AccessKind.licensed, note="Needs an API key under licence."),
+    ConnectorInfo("scopus", "Scopus", AccessKind.licensed, implemented=True, note="Needs an institutional licence and SCOPUS_API_KEY; optional SCOPUS_INST_TOKEN."),
+    ConnectorInfo("web_of_science", "Web of Science", AccessKind.licensed, implemented=True, note="Needs an institutional licence and WEB_OF_SCIENCE_API_KEY."),
+    ConnectorInfo("ieee_xplore", "IEEE Xplore", AccessKind.licensed, implemented=True, note="Needs an API key under licence (IEEE_XPLORE_API_KEY)."),
     ConnectorInfo(
         "google_scholar", "Google Scholar", AccessKind.scraping, note="No official API; page scraping may breach its terms."
     ),

@@ -5,7 +5,7 @@
 > that prove it. **plan.md is the source of truth for status**; this table is a snapshot and must be
 > updated whenever a task is added, finished or dropped (plan.md rule 31).
 >
-> Snapshot: 2026-10-09 (refreshed; first written 2026-10-03) · test baseline **2000 passed, 6 skipped** (full run 2026-10-09) · tests live in `backend/tests/`. **M0 closed 2026-10-09** (plan.md M0 header `[x]`); M0-scoped rows below refreshed. M1–M7/X rows not re-verified this pass — still as of 2026-10-07.
+> Snapshot: 2026-10-10 (refreshed; first written 2026-10-03) · test baseline **2081 passed, 6 skipped** (full run 2026-10-10) · tests live in `backend/tests/`. **M0 closed 2026-10-09** (plan.md M0 header `[x]`); M0-scoped rows below refreshed. M1.4.7 updated this pass; other M1–M7/X rows not re-verified — still as of 2026-10-07.
 > Status here follows plan.md as of the snapshot date; where the two disagree, plan.md wins.
 
 **Status key:** `[x]` done · `[?]` built, awaiting review · `[~]` in progress · `[ ]` not started ·
@@ -30,7 +30,7 @@
 |---|---|---|---|---|---|
 | 5.2 in | Inclusion/exclusion criteria (PICO etc.) | M1.5.4 | criteria endpoints | `test_criteria.py` | `[x]` |
 | 5.2.1 | Boolean query builder, per-DB syntax | M1.5.1–M1.5.6 | search-query endpoints | `test_search_query*.py` | M1.5.1–.2 `[x]`; M1.5.3 (LLM synonyms), M1.5.5 (S2 bulk Boolean) `[?]`; M1.5.6 (re-runs of pre-bulk S2 searches refused) `[?]` |
-| 5.2.2 | Multi-source retrieval | M1.3, M1.4.1–M1.4.7 | connectors (OpenAlex, Crossref, Semantic Scholar, arXiv, Unpaywall, PubMed/Europe PMC, CORE, OpenCitations); `GET` connector list | `test_connector_*.py`, `test_*_connector.py`, `test_search_runner.py` | M1.3.1–.2, .4–.5 and M1.4.1–.3, .5 `[x]`; M1.3.3 cache, M1.4.4, M1.4.6 `[?]`; M1.4.7 `[ ]`; M1.3.6 `[?]` |
+| 5.2.2 | Multi-source retrieval | M1.3, M1.4.1–M1.4.8 | connectors (OpenAlex, Crossref, Semantic Scholar, arXiv, Unpaywall, PubMed/Europe PMC, CORE, OpenCitations, Scopus, Web of Science, IEEE Xplore); `GET` connector list | `test_connector_*.py`, `test_*_connector.py`, `test_arxiv_fulltext.py`, `test_scopus_connector.py`, `test_web_of_science_connector.py`, `test_ieee_xplore_connector.py`, `test_search_runner.py` | M1.3.1–.2, .4–.5 and M1.4.1–.3, .5 `[x]`; M1.3.3 cache, M1.4.4, M1.4.6–.8 `[?]`; M1.3.6 `[?]` |
 | 5.2.2 | Web search / crawl / PDF via ARC (opt-in) | M1.1.1–M1.1.14 | `POST /api/projects/{id}/research-runs` (`use_web_retrieval`) | `test_arc_retrieval.py`, `test_arc_fencing.py` | M1.1.1–.9, .12 `[x]`; M1.1.10, M1.1.11 `[x]` (reviewed 2026-10-08); M1.1.13 `[?]`; M1.1.14 `[ ]` |
 | 5.2.2 | De-dup by DOI → title+year+first author | M0.2.2, M1.6.1–M1.6.3 | `POST .../sources` (DOI normalised) | `test_doi.py`, `test_dedupe.py`, `test_merge.py`, `test_source_merge.py` | M0.2.2 and M1.6.1–.4 `[x]` |
 | 5.2.3 | Snowballing N rounds | M1.9.1–M1.9.2 | `POST/GET /api/projects/{id}/snowball` (G2-gated task `snowball_run`); `found_via` on sources + screening queue; PRISMA `other_methods.citation_searching` | `test_snowball.py` | `[?]` |
@@ -192,7 +192,7 @@
 | No fabrication (hard to do accidentally) | M1.10, M3.4, M3.11.2, M6.2–M6.4 | `test_llm_success_path.py` (no placeholder output) | `[ ]` |
 | AI-use disclosure from provenance log | M6.6; per-manuscript statement also covered by X.31.12 (design: `docs/researcher-workspace-design.md`) | — | `[ ]` |
 | Authorship / CRediT; AI never an author; authorship ledger (who typed/dictated/pasted/AI-accepted each span) | M6.6; authorship ledger covered by X.31.8–X.31.9, X.31.11 (append-only `authorship_events`, design doc) | — | `[ ]` |
-| Copyright: store full text only where licensed | M2.7.1, M1.3.4 | — | `[ ]` |
+| Copyright: store full text only where licensed | M2.7.1, M1.3.4, M1.4.8 | `test_oa_fetch.py`, `test_arxiv_fulltext.py` | `[?]` (M1.4.8 awaits independent review) |
 | Participant protection (consent, anonymisation, retention) | M4.5, M5.6, X.4 | — | `[ ]` |
 | Reporting-guideline checklists | X.11 | — | `[ ]` |
 | One-click reproducibility package | X.8.1 | `test_replication_export.py` | `[?]` |

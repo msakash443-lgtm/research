@@ -2,7 +2,7 @@
 import httpx
 import pytest
 
-from app.connectors.arxiv import ArxivConnector, normalise_id, parse_feed
+from app.connectors.arxiv import ArxivConnector, ArxivLicense, normalise_id, parse_feed
 from app.connectors.base import ConnectorError, NotSupportedError, SearchRequest
 from app.connectors.http import ConnectorHttpClient, HttpPolicy
 
@@ -122,3 +122,82 @@ def test_citations_references_and_fulltext_are_not_offered():
     for call in (c.get_citations, c.get_references, c.get_fulltext):
         with pytest.raises(NotSupportedError):
             call("2101.00001")
+
+
+def test_license_lookup_returns_the_current_version_and_license_uri():
+    body = """<?xml version="1.0"?>
+    <OAI-PMH xmlns="http://www.openarchives.org/OAI/2.0/"
+              xmlns:raw="http://arxiv.org/OAI/arXivRaw/">
+      <GetRecord><record><header><identifier>oai:arXiv.org:2101.00001</identifier></header><metadata><raw:arXivRaw>
+        <raw:id>2101.00001</raw:id>
+        <raw:version version="v1"><raw:date>Fri, 01 Jan 2021 00:00:00 GMT</raw:date></raw:version>
+        <raw:version version="v3"><raw:date>Fri, 01 Mar 2021 00:00:00 GMT</raw:date></raw:version>
+        <raw:license>http://creativecommons.org/licenses/by/4.0/</raw:license>
+      </raw:arXivRaw></metadata></record></GetRecord>
+    </OAI-PMH>"""
+    seen = []
+
+    def respond(request):
+        seen.append(request)
+        return httpx.Response(200, text=body)
+
+    http = ConnectorHttpClient("arxiv", "https://oaipmh.arxiv.org", HttpPolicy(), transport=httpx.MockTransport(respond))
+    c = ArxivConnector(license_http=http)
+    assert c.get_license("2101.00001v2") == ArxivLicense(
+        uri="http://creativecommons.org/licenses/by/4.0/", version="v3"
+    )
+    assert seen[0].url.path == "/oai"
+    assert dict(seen[0].url.params) == {
+        "verb": "GetRecord",
+        "identifier": "oai:arXiv.org:2101.00001",
+        "metadataPrefix": "arXivRaw",
+    }
+
+
+@pytest.mark.parametrize("body", [
+    """<OAI-PMH xmlns="http://www.openarchives.org/OAI/2.0/">
+      <GetRecord><error code="idDoesNotExist">missing</error></GetRecord></OAI-PMH>""",
+])
+def test_missing_license_metadata_is_not_interpreted_as_a_license(body):
+    seen = []
+    http = ConnectorHttpClient(
+        "arxiv", "https://oaipmh.arxiv.org", HttpPolicy(),
+        transport=httpx.MockTransport(lambda request: seen.append(request) or httpx.Response(200, text=body)),
+    )
+    assert ArxivConnector(license_http=http).get_license("2101.00001") is None
+
+
+def test_a_record_without_a_license_has_a_version_but_no_permission():
+    body = """<OAI-PMH xmlns="http://www.openarchives.org/OAI/2.0/"
+      xmlns:raw="http://arxiv.org/OAI/arXivRaw/"><GetRecord><record><header>
+      <identifier>oai:arXiv.org:2101.00001</identifier></header><metadata><raw:arXivRaw>
+      <raw:id>2101.00001</raw:id><raw:version version="v1"/></raw:arXivRaw>
+      </metadata></record></GetRecord></OAI-PMH>"""
+    http = ConnectorHttpClient(
+        "arxiv", "https://oaipmh.arxiv.org", HttpPolicy(),
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, text=body)),
+    )
+    assert ArxivConnector(license_http=http).get_license("2101.00001") == ArxivLicense(uri=None, version="v1")
+
+
+def test_license_metadata_refuses_entity_declarations_and_malformed_versions():
+    body = '<!DOCTYPE OAI-PMH [<!ENTITY x "x">]><OAI-PMH>&x;</OAI-PMH>'
+    http = ConnectorHttpClient(
+        "arxiv", "https://oaipmh.arxiv.org", HttpPolicy(),
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, text=body)),
+    )
+    with pytest.raises(ConnectorError, match="DOCTYPE"):
+        ArxivConnector(license_http=http).get_license("2101.00001")
+
+    malformed = """<OAI-PMH xmlns="http://www.openarchives.org/OAI/2.0/"
+      xmlns:raw="http://arxiv.org/OAI/arXivRaw/"><GetRecord><record><header>
+      <identifier>oai:arXiv.org:2101.00001</identifier></header><metadata><raw:arXivRaw>
+      <raw:id>2101.00001</raw:id><raw:version version="latest"/>
+      <raw:license>https://creativecommons.org/licenses/by/4.0/</raw:license>
+      </raw:arXivRaw></metadata></record></GetRecord></OAI-PMH>"""
+    http = ConnectorHttpClient(
+        "arxiv", "https://oaipmh.arxiv.org", HttpPolicy(),
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, text=malformed)),
+    )
+    with pytest.raises(ConnectorError, match="version"):
+        ArxivConnector(license_http=http).get_license("2101.00001")

@@ -100,7 +100,7 @@ def test_failed_run_is_recorded_loudly(monkeypatch):
     assert finished[2]["status"] == "failed" and finished[3] == "test-model"
 
 
-def test_arc_ingest_is_recorded_as_unverified(monkeypatch):
+def test_arc_ingest_is_recorded_as_unverified(monkeypatch, fake_llm):
     settings = get_settings()
     monkeypatch.setattr(settings, "arc_retrieval_enabled", True)
     monkeypatch.setattr(settings, "arc_retrieval_base_url", "http://arc.test")
@@ -113,5 +113,4 @@ def test_arc_ingest_is_recorded_as_unverified(monkeypatch):
     retrieved = [e for e in _events(project_id) if e[0] == "sources.retrieved"][0]
     assert retrieved[1] == "agent:arc-retrieval"
     assert retrieved[2]["added"] == 1 and retrieved[2]["verified"] is False
-
 

@@ -121,10 +121,7 @@ class OpenAICompatibleLLM:
         return cls(settings, meter=meter)
 
     def complete(self, system_prompt: str, user_prompt: str) -> str:
-        if (self._require_api_key and not self._api_key) or not self._api_base_url or not self._model:
-            raise LLMConfigurationError(
-                "The agent is not connected to an LLM yet. Configure LLM_API_KEY, LLM_API_BASE_URL, and LLM_MODEL."
-            )
+        self.validate_configuration()
 
         base_url = self._api_base_url.rstrip("/")
         url = base_url if base_url.endswith("/chat/completions") else f"{base_url}/chat/completions"
@@ -161,6 +158,13 @@ class OpenAICompatibleLLM:
         if not answer:
             raise LLMResponseError("The configured LLM service returned an empty answer.")
         return answer
+
+    def validate_configuration(self) -> None:
+        """Raise when this adapter does not have the configuration needed to call its model."""
+        if (self._require_api_key and not self._api_key) or not self._api_base_url or not self._model:
+            raise LLMConfigurationError(
+                "The agent is not connected to an LLM yet. Configure LLM_API_KEY, LLM_API_BASE_URL, and LLM_MODEL."
+            )
 
     def complete_json(
         self,

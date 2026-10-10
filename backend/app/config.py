@@ -104,6 +104,11 @@ class Settings(BaseSettings):
     ncbi_api_key: SecretStr | None = None
     # CORE API key (M1.4.6). CORE has no anonymous access: enabling `core` without a key fails when it is used.
     core_api_key: SecretStr | None = None
+    # Licensed scholarly indexes (M1.4.7). Credentials are used only when the named connector is enabled.
+    scopus_api_key: SecretStr | None = None
+    scopus_inst_token: SecretStr | None = None
+    web_of_science_api_key: SecretStr | None = None
+    ieee_xplore_api_key: SecretStr | None = None
     # Optional OpenCitations access token (sent as the `authorization` header).
     opencitations_access_token: SecretStr | None = None
     # Object storage for PDFs/full text (M0.10.2/M0.10.3). "local" or "s3"; any other value fails loudly.
@@ -191,6 +196,13 @@ class Settings(BaseSettings):
             raise ValueError("CONNECTORS_ENABLED names an unknown connector: " + ", ".join(bad))
         if "core" in self.connectors_enabled and not (self.core_api_key and self.core_api_key.get_secret_value().strip()):
             raise ValueError("CORE_API_KEY must be set in production when 'core' is in CONNECTORS_ENABLED")
+        for connector, field_name, setting_name in (
+            ("scopus", self.scopus_api_key, "SCOPUS_API_KEY"),
+            ("web_of_science", self.web_of_science_api_key, "WEB_OF_SCIENCE_API_KEY"),
+            ("ieee_xplore", self.ieee_xplore_api_key, "IEEE_XPLORE_API_KEY"),
+        ):
+            if connector in self.connectors_enabled and not (field_name and field_name.get_secret_value().strip()):
+                raise ValueError(f"{setting_name} must be set in production when {connector!r} is in CONNECTORS_ENABLED")
         if self.arc_retrieval_enabled:
             if not self.arc_retrieval_base_url or not self.arc_retrieval_base_url.startswith("https://"):
                 raise ValueError("ARC_RETRIEVAL_BASE_URL must use HTTPS in production when ARC_RETRIEVAL_ENABLED is true")

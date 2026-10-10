@@ -12,11 +12,15 @@ from sqlalchemy.orm import Session, selectinload
 
 from app import audit
 from app.config import get_settings
+from app.connectors.access import is_enabled
+from app.connectors.arxiv import normalise_id
+from app.connectors.base import ConnectorError
+from app.arxiv_fulltext import ARXIV_FULLTEXT_FETCH
 from app.database import get_db
 from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_access
 from app.connectors.factory import enabled_lookup_names, unpaywall_unavailable_reason
 from app.fulltext import FullTextError, extract_pdf_text
-from app.models import Project, Source, SourceExcerpt, Task, TaskStatus, User, excerpt_hash, utcnow
+from app.models import SOURCE_ORIGIN_RETRIEVED, Project, Source, SourceExcerpt, Task, TaskStatus, User, excerpt_hash, utcnow
 from app.object_storage import ObjectConflict, fulltext_key, get_object_store
 from app.task_handlers import FULLTEXT_FETCH, SOURCE_CHECK
 from app.task_queue import enqueue_task
@@ -27,6 +31,7 @@ from app.source_merge import SourceMergeError, merge_sources
 PDF_SIGNATURE = b"%PDF-"
 
 _OPEN = {TaskStatus.queued, TaskStatus.running, TaskStatus.blocked, TaskStatus.paused}
+_FULLTEXT_TASK_TYPES = (FULLTEXT_FETCH, ARXIV_FULLTEXT_FETCH)
 router = APIRouter(prefix="/projects/{project_id}/sources", tags=["sources"])
 
 
@@ -209,12 +214,58 @@ def queue_fulltext_fetch(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=reason)
     if source.fulltext_path:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This source already has stored full text")
-    for task in db.scalars(select(Task).where(Task.project_id == project.id, Task.type == FULLTEXT_FETCH)):
+    for task in db.scalars(select(Task).where(Task.project_id == project.id, Task.type.in_(_FULLTEXT_TASK_TYPES))):
         if task.status in _OPEN and (task.payload or {}).get("source_id") == str(source_id):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A full-text fetch for this source is already waiting or running")
     actor = audit.user_actor(user)
     task = enqueue_task(db, project.id, FULLTEXT_FETCH, payload={"project_id": str(project.id), "source_id": str(source_id), "requested_by": actor}, actor=actor)
     audit.record(db, actor=actor, action="source.fulltext_requested", project_id=project.id, payload={"source_id": str(source_id), "task_id": str(task.id)})
+    db.commit()
+    return SourceCheckQueued(task_id=task.id, status=task.status.value)
+
+
+@router.post("/{source_id}/fulltext/arxiv/fetch", response_model=SourceCheckQueued, status_code=status.HTTP_202_ACCEPTED)
+def queue_arxiv_fulltext_fetch(
+    source_id: uuid.UUID,
+    project: Project = Depends(project_access(WRITE_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Queue an arXiv PDF fetch after checking the current version's licence."""
+    source = db.scalar(select(Source).where(Source.id == source_id, Source.project_id == project.id, Source.merged_into.is_(None)))
+    if source is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
+    source_ids = source.source_ids if isinstance(source.source_ids, dict) else {}
+    raw_id = source_ids.get("arxiv")
+    if source.origin != SOURCE_ORIGIN_RETRIEVED or not isinstance(raw_id, str):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This source has no retrieved arXiv id")
+    try:
+        normalise_id(raw_id)
+    except ConnectorError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This source has an invalid arXiv id") from None
+    settings = get_settings()
+    if not is_enabled("arxiv", settings.connectors_enabled, settings.connectors_allow_scraping):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="The arXiv connector is not enabled on this server")
+    if source.fulltext_path:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This source already has stored full text")
+    for task in db.scalars(select(Task).where(Task.project_id == project.id, Task.type.in_(_FULLTEXT_TASK_TYPES))):
+        if task.status in _OPEN and (task.payload or {}).get("source_id") == str(source_id):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A full-text fetch for this source is already waiting or running")
+    actor = audit.user_actor(user)
+    task = enqueue_task(
+        db,
+        project.id,
+        ARXIV_FULLTEXT_FETCH,
+        payload={"project_id": str(project.id), "source_id": str(source_id), "requested_by": actor},
+        actor=actor,
+    )
+    audit.record(
+        db,
+        actor=actor,
+        action="source.fulltext_requested",
+        project_id=project.id,
+        payload={"source_id": str(source.id), "task_id": str(task.id), "via": "arxiv"},
+    )
     db.commit()
     return SourceCheckQueued(task_id=task.id, status=task.status.value)
 

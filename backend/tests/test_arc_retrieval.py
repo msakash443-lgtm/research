@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from app.agent import executor
 from app.agent.arc_client import ArcRetrievalError, ArcRetrievedSource, _normalize
+from app.agent.llm import LLMConfigurationError, OpenAICompatibleLLM
 from app.config import Settings, get_settings
 from app.database import SessionLocal
 from app.main import app
@@ -29,6 +30,14 @@ def arc_enabled(monkeypatch):
     settings = get_settings()
     monkeypatch.setattr(settings, "arc_retrieval_enabled", True)
     monkeypatch.setattr(settings, "arc_retrieval_base_url", "http://arc.test")
+    monkeypatch.setattr(settings, "llm_api_key", "test-key")
+    monkeypatch.setattr(settings, "llm_api_base_url", "http://llm.test/v1")
+    monkeypatch.setattr(settings, "llm_model", "test-model")
+
+    def fail_model_call(self, *_args, **_kwargs):
+        raise LLMConfigurationError("The agent is not connected to an LLM yet.")
+
+    monkeypatch.setattr(OpenAICompatibleLLM, "complete_json", fail_model_call)
     return settings
 
 
@@ -55,6 +64,29 @@ def test_default_run_does_not_call_retrieval(arc_enabled, monkeypatch):
     assert response.status_code == 202
     assert response.json()["use_web_retrieval"] is False
     assert response.json()["status"] == "needs_sources"
+
+
+def test_missing_llm_configuration_skips_arc_retrieval_and_source_ingestion(arc_enabled, monkeypatch):
+    for setting in ("llm_api_key", "llm_api_base_url", "llm_model"):
+        monkeypatch.setattr(arc_enabled, setting, None)
+
+    def fail(*_args, **_kwargs):
+        raise AssertionError("retrieval must not run without an LLM configuration")
+
+    monkeypatch.setattr(executor.ArcRetrievalClient, "retrieve", fail)
+    client, project_id = development_client()
+
+    response = client.post(
+        f"/api/projects/{project_id}/research-runs", json={"question": QUESTION, "use_web_retrieval": True}
+    )
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "needs_configuration"
+    with SessionLocal() as db:
+        run = db.get(ResearchRun, uuid.UUID(response.json()["id"]))
+        assert run.input_snapshot["sources"] == []
+        assert "web_retrieval" not in run.input_snapshot
+        assert db.query(Source).filter(Source.project_id == uuid.UUID(project_id)).count() == 0
 
 
 def test_retrieved_sources_are_saved_deduplicated_and_unverified(arc_enabled, monkeypatch):
@@ -84,7 +116,7 @@ def test_retrieved_sources_are_saved_deduplicated_and_unverified(arc_enabled, mo
     assert response.status_code == 202
     body = response.json()
     assert body["use_web_retrieval"] is True
-    # No LLM is configured in tests, so a run with evidence stops here.
+    # The model call simulates missing configuration after retrieval; retrieved sources remain saved.
     assert body["status"] == "needs_configuration"
 
     with SessionLocal() as db:

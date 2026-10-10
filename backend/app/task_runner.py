@@ -7,7 +7,7 @@ import threading
 import uuid
 from datetime import datetime
 
-from app import task_handlers  # noqa: F401  (importing registers the handlers)
+from app import arxiv_fulltext_task, task_handlers  # noqa: F401  (importing registers the handlers)
 from app.config import get_settings
 from app.database import SessionLocal
 from app.gates import gate_is_approved

@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings, get_settings
 from app.connectors.access import CATALOGUE, AccessKind, is_enabled, unknown_connectors
+from app.connectors import factory
 from app.main import app
 
 
@@ -61,10 +62,18 @@ def test_production_refuses_unknown_connector_names():
     assert Settings(**base, connectors_enabled=["openalex"]).connectors_enabled == ["openalex"]
     with pytest.raises(ValueError, match="unknown connector"):
         Settings(**base, connectors_enabled=["openalx"])
-    # CORE has no anonymous access, so enabling it without a key fails at start-up (M1.4.6).
+    # API-key connectors fail at start-up when enabled without their credentials.
     with pytest.raises(ValueError, match="CORE_API_KEY"):
         Settings(**base, connectors_enabled=["core"])
     assert Settings(**base, connectors_enabled=["core"], core_api_key="k").connectors_enabled == ["core"]
+    for connector, key_name in (
+        ("scopus", "SCOPUS_API_KEY"),
+        ("web_of_science", "WEB_OF_SCIENCE_API_KEY"),
+        ("ieee_xplore", "IEEE_XPLORE_API_KEY"),
+    ):
+        with pytest.raises(ValueError, match=key_name):
+            Settings(**base, connectors_enabled=[connector])
+    assert Settings(**base, connectors_enabled=["scopus"], scopus_api_key="k").connectors_enabled == ["scopus"]
 
 
 def test_api_lists_access_kind_and_state(settings, monkeypatch):
@@ -76,10 +85,10 @@ def test_api_lists_access_kind_and_state(settings, monkeypatch):
     assert set(rows) == set(CATALOGUE)
 
 
-def test_enabled_but_unimplemented_is_not_usable(settings, monkeypatch):
+def test_licensed_connectors_are_usable_only_when_implemented_and_enabled(settings, monkeypatch):
     monkeypatch.setattr(settings, "connectors_enabled", ["scopus"])
     row = next(r for r in _client().get("/api/connectors").json() if r["name"] == "scopus")
-    assert row["enabled"] is True and row["implemented"] is False and row["usable"] is False
+    assert row["enabled"] is True and row["implemented"] is True and row["usable"] is True
 
 
 def test_an_implemented_connector_is_usable_only_when_enabled(settings, monkeypatch):
@@ -87,6 +96,20 @@ def test_an_implemented_connector_is_usable_only_when_enabled(settings, monkeypa
     assert rows["openalex"]["implemented"] is True and rows["openalex"]["usable"] is False
     monkeypatch.setattr(settings, "connectors_enabled", ["openalex"])
     assert next(r for r in _client().get("/api/connectors").json() if r["name"] == "openalex")["usable"] is True
+
+
+def test_licensed_connectors_are_searchable_and_factory_wired(monkeypatch):
+    configured = Settings(
+        _env_file=None,
+        scopus_api_key="scopus-key",
+        web_of_science_api_key="wos-key",
+        ieee_xplore_api_key="ieee-key",
+    )
+    monkeypatch.setattr(factory, "get_settings", lambda: configured)
+    assert {"scopus", "web_of_science", "ieee_xplore"} <= set(factory.SEARCHABLE)
+    assert factory.build_connector("scopus").name == "scopus"
+    assert factory.build_connector("web_of_science").name == "web_of_science"
+    assert factory.build_connector("ieee_xplore").name == "ieee_xplore"
 
 
 def test_api_requires_sign_in():

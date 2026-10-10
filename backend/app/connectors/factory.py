@@ -7,14 +7,20 @@ from app.connectors.base import Connector, ConnectorError
 from app.connectors.arxiv import ArxivConnector
 from app.connectors.core import CoreConnector
 from app.connectors.crossref import CrossrefConnector
+from app.connectors.ieee_xplore import IeeeXploreConnector
 from app.connectors.openalex import OpenAlexConnector
 from app.connectors.opencitations import OpenCitationsConnector
 from app.connectors.pubmed import PubMedConnector
+from app.connectors.scopus import ScopusConnector
 from app.connectors.semantic_scholar import SemanticScholarConnector
 from app.connectors.unpaywall import UnpaywallConnector
+from app.connectors.web_of_science import WebOfScienceConnector
 
 # Connectors that can run a keyword search. Unpaywall and OpenCitations look works up by id only.
-SEARCHABLE = ("openalex", "crossref", "semantic_scholar", "arxiv", "pubmed", "core")
+SEARCHABLE = (
+    "openalex", "crossref", "semantic_scholar", "arxiv", "pubmed", "core",
+    "scopus", "web_of_science", "ieee_xplore",
+)
 
 
 # Services the citation verifier asks, in this order.
@@ -42,6 +48,12 @@ def build_connector(name: str) -> Connector:
         return PubMedConnector(contact_email=settings.connector_contact_email, api_key=settings.ncbi_api_key)
     if name == "core":
         return CoreConnector(api_key=settings.core_api_key)
+    if name == "scopus":
+        return ScopusConnector(api_key=settings.scopus_api_key, inst_token=settings.scopus_inst_token)
+    if name == "web_of_science":
+        return WebOfScienceConnector(api_key=settings.web_of_science_api_key)
+    if name == "ieee_xplore":
+        return IeeeXploreConnector(api_key=settings.ieee_xplore_api_key)
     if name == "opencitations":
         return OpenCitationsConnector(access_token=settings.opencitations_access_token)
     raise ConnectorError(f"No connector named '{name}'")

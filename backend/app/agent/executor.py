@@ -385,8 +385,14 @@ def execute_research_run(
 
         settings = get_settings()
         web_retrieval = None
+        llm_configuration_error = None
         if run.use_web_retrieval and settings.arc_retrieval_enabled:
-            web_retrieval = _ingest_arc_sources(db, project, run, settings, ensure_owned=ensure_owned)
+            try:
+                OpenAICompatibleLLM(settings).validate_configuration()
+            except LLMConfigurationError as exc:
+                llm_configuration_error = exc
+            else:
+                web_retrieval = _ingest_arc_sources(db, project, run, settings, ensure_owned=ensure_owned)
 
         context_rows = select_agent_context(
             db.scalars(select(ResearchContextItem).where(ResearchContextItem.project_id == project.id)).all()
@@ -423,7 +429,11 @@ def execute_research_run(
         run.research_plan = build_plan(source_snapshot)
 
         evidence_sources = [source for source in source_snapshot if source["excerpt"]]
-        if not sources:
+        if llm_configuration_error is not None:
+            run.status = ResearchRunStatus.needs_configuration
+            run.answer = None
+            run.error_message = str(llm_configuration_error)
+        elif not sources:
             run.status = ResearchRunStatus.needs_sources
             run.answer = None
             run.error_message = "No sources are saved for this project yet. Add primary or official sources and a short evidence excerpt, then run the question again."
