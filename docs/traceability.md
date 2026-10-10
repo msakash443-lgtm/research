@@ -34,7 +34,7 @@
 | 5.2.2 | Web search / crawl / PDF via ARC (opt-in) | M1.1.1–M1.1.14 | `POST /api/projects/{id}/research-runs` (`use_web_retrieval`) | `test_arc_retrieval.py`, `test_arc_fencing.py` | M1.1.1–.9, .12 `[x]`; M1.1.10, M1.1.11 `[x]` (reviewed 2026-10-08); M1.1.13 `[?]`; M1.1.14 `[ ]` |
 | 5.2.2 | De-dup by DOI → title+year+first author | M0.2.2, M1.6.1–M1.6.3 | `POST .../sources` (DOI normalised) | `test_doi.py`, `test_dedupe.py`, `test_merge.py`, `test_source_merge.py` | M0.2.2 and M1.6.1–.4 `[x]` |
 | 5.2.3 | Snowballing N rounds | M1.9.1–M1.9.2 | `POST/GET /api/projects/{id}/snowball` (G2-gated task `snowball_run`); `found_via` on sources + screening queue; PRISMA `other_methods.citation_searching` | `test_snowball.py` | `[?]` |
-| 5.2.4 | Saved-query alerts | M1.12 | — | — | `[ ]` |
+| 5.2.4 | Saved-query alerts | M1.12 | `POST …/searches/{id}/alerts` (subscribe, 1 h–30 d interval), `GET …/alerts` (last-run state + new results), `POST …/alerts/{id}/run` (immediate), `DELETE …/alerts/{id}`; G2-gated task `query_alert`, worker sweep per due slot | `test_query_alerts.py` | M1.12 `[x]` (built + closed at user request 2026-10-10; v1: no email/calendar, results not saved as sources) |
 | 5.2.5 | Search log + PRISMA counts | M1.7.1–M1.7.3 | search runs, `GET …/prisma` | `test_search_runner.py`, `test_prisma.py` | `[x]` (counts for screening stages wait on M2) |
 | 5.2 gate | G2: approve strategy before bulk retrieval; known-item test | M1.8.1–M1.8.2 | G2 gate; `GET …/known-items` | `test_search_gate.py`, `test_known_items.py` | `[x]` |
 | 5.2 QC | Gold-set recall, report missed papers | M1.8.3–M1.8.4, **X.15** | — | `test_gold_set.py` (loader only), `test_recall_report.py` | M1.8.3 `[?]` (defect → M1.8.4 `[ ]`); X.15 `[!]` blocked on Q10 |
@@ -121,7 +121,7 @@
 | 5.11.2 | **Genre templates** (IMRaD, conceptual, review, thesis) | M6.10 *(new)* | — | — | `[ ]` |
 | 5.11.3 | Claim–evidence linker; verified refs only | M6.2, M1.10, **X.14**; see also X.31.9/X.31.10 (source panel + citation picker in the per-note/section editor, design: `docs/researcher-workspace-design.md`) | wireframe `docs/wireframes/claim-evidence-panel.html` (X.14, awaiting scholar walkthrough) | — | `[ ]` |
 | 5.11.4 | Style help with diffs | M6.8; see also X.31.11 (AI side panel, accept/reject proposals, design doc) | — | — | `[ ]` |
-| 5.11.5 | Ref-manager sync; CSL | M1.11, M6.5 | `POST …/sources/import`, `GET …/sources/export` | `test_refmanager*.py` | M1.11.1 `[x]`; M1.11.2, M1.11.3 `[ ]` |
+| 5.11.5 | Ref-manager sync; CSL | M1.11, M6.5 | `POST …/sources/import`, `GET …/sources/export`, `GET …/zotero`, `POST …/zotero/pull` (G2-gated), `POST …/zotero/push` (verified only) | `test_refmanager*.py`, `test_zotero.py` | M1.11 `[x]` (M1.11.1 `[x]`; M1.11.2, M1.11.3 `[x]` — P3 closures at user request 2026-10-10) |
 | 5.11.6 | **Abstract, keywords, highlights, cover letter**; statements (incl. per-manuscript AI-use statement) | M6.10 *(new)*, M6.5, M6.6; AI-use statement also covered by X.31.12 (`provenance_report.py`, design doc) | — | — | `[ ]` |
 | 5.11.7 | Similarity pre-check | M6.7; project-source similarity also covered by X.31.14, institutional integration point by X.31.15 (design doc) | — | — | `[ ]` |
 | 5.11 gate | **G10 approve each section + AI-involvement level** | M6.1, M6.11 *(new)* | — | — | `[ ]` |

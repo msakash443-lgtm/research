@@ -12,7 +12,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from app.database import Base, engine
 from app.config import get_settings
 from app.middleware import ContentLengthLimitMiddleware
-from app.routers import audit, auth, bibliometrics, clusters, connectors, coverage, criteria, exports, extraction_schemas, extractions, gates, members, notes, prisma, profile, projects, replication, research_runs, screening, searches, seeds, snowball, sources, stage, usage
+from app.routers import audit, auth, bibliometrics, clusters, connectors, coverage, criteria, exports, extraction_schemas, extractions, gates, members, notes, prisma, profile, projects, replication, research_runs, screening, searches, alerts, seeds, snowball, sources, stage, usage, zotero
 
 # Production settings (session secret, HTTPS, Postgres, ...) are validated in Settings.
 settings = get_settings()
@@ -82,6 +82,8 @@ app.include_router(members.router, prefix="/api")
 app.include_router(sources.router, prefix="/api")
 app.include_router(research_runs.router, prefix="/api")
 app.include_router(notes.router, prefix="/api")
+app.include_router(alerts.router, prefix="/api")
+app.include_router(zotero.router, prefix="/api")
 
 
 @app.middleware("http")

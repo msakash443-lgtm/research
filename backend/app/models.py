@@ -369,6 +369,34 @@ class SearchQuery(Timestamped, Base):
     created_by: Mapped[str | None] = mapped_column(String(100))
 
 
+class SearchAlert(Timestamped, Base):
+    """An alert subscription on a saved search (spec 5.2.4, plan M1.12): re-run it on a schedule,
+    surface new papers.
+
+    One alert per saved search. The worker sweeps `next_run_at` and enqueues a G2-gated
+    `query_alert` task per due slot (idempotent per slot); a successful run records `last_run_at`
+    / `last_run_version` / `last_new`. A paper that appeared in any earlier version of the search
+    is never re-surfaced, even if it left and came back.
+    """
+
+    __tablename__ = "search_alerts"
+    __table_args__ = (
+        UniqueConstraint("search_id", name="uq_search_alert_search"),
+        CheckConstraint("interval_seconds >= 3600", name="ck_search_alert_interval_min"),
+        CheckConstraint("interval_seconds <= 2592000", name="ck_search_alert_interval_max"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    search_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    interval_seconds: Mapped[int] = mapped_column(default=86400)
+    next_run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_run_version: Mapped[int | None] = mapped_column()
+    last_new: Mapped[int | None] = mapped_column()
+    enabled: Mapped[bool] = mapped_column(default=True)
+    created_by: Mapped[str | None] = mapped_column(String(100))
+
+
 class SnowballRun(Timestamped, Base):
     """One completed citation-chasing run (spec 5.2.3, M1.9): where it started, how far it went, what it found.
 

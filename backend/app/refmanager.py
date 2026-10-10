@@ -174,7 +174,9 @@ def parse_ris(text: str) -> ParseResult:
 
 
 def _bib_escape(value: str) -> str:
-    return value.replace("\\", " ").replace("{", "(").replace("}", ")")
+    # Braces would close the field early and backslashes have no business here; collapse all
+    # whitespace so every field stays on one line, as the RIS output does (M1.11.3).
+    return _one_line(value.replace("\\", " ").replace("{", "(").replace("}", ")"))
 
 
 def to_bibtex(records: list[dict]) -> str:
