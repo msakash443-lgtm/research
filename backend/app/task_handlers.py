@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import datetime
 
 from sqlalchemy import select
 
@@ -12,7 +13,7 @@ from app.agent.executor import execute_research_run
 from app.database import SessionLocal
 from app.connectors.base import ConnectorError
 from app.connectors.factory import build_connector, build_unpaywall, enabled_lookup_names, unpaywall_unavailable_reason
-from app.models import GateCode, Project, ResearchRun, ResearchRunStatus, SearchQuery, SnowballRun, Source, utcnow
+from app.models import GateCode, Project, ResearchRun, ResearchRunStatus, SearchAlert, SearchQuery, SnowballRun, Source, utcnow
 from app.agent.llm import LLMConfigurationError, OpenAICompatibleLLM
 from app.llm_usage import ProjectMeter
 from app.config import get_settings
@@ -28,6 +29,8 @@ from app.source_verification import verify_source
 from app.search_runner import SearchError, SearchFailed, rerun_search, run_search
 from app.screening import screening_locked
 from app.snowball import SnowballError, SnowballFailed, run_snowball
+from app.query_alerts import QUERY_ALERT, _aware, latest_search, record_alert_run
+from app.zotero import ZoteroError, build_zotero_client, sync_pull, sync_push
 from app.task_registry import ClaimedTask, PermanentTaskError, TaskOwnershipLost, register
 
 logger = logging.getLogger(__name__)
@@ -293,5 +296,116 @@ def handle_snowball_run(task: ClaimedTask) -> None:
             raise PermanentTaskError(f"The snowball run could not be done: {exc}") from exc
         task.ensure_owned(db)
         db.commit()
+    finally:
+        db.close()
+
+
+# ------------------------------------------------------------------ Zotero sync (M1.11.2)
+
+ZOTERO_PULL = "zotero_pull"
+ZOTERO_PUSH = "zotero_push"
+
+
+@register(ZOTERO_PULL, requires_gate=GateCode.G2)
+def handle_zotero_pull(task: ClaimedTask) -> None:
+    """Pull items from the configured Zotero library into the project (M1.11.2.2). Bulk retrieval,
+    so it needs G2, like database searches. Items arrive unverified; a retried run is a no-op."""
+    payload = task.payload or {}
+    try:
+        project_id = uuid.UUID(str(payload["project_id"]))
+    except (KeyError, ValueError, TypeError) as exc:
+        raise PermanentTaskError("A zotero_pull task needs a project_id.") from exc
+    db = SessionLocal()
+    try:
+        project = db.get(Project, project_id)
+        if project is None:
+            raise PermanentTaskError("The project for this Zotero pull no longer exists.")
+        try:
+            result = sync_pull(db, project, build_zotero_client(), collection_key=get_settings().zotero_collection_key,
+                                before_write=task.ensure_owned)
+        except (ZoteroError, ConnectorError) as exc:
+            db.rollback()
+            raise PermanentTaskError(f"The Zotero pull could not be done: {exc}") from exc
+        task.ensure_owned(db)
+        db.commit()
+        logger.info("Zotero pull for project %s: %s", project_id, result)
+    finally:
+        db.close()
+
+
+@register(ZOTERO_PUSH)
+def handle_zotero_push(task: ClaimedTask) -> None:
+    """Push the project's verified sources into the configured Zotero library (M1.11.2.3). Sends
+    nothing unverified, creates nothing for a source that already has an item, and never updates
+    or deletes an existing Zotero item; a re-run adopts instead of duplicating."""
+    payload = task.payload or {}
+    try:
+        project_id = uuid.UUID(str(payload["project_id"]))
+    except (KeyError, ValueError, TypeError) as exc:
+        raise PermanentTaskError("A zotero_push task needs a project_id.") from exc
+    db = SessionLocal()
+    try:
+        project = db.get(Project, project_id)
+        if project is None:
+            raise PermanentTaskError("The project for this Zotero push no longer exists.")
+        try:
+            result = sync_push(db, project, build_zotero_client(), collection_key=get_settings().zotero_collection_key,
+                                before_write=task.ensure_owned)
+        except (ZoteroError, ConnectorError) as exc:
+            db.rollback()
+            raise PermanentTaskError(f"The Zotero push could not be done: {exc}") from exc
+        task.ensure_owned(db)
+        db.commit()
+        logger.info("Zotero push for project %s: %s", project_id, result)
+    finally:
+        db.close()
+
+
+@register(QUERY_ALERT, requires_gate=GateCode.G2)
+def handle_query_alert(task: ClaimedTask) -> None:
+    """Re-run a saved search on its alert schedule (M1.12): surface papers new since the earlier
+    versions. Bulk retrieval, so it needs G2, like a queued search run; a retried run is a no-op."""
+    payload = task.payload or {}
+    try:
+        project_id = uuid.UUID(str(payload["project_id"]))
+        alert_id = uuid.UUID(str(payload["alert_id"]))
+    except (KeyError, ValueError, TypeError) as exc:
+        raise PermanentTaskError("A query_alert task needs project_id and alert_id.") from exc
+    enqueued_at = None
+    if payload.get("enqueued_at"):
+        try:
+            enqueued_at = datetime.fromisoformat(str(payload["enqueued_at"]))
+        except ValueError:
+            enqueued_at = None
+    actor = str(payload.get("actor") or audit.SYSTEM_WORKER)
+    db = SessionLocal()
+    try:
+        project = db.get(Project, project_id)
+        if project is None:
+            raise PermanentTaskError("The project for this alert no longer exists.")
+        alert = db.get(SearchAlert, alert_id)
+        if alert is None:
+            raise PermanentTaskError("The alert this task belongs to no longer exists.")
+        if not alert.enabled:
+            return  # disabled between enqueue and claim; the schedule simply stops
+        latest = latest_search(db, project, alert.search_id)
+        if latest is None:
+            raise PermanentTaskError("The search this alert watches no longer exists.")
+        if enqueued_at is not None and _aware(alert.last_run_at) is not None \
+                and _aware(alert.last_run_at) >= _aware(enqueued_at):
+            return  # a run already completed at or after this task was enqueued: a retried attempt
+        try:
+            connector = build_connector(latest.database)
+            row = rerun_search(db, project=project, actor=actor, connector=connector, search_id=alert.search_id)
+            result = record_alert_run(db, project, alert, row, actor=actor)
+        except SearchFailed:
+            db.commit()  # keep the search.failed audit event, then let the queue retry with backoff
+            raise
+        except (AlertError, SearchError, QueryError, ConnectorError, ValueError) as exc:
+            db.rollback()
+            raise PermanentTaskError(f"The alert re-run could not be done: {exc}") from exc
+        task.ensure_owned(db)
+        db.commit()
+        logger.info("Alert %s: search %s v%s, %s new", alert_id, alert.search_id, result.get("version"), result.get("new"))
     finally:
         db.close()

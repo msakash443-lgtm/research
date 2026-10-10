@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from app.database import SessionLocal
 from app.main import app
 from app.models import (
+    utcnow,
     SOURCE_ORIGIN_RETRIEVED,
     Cluster,
     ClusterRun,
@@ -66,6 +67,10 @@ MATRIX = [
     ("POST", "/api/projects/{p}/searches/{q}/rerun", WRITE, 202),
     ("GET", "/api/projects/{p}/snowball", ALL, 200),
     ("POST", "/api/projects/{p}/snowball", WRITE, 202),  # queues only; gate G2 still blocks the run
+    ("POST", "/api/projects/{p}/searches/{q}/alerts", WRITE, 201),
+    ("GET", "/api/projects/{p}/alerts", ALL, 200),
+    ("POST", "/api/projects/{p}/alerts/{a}/run", WRITE, 202),  # queues only; gate G2 still blocks the run
+    ("DELETE", "/api/projects/{p}/alerts/{a}", WRITE, 204),
     ("GET", "/api/projects/{p}/research-runs", ALL, 200),
     ("POST", "/api/projects/{p}/research-runs", WRITE, 202),
     ("GET", "/api/projects/{p}/members", ALL, 200),
@@ -74,6 +79,9 @@ MATRIX = [
     ("GET", "/api/projects/{p}/audit", ALL, 200),
     ("GET", "/api/projects/{p}/audit/export", ALL, 200),
     ("GET", "/api/projects/{p}/export/obsidian", ALL, 200),
+    ("GET", "/api/projects/{p}/zotero", ALL, 200),
+    ("POST", "/api/projects/{p}/zotero/pull", WRITE, 202),  # queues only; gate G2 still blocks the run
+    ("POST", "/api/projects/{p}/zotero/push", WRITE, 202),
     ("GET", "/api/projects/{p}/artifacts", ALL, 200),
     ("GET", "/api/projects/{p}/rerun-path", ALL, 200),
     ("GET", "/api/projects/{p}/stage", ALL, 200),
@@ -155,6 +163,10 @@ def world(monkeypatch, fake_llm):
     monkeypatch.setattr(get_settings(), "connectors_enabled", ["openalex", "unpaywall", "arxiv"])
     monkeypatch.setattr(get_settings(), "connector_contact_email", "matrix@example.com")
     monkeypatch.setattr(get_settings(), "obsidian_export_enabled", True)
+    monkeypatch.setattr(get_settings(), "zotero_sync_enabled", True)
+    from pydantic import SecretStr
+    monkeypatch.setattr(get_settings(), "zotero_api_key", SecretStr("matrix-key"))
+    monkeypatch.setattr(get_settings(), "zotero_user_id", "12345")
     monkeypatch.setattr(get_settings(), "embedding_model", "test-embedding")  # only POST /clusters checks it; nothing is embedded here
     tag = uuid.uuid4().hex[:8]
     owner, _ = _login(f"matrix-owner-{tag}@example.com")
@@ -178,9 +190,28 @@ def world(monkeypatch, fake_llm):
             db.commit()
         clients[name] = client
 
-    with SessionLocal() as db:  # an earlier run of a search, so it can be re-run
+    with SessionLocal() as db:  # an earlier run of a search, so it can be re-run and watched
+        from app.models import SearchAlert
+
         search_id = uuid.uuid4()
-        db.add(SearchQuery(project_id=uuid.UUID(project_id), search_id=search_id, database="openalex", query_string='"x"'))
+        db.add(SearchQuery(
+            project_id=uuid.UUID(project_id), search_id=search_id, database="openalex", query_string='"x"',
+            run_at=utcnow(), n_results=1, counts={"retrieved": 1, "unique": 1},
+            results=[{"id": "W1", "doi": "10.1000/matrix", "work_key": "matrix-paper"}],
+        ))
+        # A second, already-run search that already has an alert: the target of the run/delete routes.
+        alerted_search_id = uuid.uuid4()
+        db.add(SearchQuery(
+            project_id=uuid.UUID(project_id), search_id=alerted_search_id, database="openalex", query_string='"y"',
+            run_at=utcnow(), n_results=1, counts={"retrieved": 1, "unique": 1},
+            results=[{"id": "W2", "doi": "10.1000/matrix-2", "work_key": "matrix-paper-2"}],
+        ))
+        alert_id = uuid.uuid4()
+        db.add(SearchAlert(
+            id=alert_id,
+            project_id=uuid.UUID(project_id), search_id=alerted_search_id, interval_seconds=86400,
+            next_run_at=utcnow(), enabled=True, created_by="matrix",
+        ))
         db.commit()
 
     with SessionLocal() as db:
@@ -214,7 +245,7 @@ def world(monkeypatch, fake_llm):
         db.commit()
     return {
         "clients": clients,
-        "ids": {"p": project_id, "s": source_id, "u": removable_id, "q": str(search_id), "d": str(seed_id), "e": str(extraction_id), "c": str(clustering_id), "l": str(cluster_id), "n": "lab_schema"},
+        "ids": {"p": project_id, "s": source_id, "u": removable_id, "q": str(search_id), "d": str(seed_id), "e": str(extraction_id), "c": str(clustering_id), "l": str(cluster_id), "n": "lab_schema", "a": str(alert_id)},
         "twin": twin_id,
         "invitee": f"matrix-invitee-{tag}@example.com",
     }
@@ -276,7 +307,7 @@ def test_role_matrix(world, principal, method, template, allowed, success):
 def test_the_matrix_covers_every_project_scoped_route():
     """A new project route must be added to MATRIX, or this fails."""
     routed = {
-        (method, route.path.replace("{project_id}", "{p}").replace("{source_id}", "{s}").replace("{user_id}", "{u}").replace("{code}", "G1").replace("{search_id}", "{q}").replace("{seed_id}", "{d}").replace("{extraction_id}", "{e}").replace("{clustering_id}", "{c}").replace("{cluster_id}", "{l}").replace("{schema_name}", "{n}"))
+        (method, route.path.replace("{project_id}", "{p}").replace("{source_id}", "{s}").replace("{user_id}", "{u}").replace("{code}", "G1").replace("{search_id}", "{q}").replace("{seed_id}", "{d}").replace("{extraction_id}", "{e}").replace("{clustering_id}", "{c}").replace("{cluster_id}", "{l}").replace("{schema_name}", "{n}").replace("{alert_id}", "{a}"))
         for route in app.routes
         if "{project_id}" in getattr(route, "path", "")
         for method in route.methods

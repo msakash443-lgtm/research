@@ -201,6 +201,15 @@ class ConnectorHttpClient:
         """POST a JSON body for read-only batch lookups; same retry/gate/breaker policy as `get_json`."""
         return self._request_json("POST", path, params, headers, body, fresh)
 
+    def post(
+        self, path: str, body: Any, params: dict[str, Any] | None = None, headers: dict[str, str] | None = None,
+        *, fresh: bool = False,
+    ) -> httpx.Response:
+        """POST and return the raw 2xx response: for services whose success reply is not a JSON body
+        (e.g. an empty reply carrying the new resource id in a header). Never cached; the same
+        retry/rate-gate/breaker policy as `post_json` applies."""
+        return self._request_json("POST", path, params, headers, body, fresh, as_response=True)
+
     # --- cache ---------------------------------------------------------------
 
     def _cache_key(self, method: str, path: str, params, body, as_text: bool = False) -> str:
@@ -226,8 +235,9 @@ class ConnectorHttpClient:
             while len(self._cache) > self.policy.cache_max_entries:
                 self._cache.popitem(last=False)
 
-    def _request_json(self, method: str, path: str, params, headers, body, fresh: bool = False, *, as_text: bool = False) -> Any:
-        caching = self.policy.cache_ttl_seconds > 0
+    def _request_json(self, method: str, path: str, params, headers, body, fresh: bool = False, *, as_text: bool = False,
+                      as_response: bool = False) -> Any:
+        caching = self.policy.cache_ttl_seconds > 0 and not as_response  # raw responses are never cached
         fresh = fresh or _BYPASS_CACHE.get()
         key = self._cache_key(method, path, params, body, as_text) if caching else ""
         if caching and not fresh:
@@ -239,15 +249,16 @@ class ConnectorHttpClient:
         self.last_from_cache = False
         if caching:
             self.cache_misses += 1
-        result = self._request_json_network(method, path, params, headers, body, as_text)
+        result = self._request_json_network(method, path, params, headers, body, as_text, as_response)
         if caching:
             self._cache_put(key, result)
         return result
 
-    def _request_json_network(self, method: str, path: str, params, headers, body, as_text: bool = False) -> Any:
+    def _request_json_network(self, method: str, path: str, params, headers, body, as_text: bool = False,
+                              as_response: bool = False) -> Any:
         self._before_call()
         try:
-            result = self._get_json_with_retries(method, path, params, headers, body, as_text)
+            result = self._get_json_with_retries(method, path, params, headers, body, as_text, as_response)
         except NotFoundError:
             self._record(True)  # the service is healthy; the record just isn't there
             raise
@@ -260,7 +271,8 @@ class ConnectorHttpClient:
         self._record(True)
         return result
 
-    def _get_json_with_retries(self, method, path, params, headers, body, as_text: bool = False) -> Any:
+    def _get_json_with_retries(self, method, path, params, headers, body, as_text: bool = False,
+                               as_response: bool = False) -> Any:
         last = "no response"
         for attempt in range(self.policy.max_retries + 1):
             self._wait_for_slot()
@@ -278,6 +290,8 @@ class ConnectorHttpClient:
                     retry_after = parse_retry_after(response.headers.get("Retry-After"))
                 elif status >= 400:
                     raise ConnectorError(f"{self.name}: request rejected (HTTP {status})")
+                elif as_response:
+                    return response
                 elif as_text:
                     return response.text
                 else:

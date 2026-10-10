@@ -144,6 +144,14 @@ class Settings(BaseSettings):
     cluster_max_sources: int = Field(default=1000, ge=2)
     # Obsidian vault export (X.34.1): GET /api/projects/{id}/export/obsidian. Off by default; 404 while off.
     obsidian_export_enabled: bool = False
+    # Zotero library sync (M1.11.2): pull items from, and push verified sources into, a Zotero user
+    # library over the official API. Off by default; the credentials are used only while enabled.
+    # `zotero_collection_key` is the collection pushes create items in; pulls read the whole library
+    # (or that collection when set).
+    zotero_sync_enabled: bool = False
+    zotero_api_key: SecretStr | None = None
+    zotero_user_id: str | None = None
+    zotero_collection_key: str | None = None
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -172,6 +180,14 @@ class Settings(BaseSettings):
                 missing.append("OBJECT_STORAGE_S3_SECRET_ACCESS_KEY")
             if missing:
                 raise ValueError("OBJECT_STORAGE_BACKEND=s3 requires " + ", ".join(missing))
+        if self.zotero_sync_enabled:
+            missing = []
+            if not self.zotero_api_key or not self.zotero_api_key.get_secret_value().strip():
+                missing.append("ZOTERO_API_KEY")
+            if not (self.zotero_user_id or "").strip():
+                missing.append("ZOTERO_USER_ID")
+            if missing:
+                raise ValueError("ZOTERO_SYNC_ENABLED=true requires " + ", ".join(missing))
         if self.environment != "production":
             return self
 
