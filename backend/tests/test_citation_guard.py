@@ -225,3 +225,22 @@ def test_a_range_is_bounded_and_past_the_sources_it_is_rejected():
 
     assert max(_cited_indices("[S1-S999999]")) == 999999 and len(_cited_indices("[S1-S999999]")) <= MAX_SOURCES + 3
     assert _citation_problem("[S1 to S9]", [{"verified": True}] * 3) == (4, "unknown_citation_index")
+
+
+def test_the_citation_reader_does_not_ignore_long_bracketed_citation_groups():
+    from app.agent.executor import _cited_indices
+
+    citation = "[S1, " + ("additional citation detail " * 14) + ", S2]"
+    assert _cited_indices(citation) == {1, 2}
+
+
+@pytest.mark.parametrize(
+    "citation, expected",
+    [("[S1 [S2]]", {1, 2}), ("[S1 [S2]", {1, 2}), ("[S1 [S2 [S3]]]", {1, 2, 3})],
+)
+def test_the_citation_reader_checks_source_markers_inside_nested_or_unclosed_brackets(citation, expected):
+    from app.agent.executor import _cited_indices, _citation_problem
+
+    assert _cited_indices(citation) == expected
+    sources = [{"verified": index != 1} for index in range(1, max(expected) + 1)]
+    assert _citation_problem(citation, sources) == (1, "unverified_citation")

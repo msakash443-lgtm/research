@@ -87,19 +87,30 @@ _CITATION_GROUP = re.compile(r"\[\s*(S\d+(?:\s*(?:[,;]|-|–|and)\s*S?\d+)*)\s*\
 # Fail-closed reading (M1.10.6): inside any [...], every S# token starts or continues a chain, however
 # it is written ("[S2, p. 4]", "[S1, S2, and S3]", "[S1 & S2]", "[S1/S2]", "[S 2]"); a chain also takes
 # bare numbers and ranges after an S# ("[S1, 2]", "[S1 to S3]"). A page number after "p." is not a source.
-_BRACKET = re.compile(r"\[([^\[\]]{1,300})\]")
 _SEP = r"(?:,\s*and|,\s*or|[,;/&]|\band\b|\bor\b)"
 _RANGE = r"(?:-|–|—|\bto\b|\bthrough\b)"
 _CHAIN = re.compile(rf"(?<![A-Za-z0-9])S\s*\d+(?:\s*(?:{_SEP}|{_RANGE})\s*(?:S\s*)?\d+(?![\d.]))*", re.IGNORECASE)
 _CHAIN_PART = re.compile(rf"\s*(?:(?P<range>{_RANGE})|{_SEP})?\s*(?P<s>S\s*)?(?P<n>\d+)", re.IGNORECASE)
 
 
+def _bracket_contents(answer: str):
+    starts = []
+    for index, char in enumerate(answer):
+        if char == "[":
+            starts.append(index)
+        elif char == "]" and starts:
+            start = starts.pop()
+            if not starts:
+                yield answer[start + 1 : index]
+    if starts:
+        yield answer[starts[0] + 1 :]
+
+
 def _cited_indices(answer: str) -> set[int]:
     """Every source number an answer cites inside [...], ranges expanded. Errs towards finding a citation:
     a number read as a source that wasn't meant as one can only block a run, never let one through."""
     cited: set[int] = set()
-    for bracket in _BRACKET.finditer(answer):
-        inside = bracket.group(1)
+    for inside in _bracket_contents(answer):
         for chain in _CHAIN.finditer(inside):
             previous = None
             for part in _CHAIN_PART.finditer(chain.group(0)):

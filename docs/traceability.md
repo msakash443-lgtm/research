@@ -5,7 +5,7 @@
 > that prove it. **plan.md is the source of truth for status**; this table is a snapshot and must be
 > updated whenever a task is added, finished or dropped (plan.md rule 31).
 >
-> Snapshot: 2026-10-10 (refreshed; first written 2026-10-03) · test baseline **2081 passed, 6 skipped** (full run 2026-10-10) · tests live in `backend/tests/`. **M0 closed 2026-10-09** (plan.md M0 header `[x]`); M0-scoped rows below refreshed. M1.4.7 updated this pass; other M1–M7/X rows not re-verified — still as of 2026-10-07.
+> Snapshot: 2026-10-10 (refreshed; first written 2026-10-03) · test baseline **2169 passed, 6 skipped, 0 failed** (Python 3.12 full run 2026-10-10) · tests live in `backend/tests/`. **M0 closed 2026-10-09** (plan.md M0 header `[x]`); M0-scoped rows below refreshed. M1.1.14 and M1.10.3/.4/.6 updated this pass; other M1–M7/X rows not re-verified — still as of 2026-10-07.
 > Status here follows plan.md as of the snapshot date; where the two disagree, plan.md wins.
 
 **Status key:** `[x]` done · `[?]` built, awaiting review · `[~]` in progress · `[ ]` not started ·
@@ -31,7 +31,7 @@
 | 5.2 in | Inclusion/exclusion criteria (PICO etc.) | M1.5.4 | criteria endpoints | `test_criteria.py` | `[x]` |
 | 5.2.1 | Boolean query builder, per-DB syntax | M1.5.1–M1.5.6 | search-query endpoints | `test_search_query*.py` | M1.5.1–.2 `[x]`; M1.5.3 (LLM synonyms), M1.5.5 (S2 bulk Boolean) `[?]`; M1.5.6 (re-runs of pre-bulk S2 searches refused) `[?]` |
 | 5.2.2 | Multi-source retrieval | M1.3, M1.4.1–M1.4.8 | connectors (OpenAlex, Crossref, Semantic Scholar, arXiv, Unpaywall, PubMed/Europe PMC, CORE, OpenCitations, Scopus, Web of Science, IEEE Xplore); `GET` connector list | `test_connector_*.py`, `test_*_connector.py`, `test_arxiv_fulltext.py`, `test_scopus_connector.py`, `test_web_of_science_connector.py`, `test_ieee_xplore_connector.py`, `test_search_runner.py` | M1.3.1–.2, .4–.5 and M1.4.1–.3, .5 `[x]`; M1.3.3 cache, M1.4.4, M1.4.6–.8 `[?]`; M1.3.6 `[?]` |
-| 5.2.2 | Web search / crawl / PDF via ARC (opt-in) | M1.1.1–M1.1.14 | `POST /api/projects/{id}/research-runs` (`use_web_retrieval`) | `test_arc_retrieval.py`, `test_arc_fencing.py` | M1.1.1–.9, .12 `[x]`; M1.1.10, M1.1.11 `[x]` (reviewed 2026-10-08); M1.1.13 `[?]`; M1.1.14 `[ ]` |
+| 5.2.2 | Web search / crawl / PDF via ARC (opt-in) | M1.1.1–M1.1.14 | `POST /api/projects/{id}/research-runs` (`use_web_retrieval`) | `test_arc_retrieval.py`, `test_arc_fencing.py` | M1.1.1–.9, .12, .14 `[x]`; M1.1.10, M1.1.11 `[x]` (reviewed 2026-10-08); M1.1.13 `[?]` |
 | 5.2.2 | De-dup by DOI → title+year+first author | M0.2.2, M1.6.1–M1.6.3 | `POST .../sources` (DOI normalised) | `test_doi.py`, `test_dedupe.py`, `test_merge.py`, `test_source_merge.py` | M0.2.2 and M1.6.1–.4 `[x]` |
 | 5.2.3 | Snowballing N rounds | M1.9.1–M1.9.2 | `POST/GET /api/projects/{id}/snowball` (G2-gated task `snowball_run`); `found_via` on sources + screening queue; PRISMA `other_methods.citation_searching` | `test_snowball.py` | `[?]` |
 | 5.2.4 | Saved-query alerts | M1.12 | `POST …/searches/{id}/alerts` (subscribe, 1 h–30 d interval), `GET …/alerts` (last-run state + new results), `POST …/alerts/{id}/run` (immediate), `DELETE …/alerts/{id}`; G2-gated task `query_alert`, worker sweep per due slot | `test_query_alerts.py` | M1.12 `[x]` (built + closed at user request 2026-10-10; v1: no email/calendar, results not saved as sources) |
@@ -151,7 +151,7 @@
 |---|---|---|---|---|---|
 | §3.2 | Orchestrator: durable queue, pause, retry, re-entry | M0.2.1, M0.6.1–M0.6.5, M0.6.8–M0.6.10, X.1.1 | worker | `test_task_queue.py`, `test_task_queue_postgres.py` (real PostgreSQL: double claim, backoff, lease expiry) | M0.6.1–.11 `[x]` (M0 closed 2026-10-09); X.1.1 `[?]` |
 | §3.2 | Object store for PDFs | M0.10.2, M0.10.3, M0.10.4 | `app/object_storage.py` | `test_object_storage.py` | M0.10.1–.4 `[x]` (M0.10.3 S3 backend, M0.10.4 Windows-safe keys; not verified against a real AWS/MinIO/R2 endpoint) |
-| §3.3 | Citation verifier | M1.10.1–M1.10.6; human verify M0.2.4 | `POST .../sources/{id}/verify`, `POST .../sources/{id}/check` | `test_source_verify.py`, `test_citation_verifier.py`, `test_source_verification.py`, `test_citation_guard.py` | M0.2.4, M1.10.1–.2 `[x]`; M1.10.3–.5 `[?]` |
+| §3.3 | Citation verifier | M1.10.1–M1.10.6; human verify M0.2.4 | `POST .../sources/{id}/verify`, `POST .../sources/{id}/check` | `test_source_verify.py`, `test_citation_verifier.py`, `test_source_verification.py`, `test_citation_guard.py` | M0.2.4, M1.10.1–.6 `[x]` |
 | §3.3 | Provenance logger (append-only) | M0.4.1–M0.4.5 | `GET .../audit`, `.../audit/export` | `test_audit_event_model.py`, `test_audit_wiring.py`, `test_audit_append_only.py`, `test_audit_api.py`, `test_created_by.py` | `[x]` (human sign-off X.30 "Audit log" area **approved 2026-10-09**) |
 | §3.3 | Config service (discipline profile) | M0.7.1–M0.7.3 | project `discipline` / `config_json` | `test_discipline.py` | `[x]` (M0.7.3 reviewed 2026-10-09; 6 shipped profiles per Q3) |
 | §3.3 | Cost / rate limiter | M0.9.1–M0.9.3 | `GET .../usage`, `PUT .../usage/budget` | `test_llm_usage.py`, `test_retrieval_run_cap.py`, `test_project_token_budget_override.py` | `[x]` |
@@ -160,7 +160,7 @@
 | §6 | **ORCID/ROR author disambiguation** | X.18 *(new)* | — | — | `[ ]` |
 | §7.1 | Retrieval-grounded; untrusted-text fencing | M1.2.1–M1.2.5, M3.3.1 | `untrusted_text.py`, `note_guard.py` | `test_untrusted_text.py`, `test_prompt_fencing.py`, `test_arc_fencing.py`, `test_adversarial.py` | M1.2.1–.5 `[x]`; M3.3.1 `[ ]` |
 | §7.2 | JSON-schema outputs, reject + retry | M0.8.2, M0.8.6 | — | `test_llm_schema.py`, `test_llm_success_path.py` (fail-loudly paths), `test_structured_run.py` | M0.2.5, M0.8.2 `[x]`; M0.8.6 `[?]` |
-| §7.3 | Citation guard (hard block) | M1.10.3, M1.10.5, M1.13.1, M6.4 | research runs (`research_run.citation_rejected`); source cards: verify / check buttons | `test_citation_guard.py` | M1.10.5, M1.13.1 `[x]`; M1.10.3–.4 `[?]` (defect fixed in M1.10.6 `[?]`, awaiting review); human sign-off X.30 `[!]`; claims/export wait for M3.11/M6.4 |
+| §7.3 | Citation guard (hard block) | M1.10.3, M1.10.5, M1.13.1, M6.4 | research runs (`research_run.citation_rejected`); source cards: verify / check buttons | `test_citation_guard.py` | M1.10.3–.5, M1.10.6, M1.13.1 `[x]`; human sign-off X.30 `[!]`; claims/export wait for M3.11/M6.4 |
 | §7.4 | Numbers from code | M6.3 | — | — | `[ ]` |
 | §7.5 | Confidence + abstention | M0.8.3, M0.8.6, M0.8.7 | `app/output_schemas.py` | `test_output_schemas.py`, `test_structured_run.py` | M0.8.3, M0.8.6, M0.8.7 `[?]` (M0.8.7 fixes a blank-answer defect found in review 2026-10-08) |
 | §7.6 | Versioned prompts; log `prompt_version` + `model_id` | M0.8.1, M0.2.3 | `GET .../research-runs` (`provider_model`, `input_snapshot`) | `test_run_read_fields.py`, `test_prompts.py`, `test_prompt_provenance.py` | M0.2.3, M0.8.1 `[x]` |
@@ -223,7 +223,7 @@
 | # | Criterion | Tasks | Status |
 |---|---|---|---|
 | 13.1 | Idea → verified evidence table + ranked gaps, full search log, PRISMA | M3.13.1, X.16 | `[ ]` |
-| 13.2 | Every citation resolves; unverifiable can't be exported | M1.10.3, M6.4 | `[ ]` (research-run answers already blocked, M1.10.3 `[?]`; export not built) |
+| 13.2 | Every citation resolves; unverifiable can't be exported | M1.10.3, M6.4 | `[ ]` (research-run answers are blocked and audited; export not built) |
 | 13.3 | Every number traceable to an analysis run | M6.3, M5.3 | `[ ]` |
 | 13.4 | Every AI artifact shows who/what/when/model + approval | M0.4, M0.8.1, **X.17**, X.38 | `[x]` data (M0.4, M0.8.1 closed), `[?]` UI (X.17 badge, awaiting review); research answers still have no approval step (X.38, open) |
 | 13.5 | Re-enter any stage; downstream flagged stale | M0.5.5 | `[x]` (owner-only; human-confirmed 2026-10-09 via X.30; `test_reentry.py`) |
@@ -236,7 +236,7 @@
 
 | # | Check | Delivered by | Today |
 |---|---|---|---|
-| N1 | Every citation clicks through to a verified source; unverifiable is **blocked**, not warned | M1.10.3, M1.13, M3.5.1, M6.4 | Partly built: a research-run answer citing an unverified source is blocked and audited (M1.10.3 `[?]`); the `evidence_synthesis.v3` prompt only allows verified sources (M1.10.5 `[?]`); source cards show verification status with check buttons (M1.13.1 `[?]`). Export and claims are not built, so "blocked at export" is untested. |
+| N1 | Every citation clicks through to a verified source; unverifiable is **blocked**, not warned | M1.10.3, M1.13, M3.5.1, M6.4 | Partly built: research-run answers citing unverified or unknown sources are blocked and audited (M1.10.3 `[x]`); the `evidence_synthesis.v3` prompt only allows verified sources (M1.10.5 `[x]`); source cards show verification status with check buttons (M1.13.1 `[x]`). Export and claims are not built, so "blocked at export" is untested. |
 | N2 | Every AI output shows producer, model, date, approval status | M0.4, M0.8.1, X.17 | Data recorded (`created_by`, `provider_model`, `prompt_version` via M0.8.1, audit events); the Activity step shows the audit trail; X.17 (`[?]`) adds a per-output badge (producer, requester, model, prompt, date, approval/stale) on research runs and agent-retrieved sources. Research answers can't be approved yet (X.38). |
 | N3 | The 11 gates block the next step until approved | M0.5.2–M0.5.4 + per-gate tasks in §8 table | Built for the gate mechanism (M0.5.2–.4 `[x]`: human-only approval, blocked tasks, stage advance needs the gate); only G2 and G3 have stage features behind them so far. Stage-by-stage gate tasks (§8) remain open. |
 | N4 | Changing an earlier stage marks downstream work stale | M0.5.5 | Built and human-confirmed (M0.5.5 `[x]`: owner-only re-entry, stale artifacts, gates reset; owner-only design choice confirmed by the user 2026-10-09 via X.30). |
