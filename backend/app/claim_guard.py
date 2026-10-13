@@ -39,7 +39,7 @@ WHEN NEW.claim_id != OLD.claim_id
 BEGIN SELECT RAISE(ABORT, 'verified claim requires evidence'); END
 """
 POSTGRES_FUNCTION = """
-CREATE FUNCTION claim_evidence_guard() RETURNS trigger AS $$
+CREATE OR REPLACE FUNCTION claim_evidence_guard() RETURNS trigger AS $$
 BEGIN
     IF TG_TABLE_NAME = 'claims' THEN
         IF NEW.verified AND (TG_OP = 'INSERT' OR NOT EXISTS (

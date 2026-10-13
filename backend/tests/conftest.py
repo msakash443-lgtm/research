@@ -19,12 +19,36 @@ from app.database import Base, engine
 from tests.llm_replies import chat_reply
 
 
+_PRISTINE = {}
+
+
+def _pristine_snapshot():
+    """Schema (tables + triggers) built once; restoring it per test is far cheaper than drop/create."""
+    import sqlite3
+
+    if "db" not in _PRISTINE:
+        Base.metadata.drop_all(bind=engine)
+        Base.metadata.create_all(bind=engine)
+        live = engine.raw_connection()
+        try:
+            snapshot = sqlite3.connect(":memory:", check_same_thread=False)
+            live.driver_connection.backup(snapshot)
+        finally:
+            live.close()
+        _PRISTINE["db"] = snapshot
+    return _PRISTINE["db"]
+
+
 @pytest.fixture(autouse=True)
 def isolated_database():
-    Base.metadata.drop_all(bind=engine)
-    Base.metadata.create_all(bind=engine)
+    snapshot = _pristine_snapshot()
+    live = engine.raw_connection()
+    try:
+        live.rollback()
+        snapshot.backup(live.driver_connection)
+    finally:
+        live.close()
     yield
-    Base.metadata.drop_all(bind=engine)
 
 
 class FakeLLMEndpoint:

@@ -14,3 +14,6 @@ venv/
 
 # Local object storage (M0.10.2)
 /data/
+
+# Scratch pytest dirs (M3 work)
+.pytest-m3-*/
