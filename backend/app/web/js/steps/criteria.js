@@ -1,4 +1,6 @@
 import { $, el, label, toast, emptyCard, confirmAction, saveOnce } from "../dom.js";
+import { gateCard } from "./common.js";
+import { renderFrame } from "./frame.js";
 import { request, projectApi } from "../api.js";
 import { FRAMEWORK_ELEMENTS } from "../workflow.js";
 
@@ -204,7 +206,11 @@ function render(root, ctx) {
   }
   sections.push(seedsPanel);
 
-  root.replaceChildren(...sections);
+  const gatePanel = el("div", { className: "panel" });
+  gatePanel.append(el("h2", { text: "Approval" }), gateCard(ctx, "G2"));
+  sections.push(gatePanel);
+
+  renderFrame(root, ctx, { stepId: "criteria", work: sections, next: ["search_planned"] });
 }
 
 export default { render };

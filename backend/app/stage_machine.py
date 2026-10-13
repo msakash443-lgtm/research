@@ -20,7 +20,9 @@ from dataclasses import dataclass
 from sqlalchemy.orm import Session
 
 from app import audit
-from app.artifacts import STAGE_ORDER, StageError, gate_for_stage, unreplaced_stale
+from app.artifacts import StageError, gate_for_stage, unreplaced_stale
+from app import stage_order
+from app import exit_conditions as ec
 from app.gates import ensure_gates, required_roles
 from app.models import Artifact, GateCode, GateStatus, Project, ProjectRole, ProjectStage
 
@@ -69,7 +71,7 @@ def allowed_next(stage: ProjectStage) -> list[ProjectStage]:
         return [ProjectStage.revision_loop, ProjectStage.accepted]
     if stage == ProjectStage.revision_loop:
         return [ProjectStage.accepted]  # to resubmit, go back with a re-entry and move forward again
-    return [STAGE_ORDER[STAGE_ORDER.index(stage) + 1]]
+    return stage_order.next_stages(None, stage)
 
 
 def next_options(db: Session, project: Project) -> list[StageOption]:
@@ -83,7 +85,25 @@ def next_options(db: Session, project: Project) -> list[StageOption]:
     return options
 
 
-def advance_stage(db: Session, project: Project, target: ProjectStage | None = None, *, actor: str) -> Advance:
+class ConditionsUnmet(StageError):
+    """The target stage's exit conditions are unmet: Required ones always, Recommended ones until overridden."""
+
+    def __init__(self, target: ProjectStage, required: list[ec.Condition], recommended: list[ec.Condition]):
+        self.target = target
+        self.required = required
+        self.recommended = recommended
+        super().__init__(
+            f"'{target.value}' is locked by exit conditions: " + ", ".join(c.id for c in required + recommended)
+        )
+
+
+class ConditionOverrideInvalid(ValueError):
+    """override_reasons name a condition that is not an unmet Recommended condition of this move."""
+
+
+def advance_stage(
+    db: Session, project: Project, target: ProjectStage | None = None, *, actor: str, override_reasons: dict[str, str] | None = None
+) -> Advance:
     """Move the project one stage forward. The caller commits."""
     current = project.stage
     choices = allowed_next(current)
@@ -109,6 +129,23 @@ def advance_stage(db: Session, project: Project, target: ProjectStage | None = N
         if gate.status != GateStatus.approved:
             raise GateNotApproved(target, code, gate.status, required_roles(code))
         decided_by = gate.decided_by
+    conditions = ec.conditions(db, project, target)
+    required_unmet = [c for c in conditions if c.level is ec.Level.required and not c.met]
+    if required_unmet:
+        raise ConditionsUnmet(target, required_unmet, [])
+    recommended_unmet = [c for c in conditions if c.level is ec.Level.recommended and not c.met]
+    reasons = override_reasons or {}
+    unknown = sorted(set(reasons) - {c.id for c in recommended_unmet})
+    if unknown:
+        raise ConditionOverrideInvalid("override_reasons name no unmet Recommended condition: " + ", ".join(unknown))
+    unanswered = [c for c in recommended_unmet if c.id not in reasons]
+    if unanswered:
+        raise ConditionsUnmet(target, [], unanswered)
+    for c in recommended_unmet:
+        audit.record(
+            db, actor=actor, action="stage.condition_overridden", project_id=project.id,
+            payload={"condition": c.id, "from": current.value, "to": target.value, "reason": reasons[c.id]},
+        )
 
     project.stage = target
     project.touch()

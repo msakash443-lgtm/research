@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app import audit
 from app.models import Gate, GateCode, GateStatus, Project, ProjectRole, ProjectStage, Task, TaskStatus
+from app.stage_order import gate_order
 from app.task_registry import REQUIRED_GATES
 
 OWNER_OR_SUPERVISOR = frozenset({ProjectRole.owner, ProjectRole.supervisor})
@@ -67,7 +68,6 @@ def gate_is_approved(db: Session, project_id, code: GateCode) -> bool:
 
 # ---- ordering and reopening (M0.5.10, Decisions log 2026-10-07) ------------------------------------
 
-GATE_ORDER: list[GateCode] = list(GateCode)
 
 
 def pending_earlier_gates(gates: list[Gate], code: GateCode) -> list[GateCode]:
@@ -164,3 +164,5 @@ GATE_STAGES: dict[GateCode, ProjectStage] = {
     GateCode.G10: ProjectStage.drafted,
     GateCode.G11: ProjectStage.submission_ready,
 }
+
+GATE_ORDER: list[GateCode] = gate_order(GATE_STAGES)

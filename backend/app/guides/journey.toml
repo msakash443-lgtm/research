@@ -1,0 +1,442 @@
+# The research-path guide (X.55): what each stage, gate and exit condition means, advice-only review types and
+# synthesis methods. Data only; loaded and checked by app/guidance.py, served by GET /api/guide. Nothing here
+# decides anything: suggestions come from the real exit conditions (app/exit_conditions.py).
+version = 1
+
+# ---------- Stages: what reaching the stage means, what is advisable, which screen does the work (omit = no screen yet)
+[stages.idea]
+title = "Idea"
+meaning = "You have a topic or a hunch, not yet a question that can be answered from evidence."
+advice = "Write one focused research question and 1-3 objectives. Note the population, the phenomenon or intervention, and the outcome you care about. A narrow, answerable question saves weeks later."
+step = "scope"
+
+[stages.scoped]
+title = "Scoped"
+meaning = "Your supervisor or you (as owner) agreed the topic direction (gate G1). The question is now the reference point for every later decision."
+advice = "Before searching, decide what counts as evidence: inclusion and exclusion criteria (PICO, PICOC or SPIDER) and a few seed papers you already know are relevant."
+step = "scope"
+
+[stages.search_planned]
+title = "Search planned"
+meaning = "Your search strategy and criteria are approved (gate G2) and locked, so the search is reproducible."
+advice = "Search several databases, not one. Record every search string. Check that your seed papers are found; if they are not, the search needs revising before you screen."
+step = "criteria"
+
+[stages.retrieved]
+title = "Records retrieved"
+meaning = "Searches have run and the records are stored with their counts, which feed the PRISMA flow diagram."
+advice = "Remove duplicates and verify metadata of auto-retrieved records before screening. Do not judge relevance yet; that is screening."
+step = "search"
+
+[stages.screened]
+title = "Screened"
+meaning = "Every record has an include/exclude decision with a reason, and the included set is approved (gate G3)."
+advice = "Screen titles/abstracts first, then full texts. Give a reason for every exclusion. Ideally a second person screens a sample; resolve disagreements before approving."
+
+[stages.extracted]
+title = "Data extracted"
+meaning = "Key information (design, sample, measures, findings, effect sizes) is taken from each included study, each value backed by a quote, and critical fields are verified (gate G4)."
+advice = "Use one extraction form for all studies. Verify high-stakes fields such as effect sizes and sample sizes against the paper yourself. Assess risk of bias / study quality here."
+
+[stages.synthesized]
+title = "Synthesised"
+meaning = "The evidence has been combined into findings: by meta-analysis, narrative synthesis, thematic synthesis or descriptive mapping."
+advice = "Choose the synthesis method that fits your data (see 'Is meta-analysis right for you?' on Research path). Every claim should point to the studies that support it."
+step = "ask"
+
+[stages.gaps_selected]
+title = "Gaps selected"
+meaning = "You have chosen and justified which gaps in the literature your work will address (gate G5)."
+advice = "A gap should be supported by at least two studies or by an empty cell in your evidence matrix, not by an impression. Prefer gaps that matter to the field over gaps that are merely untested."
+
+[stages.framework]
+title = "Framework"
+meaning = "Research questions, hypotheses and the conceptual model are approved (gate G6)."
+advice = "Ground each hypothesis in theory and in the reviewed evidence. Define every construct and how it will be measured."
+
+[stages.design_approved]
+title = "Design approved"
+meaning = "Study design, instruments and ethics are approved by the owner (gate G7)."
+advice = "Obtain ethics approval before collecting any data from people. A pure literature review still confirms 'no human participants' here."
+
+[stages.data_collected]
+title = "Data collected"
+meaning = "Primary data for your own study has been gathered according to the approved design."
+advice = "Keep a log of deviations from the design. Store participant data only where your institution allows."
+
+[stages.plan_locked]
+title = "Analysis plan locked"
+meaning = "The analysis plan is fixed before you look at results (gate G8, owner only)."
+advice = "Pre-specify tests, models, subgroups and how missing data is handled. Locking first protects you from accusations of fishing for results. For a meta-analysis, fix the effect measure and model here."
+
+[stages.analyzed]
+title = "Analysed"
+meaning = "The planned analysis has been run and its interpretation approved (gate G9)."
+advice = "Report every planned analysis, including null results. Label any unplanned analysis as exploratory."
+
+[stages.drafted]
+title = "Drafted"
+meaning = "Manuscript sections are written and each section's text and AI-use level is approved (gate G10)."
+advice = "Follow your reporting guideline (for example PRISMA 2020 for systematic reviews) section by section."
+
+[stages.revised]
+title = "Revised"
+meaning = "The draft has been revised after internal feedback."
+advice = "Check every citation still supports the sentence it is attached to."
+
+[stages.submission_ready]
+title = "Ready to submit"
+meaning = "Final author sign-off and declarations are done (gate G11, owner only)."
+advice = "Complete the AI-use disclosure, author contributions, conflicts of interest and data availability statements."
+
+[stages.submitted]
+title = "Submitted"
+meaning = "The manuscript is with a journal."
+advice = "Keep the replication package and search log ready for reviewers' questions."
+
+[stages.revision_loop]
+title = "Revise and resubmit"
+meaning = "Reviewers asked for changes."
+advice = "Answer every reviewer point in a response letter. If a change reopens earlier work (for example a new search), go back to that stage rather than patching the text."
+
+[stages.accepted]
+title = "Accepted"
+meaning = "The work is accepted for publication."
+advice = "Share the preprint and data/code where allowed, and register outputs with your ORCID."
+
+# ---------- Gates
+[gates.G1]
+title = "Scope"
+meaning = "A person confirms the topic direction is worth pursuing."
+advice = "Approve when the question is specific enough that you could say whether a given paper is relevant."
+
+[gates.G2]
+title = "Search plan"
+meaning = "A person approves the search strategy and screening criteria before the bulk search runs."
+advice = "Approve when criteria are complete and the search finds your seed papers in a test run."
+
+[gates.G3]
+title = "Screening"
+meaning = "A person approves the final included set and the audit of any AI-assisted exclusions."
+advice = "Approve only when every record has a decision, conflicts are resolved and PRISMA numbers add up."
+
+[gates.G4]
+title = "Extraction"
+meaning = "A person confirms the critical extracted values are correct."
+advice = "Spot-check against the full text; fully verify effect sizes, sample sizes and measures."
+
+[gates.G5]
+title = "Gap selection"
+meaning = "A person selects and justifies the gaps the work will address."
+advice = "Each chosen gap should cite the evidence that shows it is a gap."
+
+[gates.G6]
+title = "Framework"
+meaning = "A person approves the research questions, hypotheses and model."
+advice = "Check each hypothesis follows from theory and the reviewed evidence."
+
+[gates.G7]
+title = "Design"
+meaning = "The owner approves the design, instruments and ethics."
+advice = "Do not collect data from people before this is approved."
+
+[gates.G8]
+title = "Analysis plan"
+meaning = "The owner locks the analysis plan before results are seen."
+advice = "Lock it before opening the data, so the analysis is confirmatory."
+
+[gates.G9]
+title = "Results"
+meaning = "A person approves the interpretation of the results."
+advice = "Check conclusions do not go further than the analysis supports."
+
+[gates.G10]
+title = "Draft"
+meaning = "A person approves a manuscript section and its AI-use level."
+advice = "Read every sentence as the accountable author."
+
+[gates.G11]
+title = "Final sign-off"
+meaning = "The owner signs off the submission and declarations."
+advice = "Only the accountable author can sign off; nothing is submitted without it."
+
+# ---------- Exit conditions (ids = app/exit_conditions.py). built = false for rows that return "not built yet".
+[conditions."EC-0.2"]
+meaning = "An earlier stage was redone, so results built on the old version are out of date and must be redone first."
+step = "approvals"
+[conditions."EC-0.3"]
+meaning = "Approvals happen in order; an earlier gate must be approved before a later one counts."
+step = "approvals"
+[conditions."EC-0.4"]
+meaning = "The target stage must be part of this project's workflow."
+
+[conditions."EC-1.1"]
+meaning = "A supervisor or the owner must agree the topic direction before the project moves on."
+step = "scope"
+[conditions."EC-1.2"]
+meaning = "A written question or objective is what the search, screening and synthesis are judged against."
+step = "scope"
+[conditions."EC-1.3"]
+meaning = "Quick ideas you captured are not used by the agent until you promote them to a question, objective or decision."
+step = "scope"
+
+[conditions."EC-2.1"]
+meaning = "The search plan and criteria need a person's approval before the bulk search runs."
+step = "search"
+[conditions."EC-2.2"]
+meaning = "Complete criteria make screening consistent and defensible to examiners and reviewers."
+step = "criteria"
+[conditions."EC-2.3"]
+meaning = "Seed papers you already know let the app test whether your search actually finds relevant work."
+step = "criteria"
+
+[conditions."EC-3.1"]
+meaning = "Without a run search there are no records to screen and no PRISMA counts."
+step = "search"
+[conditions."EC-3.2"]
+meaning = "A seed paper the search missed is a sign the search strategy needs more terms or databases."
+step = "results"
+[conditions."EC-3.3"]
+meaning = "Automatically retrieved records can have wrong metadata; only verified sources may be cited."
+step = "sources"
+
+[conditions."EC-4.1"]
+meaning = "The included set needs a person's approval before extraction starts."
+step = "approvals"
+[conditions."EC-4.2"]
+meaning = "When two people screen, their disagreements must be resolved before the set is final."
+[conditions."EC-4.3"]
+meaning = "Every record needs a title/abstract decision so nothing relevant is silently dropped."
+[conditions."EC-4.4"]
+meaning = "Records that passed the first screen need a full-text decision before they count as included."
+[conditions."EC-4.5"]
+meaning = "A sample of the AI's automatic exclusions must be checked by a person to show the AI did not drop relevant studies."
+[conditions."EC-4.6"]
+meaning = "A reason for every exclusion is required for the PRISMA diagram and for examiners."
+[conditions."EC-4.7"]
+meaning = "PRISMA numbers computed from your decisions are what you report in the methods section."
+step = "results"
+
+[conditions."EC-5.1"]
+meaning = "Critical extracted values need a person's verification before synthesis."
+step = "approvals"
+[conditions."EC-5.2"]
+meaning = "Each extracted value must be backed by a quote that exists word for word in the paper."
+built = false
+[conditions."EC-5.3"]
+meaning = "Effect sizes, sample sizes and measures must be checked side by side with the paper."
+built = false
+[conditions."EC-5.4"]
+meaning = "Every included study needs an extraction, or the synthesis is built on part of the evidence."
+[conditions."EC-5.5"]
+meaning = "AI-assisted extraction with evidence quotes."
+built = false
+
+[conditions."EC-6.1"]
+meaning = "You need at least one synthesis result (an answered research question or a set of themes) to build on."
+step = "ask"
+[conditions."EC-6.2"]
+meaning = "Claims linked to the evidence that supports them."
+built = false
+[conditions."EC-6.3"]
+meaning = "Each cited sentence carries a verified quote from its source."
+built = false
+[conditions."EC-6.4"]
+meaning = "AI suggestions are accepted or discarded by a person."
+built = false
+
+[conditions."EC-7.1"]
+meaning = "A person must select and justify the gaps the work will address."
+step = "approvals"
+[conditions."EC-7.2"]
+meaning = "Gaps backed by at least two studies or matrix cells."
+built = false
+[conditions."EC-8.1"]
+meaning = "A person must approve the research questions, hypotheses and model."
+step = "approvals"
+[conditions."EC-8.2"]
+meaning = "Research questions and hypotheses linked to the selected gaps."
+built = false
+[conditions."EC-9.1"]
+meaning = "The owner must approve the design and ethics before data collection."
+step = "approvals"
+[conditions."EC-10.1"]
+meaning = "Data collection tracking."
+built = false
+[conditions."EC-11.1"]
+meaning = "The owner must lock the analysis plan before results are seen."
+step = "approvals"
+[conditions."EC-11.2"]
+meaning = "A written analysis plan."
+built = false
+[conditions."EC-12.1"]
+meaning = "A person must approve the interpretation of the results."
+step = "approvals"
+[conditions."EC-12.2"]
+meaning = "Analysis outputs computed in code."
+built = false
+[conditions."EC-13.1"]
+meaning = "Each manuscript section needs a person's approval."
+step = "approvals"
+[conditions."EC-13.2"]
+meaning = "Manuscript section drafting."
+built = false
+[conditions."EC-13.3"]
+meaning = "Citation checks on the draft."
+built = false
+[conditions."EC-14.1"]
+meaning = "Revision tracking."
+built = false
+[conditions."EC-15.1"]
+meaning = "The owner must sign off the final submission."
+step = "approvals"
+[conditions."EC-15.2"]
+meaning = "Final citation and declaration checks."
+built = false
+[conditions."EC-16.1"]
+meaning = "Submission tracking."
+built = false
+[conditions."EC-17.1"]
+meaning = "After submission there is nothing to check; going back to an earlier stage is how you redo work."
+
+# ---------- Review types (advice only; nothing is saved)
+[[paths]]
+id = "systematic_review_meta_analysis"
+title = "Systematic review with meta-analysis"
+summary = "A reproducible search and screening of all relevant studies, then statistical pooling of their effect sizes into one estimate."
+choose_when = ["Your question asks whether something works or how strongly two things are related", "Several studies measure the same outcome in a comparable way", "Studies report effect sizes or the numbers needed to compute them"]
+you_need = ["A protocol written before searching", "Two or more databases and a recorded search", "Effect sizes with sample sizes from each study", "An analysis plan locked before pooling"]
+synthesis = "meta_analysis"
+reporting_guideline = "PRISMA-2020"
+in_this_app = "Search, screening and PRISMA counts are supported. Extraction screens and pooling are not built yet, so the meta-analysis itself has to be done outside the app for now."
+
+[[paths]]
+id = "systematic_review_narrative"
+title = "Systematic review with narrative synthesis"
+summary = "The same reproducible search and screening, but studies are combined in structured text and tables because they are too different to pool."
+choose_when = ["Your question is about effects or relationships", "Studies differ too much in design, measures or populations to pool", "Effect sizes are missing in many studies"]
+you_need = ["A protocol and a recorded search", "A grouping plan (by design, population or outcome)", "A consistent way to summarise direction of effect"]
+synthesis = "narrative_swim"
+reporting_guideline = "PRISMA-2020"
+in_this_app = "Search, screening, PRISMA and the Ask step are supported; structured synthesis tables are not built yet."
+
+[[paths]]
+id = "scoping_review"
+title = "Scoping review"
+summary = "Maps what research exists on a broad topic: which methods, populations and contexts have been studied, and where nothing has."
+choose_when = ["The topic is broad or new and you don't yet know what evidence exists", "You want to find gaps rather than estimate an effect", "You are preparing for a later systematic review"]
+you_need = ["A recorded search", "A charting form for study characteristics"]
+synthesis = "descriptive_mapping"
+reporting_guideline = "PRISMA-ScR"
+in_this_app = "Search, screening and PRISMA are supported. The coverage matrix and publication trends exist in the API only."
+
+[[paths]]
+id = "qualitative_evidence_synthesis"
+title = "Qualitative evidence synthesis"
+summary = "Brings together findings from qualitative studies (interviews, focus groups, ethnographies) to understand experiences, meanings or views."
+choose_when = ["Your question is about how or why, experiences or perceptions", "Most relevant studies are qualitative"]
+you_need = ["A recorded search", "A quality appraisal tool for qualitative studies", "A coding approach for findings"]
+synthesis = "thematic_synthesis"
+reporting_guideline = "ENTREQ"
+in_this_app = "Search and screening are supported. Thematic clustering exists in the API only and is off by default."
+
+[[paths]]
+id = "narrative_review"
+title = "Narrative literature review"
+summary = "An expert, argued overview of a field. It is not designed to be exhaustive or reproducible."
+choose_when = ["You need background or a conceptual argument (for example a thesis literature chapter)", "Reproducibility is not required by your examiner or journal"]
+you_need = ["A clear argument and structure", "Honest statement of how sources were found"]
+synthesis = "narrative_swim"
+in_this_app = "Sources, verification and the Ask step are supported; you can skip the formal search approval if your supervisor agrees."
+
+[[questions]]
+id = "aim"
+text = "What is your question trying to do?"
+[[questions.answers]]
+label = "Find out whether something works, or how strongly two things are related"
+points_to = ["systematic_review_meta_analysis", "systematic_review_narrative"]
+[[questions.answers]]
+label = "Map what research exists on a broad topic"
+points_to = ["scoping_review"]
+[[questions.answers]]
+label = "Understand experiences, meanings or views"
+points_to = ["qualitative_evidence_synthesis"]
+[[questions.answers]]
+label = "Give an expert overview or build an argument"
+points_to = ["narrative_review"]
+
+[[questions]]
+id = "numbers"
+text = "Will the studies you expect report numbers you could compare (means, correlations, odds ratios)?"
+[[questions.answers]]
+label = "Yes, mostly the same outcome measured in a similar way"
+points_to = ["systematic_review_meta_analysis"]
+[[questions.answers]]
+label = "Yes, but outcomes and designs vary a lot"
+points_to = ["systematic_review_narrative"]
+[[questions.answers]]
+label = "No, the studies are mostly qualitative"
+points_to = ["qualitative_evidence_synthesis"]
+[[questions.answers]]
+label = "I don't know yet"
+points_to = ["scoping_review", "systematic_review_narrative"]
+
+[[questions]]
+id = "reproducible"
+text = "Does your examiner or journal expect a documented search that someone else could repeat?"
+[[questions.answers]]
+label = "Yes"
+points_to = ["systematic_review_meta_analysis", "systematic_review_narrative", "scoping_review", "qualitative_evidence_synthesis"]
+[[questions.answers]]
+label = "No"
+points_to = ["narrative_review"]
+
+[[questions]]
+id = "volume"
+text = "Roughly how many comparable studies do you expect?"
+[[questions.answers]]
+label = "Fewer than two"
+points_to = ["systematic_review_narrative", "narrative_review"]
+[[questions.answers]]
+label = "Several that answer the same question"
+points_to = ["systematic_review_meta_analysis"]
+[[questions.answers]]
+label = "A large, varied body of work"
+points_to = ["scoping_review", "systematic_review_narrative"]
+
+# ---------- Synthesis methods
+[[synthesis_methods]]
+id = "meta_analysis"
+title = "Meta-analysis"
+what = "Statistically combines effect sizes from comparable studies into a pooled estimate with a confidence interval, and measures how much the studies disagree (heterogeneity, for example I²)."
+advisable_when = ["At least two studies (in practice usually more) answer the same question with similar populations, interventions or exposures, and outcomes", "Each study reports an effect size, or the numbers needed to compute one (means and SDs, counts, correlations), with sample sizes", "Study designs are similar enough to combine; randomised and observational studies are not pooled together without a stated reason", "The effect measure, model (fixed or random effects) and subgroups were planned before seeing results"]
+not_advisable_when = ["Outcomes are measured in incompatible ways or the constructs differ", "Too few studies, or most do not report usable numbers", "Heterogeneity is very high and you cannot explain it", "The evidence is mostly qualitative", "Most studies are at high risk of bias, which a pooled number would hide"]
+available = false
+in_this_app = "Not built yet. Effect-size extraction and verification come first; pooling will be computed in code, never by the AI (planned task M3.16). Until then, run it in dedicated statistics software and report it with PRISMA 2020."
+
+[[synthesis_methods]]
+id = "narrative_swim"
+title = "Narrative synthesis (Synthesis Without Meta-analysis, SWiM)"
+what = "Groups studies (by design, population or outcome) and summarises them in structured text and tables, including the direction of each effect."
+advisable_when = ["Studies are too different to pool", "Effect sizes are reported inconsistently", "You still want a structured, transparent comparison"]
+not_advisable_when = ["A meta-analysis is feasible and appropriate; narrative alone wastes the numeric data", "You count 'significant' versus 'not significant' studies; summarise direction of effect instead"]
+available = true
+in_this_app = "The Ask step answers questions from your verified sources, with citations. Structured SWiM tables are not built yet."
+
+[[synthesis_methods]]
+id = "thematic_synthesis"
+title = "Thematic synthesis"
+what = "Codes the findings of qualitative studies line by line, then builds descriptive and analytical themes across studies."
+advisable_when = ["Most included studies are qualitative", "Your question is about experiences, views or processes"]
+not_advisable_when = ["You need an estimate of how large an effect is"]
+available = false
+in_this_app = "Thematic clustering exists in the API only and is off by default; no screen yet."
+
+[[synthesis_methods]]
+id = "descriptive_mapping"
+title = "Descriptive mapping"
+what = "Charts the characteristics of the studies found (methods, populations, contexts, years) to show where evidence is dense and where it is missing."
+advisable_when = ["Scoping reviews", "Finding research gaps before choosing a focused question"]
+not_advisable_when = ["You need to say whether something works"]
+available = false
+in_this_app = "The coverage matrix and publication-year trends exist in the API only; no screen yet."

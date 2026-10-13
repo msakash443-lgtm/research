@@ -32,6 +32,7 @@ from app.connectors.base import (
     SearchRequest,
 )
 from app.connectors.http import ConnectorHttpClient, HttpPolicy, NotFoundError
+from app.connectors.unpaywall import OaLocation
 from app.doi import normalize_doi
 
 BASE_URL = "https://api.openalex.org"
@@ -145,6 +146,25 @@ def to_record(work: dict[str, Any]) -> PaperRecord | None:
     )
 
 
+def to_oa_location(work: dict[str, Any], doi: str) -> OaLocation | None:
+    """The best open-access copy OpenAlex reports for a work (`best_oa_location`); None when it has none."""
+    best = work.get("best_oa_location")
+    if not isinstance(best, dict):
+        return None
+    landing, pdf = _http(best.get("landing_page_url")), _http(best.get("pdf_url"))
+    if not (landing or pdf):
+        return None
+    source = best.get("source")
+    return OaLocation(
+        doi=doi,
+        landing_page_url=landing,
+        pdf_url=pdf,
+        license=_str(best.get("license"), 100),
+        version=_str(best.get("version"), 50),
+        host_type=_str(source.get("host_type"), 50) if isinstance(source, dict) else None,
+    )
+
+
 class OpenAlexConnector(ConnectorBase):
     name = NAME
 
@@ -240,9 +260,7 @@ class OpenAlexConnector(ConnectorBase):
             raise ConnectorError("OpenAlex returned a work that cannot be represented (no title)")
         return record
 
-    def get_by_doi(self, doi: str) -> PaperRecord | None:
-        """The work with this DOI (`/works/doi:...`), or None when OpenAlex has none. Used to find a start
-        paper for snowballing (M1.9) when only its DOI is known."""
+    def _work_by_doi(self, doi: str) -> dict[str, Any] | None:
         try:
             bare = normalize_doi(doi)
         except ValueError:
@@ -255,10 +273,25 @@ class OpenAlexConnector(ConnectorBase):
             return None
         if not isinstance(work, dict):
             raise ConnectorError("OpenAlex returned an unexpected reply")
+        return work
+
+    def get_by_doi(self, doi: str) -> PaperRecord | None:
+        """The work with this DOI (`/works/doi:...`), or None when OpenAlex has none. Used to find a start
+        paper for snowballing (M1.9) when only its DOI is known."""
+        work = self._work_by_doi(doi)
+        if work is None:
+            return None
         record = to_record(work)
         if record is None:
             raise ConnectorError("OpenAlex returned a work that cannot be represented (no title)")
         return record
+
+    def get_oa_location(self, doi: str) -> OaLocation | None:
+        """The best open-access copy OpenAlex reports for this DOI; None when it has none or no record."""
+        work = self._work_by_doi(doi)
+        if work is None:
+            return None
+        return to_oa_location(work, normalize_doi(doi) or "")
 
     def get_citations(self, external_id: str) -> tuple[PaperRecord, ...]:
         """Works that cite this one (`filter=cites:W...`), newest page first as OpenAlex orders them."""

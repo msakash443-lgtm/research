@@ -171,3 +171,48 @@ def test_other_users_cannot_upload_and_unknown_source_404s():
 
     assert _upload(intruder, project_id, source_id, PDF).status_code == 404
     assert _upload(owner, project_id, uuid.uuid4(), PDF).status_code == 404
+
+
+def test_reading_full_text_before_anything_is_stored_404s():
+    client = _login("read1@example.com")
+    project_id, source_id = _source(client)
+
+    response = client.get(f"/api/projects/{project_id}/sources/{source_id}/fulltext")
+
+    assert response.status_code == 404
+
+
+def test_reading_the_stored_full_text_gives_text_pages_and_sha256():
+    client = _login("read2@example.com")
+    project_id, source_id = _source(client)
+    assert _upload(client, project_id, source_id, PDF).status_code == 201
+
+    response = client.get(f"/api/projects/{project_id}/sources/{source_id}/fulltext")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert "Hello world, this is the body text of the paper." in body["text"]
+    assert len(body["pages"]) == 1 and body["pages"][0]["number"] == 1
+    assert body["sha256"]
+
+
+def test_reading_full_text_is_restricted_to_project_members():
+    owner = _login("read3@example.com")
+    project_id, source_id = _source(owner)
+    assert _upload(owner, project_id, source_id, PDF).status_code == 201
+    outsider = _login("read4@example.com")
+
+    assert outsider.get(f"/api/projects/{project_id}/sources/{source_id}/fulltext").status_code == 404
+    anonymous = TestClient(app)
+    assert anonymous.get(f"/api/projects/{project_id}/sources/{source_id}/fulltext").status_code == 401
+
+
+def test_reading_full_text_for_an_unknown_source_404s():
+    import uuid
+
+    client = _login("read5@example.com")
+    project_id, _ = _source(client)
+
+    response = client.get(f"/api/projects/{project_id}/sources/{uuid.uuid4()}/fulltext")
+
+    assert response.status_code == 404

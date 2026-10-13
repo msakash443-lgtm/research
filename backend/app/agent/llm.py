@@ -120,6 +120,29 @@ class OpenAICompatibleLLM:
             )
         return cls(settings, meter=meter)
 
+    @classmethod
+    def local(cls, settings: Settings, *, meter: Any = None) -> "OpenAICompatibleLLM":
+        """An adapter for the local/self-hosted endpoint only. Fails loudly, never falls back to the third-party model."""
+        if not (settings.local_llm_api_base_url and settings.local_llm_model):
+            raise LLMConfigurationError(
+                "This project is set to use only the local model, but none is configured. Set "
+                "LOCAL_LLM_API_BASE_URL and LOCAL_LLM_MODEL, or change the project's model route."
+            )
+        return cls(
+            settings,
+            api_key=settings.local_llm_api_key,
+            api_base_url=settings.local_llm_api_base_url,
+            model=settings.local_llm_model,
+            timeout_seconds=settings.local_llm_timeout_seconds,
+            require_api_key=False,
+            meter=meter,
+        )
+
+    @property
+    def model(self) -> str:
+        """The model id this adapter will call (recorded with every AI output)."""
+        return self._model
+
     def complete(self, system_prompt: str, user_prompt: str) -> str:
         self.validate_configuration()
 

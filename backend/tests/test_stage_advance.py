@@ -2,6 +2,7 @@
 
 import re
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -13,7 +14,7 @@ from app.artifacts import StageError
 from app.database import SessionLocal
 from app.main import app
 from app.models import (
-    Artifact, ArtifactStatus, AuditEvent, Gate, GateCode, GateStatus, Project, ProjectMember, ProjectRole,
+    Artifact, ArtifactStatus, AuditEvent, Gate, GateCode, GateStatus, Project, ProjectMember, ProjectRole, SearchQuery,
     ProjectStage as S,
 )
 
@@ -53,7 +54,15 @@ def _stage(world):
 
 def _advance(world, stage=None, who="owner"):
     body = {"stage": stage} if stage else {}
-    return world["clients"][who].post(f"/api/projects/{world['project']}/stage/advance", json=body)
+    url = f"/api/projects/{world['project']}/stage/advance"
+    response = world["clients"][who].post(url, json=body)
+    detail = response.json().get("detail") if response.status_code == 409 else None
+    locked = detail.get("recommended") if isinstance(detail, dict) else None
+    if locked:
+        # These tests check gates, re-entry and roles; lock levels are covered in test_stage_condition_overrides.py.
+        body["override_reasons"] = {c["id"]: "Set up by this test; not what it checks." for c in locked}
+        response = world["clients"][who].post(url, json=body)
+    return response
 
 
 def _approve(world, code):
@@ -162,7 +171,8 @@ def test_accepted_is_final(world):
     response = _advance(world)
 
     assert response.status_code == 409 and "final stage" in response.json()["detail"]
-    assert world["clients"]["owner"].get(f"/api/projects/{world['project']}/stage").json() == {"stage": "accepted", "next": []}
+    body = world["clients"]["owner"].get(f"/api/projects/{world['project']}/stage").json()
+    assert body["stage"] == "accepted" and body["next"] == []
 
 
 # ---- interaction with re-entry -----------------------------------------------------------------
@@ -178,6 +188,7 @@ def test_after_re_entry_the_voided_gate_must_be_approved_again_before_moving_on(
 
     blocked = _advance(world)
     assert blocked.status_code == 409 and blocked.json()["detail"]["gate"] == "G2"  # the earlier approval no longer counts
+    _approve(world, "G1")  # reopening 'scoped' voided its own gate too, and gates go in order
     _approve(world, "G2")
     assert _advance(world).status_code == 200 and _stage(world) == "search_planned"
 
@@ -199,13 +210,22 @@ def test_every_member_can_see_where_the_project_can_go(world):
 
     for who in ("owner", "supervisor", "co_author", "reviewer"):
         body = world["clients"][who].get(f"/api/projects/{world['project']}/stage").json()
-        assert body == {"stage": "idea", "next": [{"stage": "scoped", "gate": "G1", "gate_status": "approved", "ready": True}]}
+        assert body["stage"] == "idea"
+        assert [(o["stage"], o["gate"], o["gate_status"], o["ready"]) for o in body["next"]] == [("scoped", "G1", "approved", True)]
 
 
 def test_the_stage_view_shows_a_stage_that_is_not_ready(world):
     body = world["clients"]["owner"].get(f"/api/projects/{world['project']}/stage").json()
 
-    assert body["next"] == [{"stage": "scoped", "gate": "G1", "gate_status": "pending", "ready": False}]
+    assert [(o["stage"], o["gate"], o["gate_status"], o["ready"]) for o in body["next"]] == [("scoped", "G1", "pending", False)]
+
+def test_the_stage_view_lists_the_whole_workflow_with_the_gate_that_completes_each_stage(world):
+    body = world["clients"]["owner"].get(f"/api/projects/{world['project']}/stage").json()
+
+    assert [item["stage"] for item in body["chain"]] == [s.value for s in S]
+    gates = {item["stage"]: item["gate"] for item in body["chain"]}
+    assert gates["idea"] is None and gates["scoped"] == "G1" and gates["accepted"] is None
+
 
 
 # ---- audit and side effects --------------------------------------------------------------------
@@ -244,6 +264,9 @@ def _snapshot(world):
 
 def test_a_system_producer_can_advance_an_ungated_stage_but_can_never_pass_a_gate(world):
     _set_stage(world, S.search_planned)
+    with SessionLocal() as db:
+        db.add(SearchQuery(project_id=world["pid"], search_id=uuid.uuid4(), database="openalex", query_string="q", version=1, run_at=datetime.now(timezone.utc), n_results=0, counts={"retrieved": 0}, results=[]))
+        db.commit()
     with SessionLocal() as db:
         project = db.get(Project, world["pid"])
         moved = sm.advance_stage(db, project, actor="agent:search")

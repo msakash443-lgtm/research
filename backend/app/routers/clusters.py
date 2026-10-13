@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app import audit
+from app.ai_controls import require_ai_on
 from app.config import get_settings
 from app.database import get_db
 from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_access
@@ -121,6 +122,7 @@ def request_clustering(
 ):
     """Group the project's sources into `k` themes. Runs in the background; the result appears in the list."""
     settings = get_settings()
+    require_ai_on(project, embeddings=True)
     if not settings.embedding_model:
         raise HTTPException(status.HTTP_409_CONFLICT, "Thematic clustering is off: no embedding model is configured (EMBEDDING_MODEL).")
     n = len(clusterable_sources(db, project))

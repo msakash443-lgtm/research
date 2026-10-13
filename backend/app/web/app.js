@@ -1,21 +1,24 @@
 import { $, $$, el, toast, saveOnce, label, formatDate } from "./js/dom.js";
 import { errorCard } from "./js/steps/common.js";
 import { request, projectApi } from "./js/api.js";
-import { STAGES, STEPS, GROUPS, GUIDES, STEP_IDS, stepStatus } from "./js/workflow.js";
+import { STAGES, STEPS, GROUPS, GUIDES, STEP_IDS, stepStatus, setStageChain } from "./js/workflow.js";
 import { renderMemory } from "./js/memory.js";
+import { aiLevel } from "./js/aiLevels.js";
 
 import overview from "./js/steps/overview.js";
+import guide from "./js/steps/guide.js";
 import scope from "./js/steps/scope.js";
 import criteria from "./js/steps/criteria.js";
 import search from "./js/steps/search.js";
 import results from "./js/steps/results.js";
 import sources from "./js/steps/sources.js";
+import screen from "./js/steps/screen.js";
 import ask from "./js/steps/ask.js";
 import approvals from "./js/steps/approvals.js";
 import team from "./js/steps/team.js";
 import activity from "./js/steps/activity.js";
 
-const STEP_MODULES = { overview, scope, criteria, search, results, sources, ask, approvals, team, activity };
+const STEP_MODULES = { overview, guide, scope, criteria, search, results, sources, screen, ask, approvals, team, activity };
 
 const state = {
   user: null,
@@ -24,7 +27,7 @@ const state = {
   role: null,
   currentStep: "overview",
   summary: {},
-  cache: { profiles: null, connectors: null },
+  cache: { profiles: null, connectors: null, guide: null },
   pollTimer: null,
 };
 
@@ -113,6 +116,7 @@ function renderShell() {
   $("#memory-toggle").hidden = !state.activeProject;
   if (!state.activeProject) {
     $("#role-chip").hidden = true;
+    $("#ai-chip").hidden = true;
     return;
   }
   $("#crumb").textContent = state.activeProject.title;
@@ -123,6 +127,10 @@ function renderShell() {
       ? "You can view everything; supervisors approve gates. Editing is for owners and co-authors."
       : "";
   }
+  const level = aiLevel(state.activeProject.ai_involvement);
+  $("#ai-chip").hidden = false;
+  $("#ai-chip").textContent = level.label;
+  $("#ai-chip").title = level.help;
   const stageName = state.summary.stage?.stage;
   const idx = STAGES.findIndex(([name]) => name === stageName);
   $("#progress-block").hidden = false;
@@ -130,7 +138,7 @@ function renderShell() {
   $("#stage-progress").value = idx >= 0 ? idx : 0;
 
   const rail = $("#step-rail");
-  rail.replaceChildren(stepLink(STEPS.find((s) => s.id === "overview")));
+  rail.replaceChildren(...STEPS.filter((s) => !s.group).map(stepLink));
   GROUPS.forEach((group) => {
     rail.append(el("p", { className: "step-group-label", text: group.toUpperCase() }));
     STEPS.filter((s) => s.group === group).forEach((step) => rail.append(stepLink(step)));
@@ -147,11 +155,13 @@ function renderShell() {
 
 const STEP_DEPENDENCIES = {
   overview: ["stage", "gates"],
+  guide: ["stage"],
   scope: ["context", "gates", "stage"],
   criteria: ["criteria", "seeds"],
   search: ["searches", "gates", "stage"],
   results: ["prisma", "knownItems", "seeds"],
   sources: ["sources"],
+  screen: ["criteria"],
   ask: ["runs"],
   approvals: ["stage", "gates", "staleArtifacts"],
   team: ["members"],
@@ -196,6 +206,7 @@ async function loadSummary() {
     }
   });
   state.summary = summary;
+  if (summary.stage?.chain) setStageChain(summary.stage.chain);
 }
 
 async function refresh() {
@@ -260,6 +271,7 @@ function showEmpty() {
   $("#memory-sidebar").hidden = true;
   $("#crumb").textContent = "";
   $("#role-chip").hidden = true;
+  $("#ai-chip").hidden = true;
   $("#idea-button").hidden = true;
   $("#memory-toggle").hidden = true;
   renderProjectList();

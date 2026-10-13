@@ -25,6 +25,7 @@ from pydantic import SecretStr
 
 from app.connectors.base import ConnectorBase, ConnectorError, FullText, PaperRecord, SearchPage, SearchRequest
 from app.connectors.http import ConnectorHttpClient, HttpPolicy, NotFoundError
+from app.connectors.unpaywall import OaLocation
 from app.doi import normalize_doi
 
 BASE_URL = "https://api.core.ac.uk/v3"
@@ -190,3 +191,27 @@ class CoreConnector(ConnectorBase):
             raise ConnectorError(f"CORE full text is over {MAX_FULLTEXT_CHARS:,} characters; refused rather than cut short")
         source = _http(work.get("downloadUrl")) or f"https://core.ac.uk/works/{work_id(external_id)}"
         return FullText(source_url=source, text=text, license=None)
+
+    def get_oa_location(self, doi: str) -> OaLocation | None:
+        """The open-access copy CORE holds for this DOI, or None. Matches the exact DOI in a `doi:` search.
+
+        Only a copy with a download URL counts. CORE reports no licence, so `license` is None unless the
+        reply carries a string one; `fetch_open_access` then keeps the copy as a link, never a stored file.
+        """
+        try:
+            bare = normalize_doi(doi)
+        except ValueError:
+            bare = None
+        if not bare:
+            raise ConnectorError("Not a valid DOI")
+        data = self._http.get_json("/search/works", {"q": f'doi:"{bare}"', "limit": 5, "offset": 0})
+        if not isinstance(data, dict) or not isinstance(data.get("results") or [], list):
+            raise ConnectorError("CORE returned an unexpected reply")
+        for work in data.get("results") or []:
+            record = to_record(work)
+            if record is None or record.doi != bare or record.oa_url is None:
+                continue
+            return OaLocation(
+                doi=bare, landing_page_url=record.url, pdf_url=record.oa_url, license=_str(work.get("license"), 100),
+            )
+        return None

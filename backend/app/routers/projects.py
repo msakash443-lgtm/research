@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app import audit
 from app.agent.context import select_agent_context
+from app.ai_item_locks import CONTEXT_ITEM_KIND, locked_ids
 from app.database import get_db
 from app.gates import new_gates
 from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_access
@@ -52,9 +53,10 @@ def list_context(project: Project = Depends(project_access(READ_ROLES)), db: Ses
         .where(ResearchContextItem.project_id == project.id)
         .order_by(ResearchContextItem.created_at.asc(), ResearchContextItem.id.asc())
     ).all()
-    sent = {item.id for item in select_agent_context(items)}
+    locked = locked_ids(db, project.id, CONTEXT_ITEM_KIND)
+    sent = {item.id for item in select_agent_context(items, locked_ids=locked)}
     return [
-        ContextItemRead.model_validate(item).model_copy(update={"used_by_agent": item.id in sent})
+        ContextItemRead.model_validate(item).model_copy(update={"used_by_agent": item.id in sent, "ai_locked": str(item.id) in locked})
         for item in items
     ]
 

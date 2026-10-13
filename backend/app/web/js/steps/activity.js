@@ -1,5 +1,6 @@
 import { $, el, formatDate, toast } from "../dom.js";
 import { request, projectApi } from "../api.js";
+import { AI_LEVELS, AI_ROUTES, aiLevel } from "../aiLevels.js";
 
 let offset = 0;
 let actionFilter = "";
@@ -124,6 +125,59 @@ function table(ctx) {
   return node;
 }
 
+// Owner-only controls for how far AI may take part in this project and which model it uses (X.31.7). Everyone else
+// sees the current setting. A change is applied by the server and audited; the header chip updates through ctx.refresh.
+async function aiSettingsPanel(ctx) {
+  const box = el("div", { className: "panel", attrs: { id: "ai-settings-panel" } });
+  box.append(el("h2", { text: "AI in this project" }));
+  try {
+    const current = await request(projectApi(ctx.project.id, "/ai-settings"));
+    const level = aiLevel(current.ai_involvement);
+    box.append(el("p", { text: level.label }), el("p", { className: "muted small", text: level.help }));
+    const route = AI_ROUTES.find((item) => item.value === current.ai_model_route);
+    box.append(el("p", { className: "muted small", text: `Model: ${route ? route.label : current.ai_model_route}` }));
+    if (!ctx.isOwner) {
+      box.append(el("p", { className: "muted small", text: "Only the project owner can change this." }));
+      return box;
+    }
+    const levelSelect = el("select", { attrs: { "aria-label": "How far AI may take part" } });
+    AI_LEVELS.forEach((item) => levelSelect.append(el("option", { text: item.label, attrs: { value: item.value } })));
+    levelSelect.value = current.ai_involvement;
+    const routeSelect = el("select", { attrs: { "aria-label": "Which model AI uses" } });
+    AI_ROUTES.forEach((item) => {
+      const option = el("option", { text: item.label, attrs: { value: item.value } });
+      if (item.value === "local" && !current.local_model_configured) option.disabled = true;
+      routeSelect.append(option);
+    });
+    routeSelect.value = current.ai_model_route;
+    const save = el("button", { text: "Save", attrs: { type: "button" } });
+    save.addEventListener("click", async () => {
+      save.disabled = true;
+      try {
+        const saved = await request(projectApi(ctx.project.id, "/ai-settings"), {
+          method: "PUT",
+          body: JSON.stringify({ ai_involvement: levelSelect.value, ai_model_route: routeSelect.value }),
+        });
+        ctx.project.ai_involvement = saved.ai_involvement;
+        ctx.project.ai_model_route = saved.ai_model_route;
+        toast("AI settings saved.");
+        await ctx.refresh();
+      } catch (error) {
+        toast(error.message);
+      } finally {
+        save.disabled = false;
+      }
+    });
+    box.append(el("div", { className: "form-actions", children: [levelSelect, routeSelect, save] }));
+    if (!current.local_model_configured) {
+      box.append(el("p", { className: "muted small", text: "No local model is configured on this server, so only the standard model can be chosen." }));
+    }
+  } catch (error) {
+    box.append(el("p", { className: "muted small", text: error.message }));
+  }
+  return box;
+}
+
 async function render(root, ctx) {
   if (currentProjectId !== ctx.project.id) {
     offset = 0;
@@ -173,7 +227,7 @@ async function render(root, ctx) {
     panel.append(more);
   }
 
-  root.replaceChildren(await usagePanel(ctx), panel);
+  root.replaceChildren(await aiSettingsPanel(ctx), await usagePanel(ctx), panel);
 }
 
 export default { render };

@@ -58,6 +58,20 @@ class Settings(BaseSettings):
     llm_schema_max_attempts: int = 3
     # AI pre-screen (M2.2): an answer below this confidence is recorded as "maybe", never include/exclude.
     prescreen_min_confidence: float = Field(default=0.6, ge=0, le=1)
+    # AI auto-exclude (M2.5.1, spec 5.3 human gate): an AI title/abstract exclude at or above this
+    # confidence can count as the final decision without a person looking at that record individually,
+    # but only while it stays inside the running human sampling audit below. Off per project
+    # (`projects.ai_autoexclude_enabled`) until an owner turns it on.
+    screening_ai_autoexclude_confidence_threshold: float = Field(default=0.9, ge=0, le=1)
+    # Fraction of eligible AI excludes a person must review (confirm/overturn) before they count;
+    # every 1/rate-th eligible exclude is sampled. Must be > 0: an auto-exclude policy with no audit
+    # at all is exactly what spec 5.3's human gate forbids.
+    screening_ai_autoexclude_sample_rate: float = Field(default=0.10, gt=0, le=1)
+    # Quality guard (spec 5.3): once an AI suggestion and a person's own eventual decision exist for
+    # the same source+stage, their agreement (Cohen's kappa) is tracked; below this, with at least
+    # `..._min_n` comparable pairs, AI pre-screen auto-disables for the project until an owner re-enables it.
+    screening_ai_agreement_min_kappa: float = Field(default=0.4, ge=-1, le=1)
+    screening_ai_agreement_min_n: int = Field(default=20, ge=1)
     # Local/self-hosted OpenAI-compatible endpoint (e.g. vLLM, Ollama, LM Studio) for
     # participant/sensitive data that must never reach the third-party model above.
     # `api_key` is optional: most local servers don't require one.
@@ -98,6 +112,10 @@ class Settings(BaseSettings):
     connector_contact_email: str | None = None
     # Seconds a connector may answer an identical request from memory (M1.3.3). 0 = off, so searches stay live.
     connector_cache_ttl_seconds: float = Field(default=0, ge=0)
+    # Share the circuit breaker (M1.3.2) across processes via a DB row (M1.3.8), instead of each
+    # freshly built `ConnectorHttpClient` (connectors/factory.py::build_connector is called per
+    # task) starting a fresh in-memory breaker that never actually trips. Off by default.
+    connector_breaker_shared: bool = False
     # Optional Semantic Scholar API key (sent as x-api-key). Without one the shared, heavily throttled pool is used.
     semantic_scholar_api_key: SecretStr | None = None
     # Optional NCBI E-utilities key for the PubMed connector (raises its rate limit from 3 to 10 requests a second).

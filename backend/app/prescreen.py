@@ -9,8 +9,13 @@ step (plan rule 22), it is never repaired. Two rules are applied to a valid repl
 * a confidence below `prescreen_min_confidence` becomes "maybe" (M2.2.3): a hesitant model never
   suggests excluding. The original answer is kept in the rationale so nothing is hidden.
 
-The result is stored as a `ScreeningDecision` with `decided_by="ai"` (M2.2.2). Such a row never counts
-as decided (`screening.final_decision` ignores it), and nothing in this module can write a human one.
+The result is stored as a `ScreeningDecision` with `decided_by="ai"` (M2.2.2); this module itself
+never writes a human one and never marks a source decided. Whether such a row later counts as the
+*effective* decision (M2.5.1 auto-exclude, spec 5.3 human gate) is a downstream policy
+(`app.screening.effective_ai_exclusion`) this module only feeds: a high-confidence exclude is
+sampled into `AutoExcludeAudit` for a person to confirm/overturn, at the configured rate. Each batch
+also checks AI-human agreement (M2.5.2) and auto-disables further pre-screening if it has dropped
+too low.
 """
 
 from __future__ import annotations
@@ -19,16 +24,18 @@ import secrets
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import audit
+from app import ai_quality, audit
+from app.ai_item_locks import locked_ids
 from app.agent.llm import LLMResponseError, OpenAICompatibleLLM
 from app.answer_guard import check_answer
-from app.models import Project, ScreeningCriterion, ScreeningDecision, Source
+from app.models import AutoExcludeAudit, Project, ScreeningCriterion, ScreeningDecision, Source
+from app.screening_suggestions import store_prescreen_suggestion
 from app.prompt_registry import Prompt, load_prompt
-from app.screening import ai_suggestion, check_reason, final_decision, next_seq, rows_for_stage, screenable_sources
+from app.screening import ai_human_agreement, ai_suggestion, autoexclude_threshold, check_reason, final_decision, next_seq, rows_for_stage, screenable_sources
 from app.untrusted_text import clean_untrusted
 
 PRESCREEN_PROMPT = ("screening_prescreen", 1)
@@ -124,6 +131,7 @@ class PrescreenResult:
     suggested: int = 0
     failed: int = 0
     skipped: int = 0  # decided or suggested by someone else while this ran
+    locked: int = 0  # left for a person because the source is set to "never for this item"
 
 
 def run_prescreen(
@@ -135,13 +143,24 @@ def run_prescreen(
     actor: str,
     ensure_owned: Callable[[Session], None] | None = None,
     limit: int = 200,
+    autoexclude_default_threshold: float = 0.9,
+    autoexclude_sample_rate: float = 0.10,
+    agreement_min_n: int = 20,
+    agreement_min_kappa: float = 0.4,
 ) -> PrescreenResult:
     """Suggest a decision for each source a person hasn't decided and the AI hasn't looked at yet (title/abstract).
 
     One source at a time, committed as it goes, so a stop part-way keeps what was done and a re-run
     carries on. A source whose answer can't be used is recorded in the audit log and left for a person;
     a missing LLM configuration stops everything (`LLMConfigurationError`).
+
+    Refuses outright if `project.ai_prescreen_disabled` (M2.5.2): an owner must look at why before
+    pre-screening resumes. If `project.ai_autoexclude_enabled` (M2.5.1), a high-confidence exclude is
+    sampled into the human audit at `autoexclude_sample_rate`; after the batch, AI-human agreement is
+    checked and pre-screening auto-disables if it has dropped below `agreement_min_kappa`.
     """
+    if project.ai_prescreen_disabled:
+        raise PrescreenError(project.ai_prescreen_disabled_reason or "AI pre-screen is disabled for this project.")
     criteria = list(
         db.scalars(select(ScreeningCriterion).where(ScreeningCriterion.project_id == project.id).order_by(ScreeningCriterion.position))
     )
@@ -149,11 +168,14 @@ def run_prescreen(
         raise PrescreenError("Add at least one inclusion and one exclusion criterion before pre-screening.")
     prompt = load_prescreen_prompt()
     grouped = rows_for_stage(db, project, "title_abstract")
-    todo = [
+    locked = locked_ids(db, project.id, "source")  # "never for this item": a locked source is never sent to the model
+    undecided = [
         s for s in screenable_sources(db, project)
         if final_decision(grouped.get(s.id, [])) is None and ai_suggestion(grouped.get(s.id, [])) is None
     ]
-    result = PrescreenResult()
+    todo = [s for s in undecided if str(s.id) not in locked]
+    threshold = autoexclude_threshold(project, autoexclude_default_threshold)
+    result = PrescreenResult(locked=len(undecided) - len(todo))
     for source in todo[:limit]:
         if ensure_owned:
             ensure_owned(db)
@@ -167,13 +189,12 @@ def run_prescreen(
             )
             db.commit()
             continue
-        db.add(
-            ScreeningDecision(
-                project_id=project.id, source_id=source.id, stage="title_abstract", seq=next_seq(db, source.id, "title_abstract"),
-                decision=suggestion.decision, reason_code=suggestion.reason_code, decided_by="ai", decider=AI_DECIDER,
-                confidence=suggestion.confidence, note=suggestion.rationale,
-            )
+        decision_row = ScreeningDecision(
+            project_id=project.id, source_id=source.id, stage="title_abstract", seq=next_seq(db, source.id, "title_abstract"),
+            decision=suggestion.decision, reason_code=suggestion.reason_code, decided_by="ai", decider=AI_DECIDER,
+            confidence=suggestion.confidence, note=suggestion.rationale,
         )
+        db.add(decision_row)
         audit.record(
             db, actor=actor, action="screening.ai_suggested", project_id=project.id,
             payload={"source_id": str(source.id), "stage": "title_abstract", "decision": suggestion.decision,
@@ -181,11 +202,49 @@ def run_prescreen(
             model_id=suggestion.model_id, prompt_version=suggestion.prompt_ref,
         )
         try:
+            # One transaction: the decision, and (if due) its audit row, commit together. A crash between them
+            # would otherwise leave an unsampled eligible exclude that counts forever (M2.5.1 review, 2026-10-11).
+            db.flush()  # gives decision_row its id; an IntegrityError here means a person decided first
+            store_prescreen_suggestion(
+                db, project=project, source=source, decision=suggestion.decision, reason_code=suggestion.reason_code,
+                confidence=suggestion.confidence, rationale=suggestion.rationale, model_id=suggestion.model_id,
+                prompt_version=suggestion.prompt_ref, producing_agent=AI_DECIDER.removeprefix("agent:"),
+            )
+            if project.ai_autoexclude_enabled and ai_quality.is_autoexclude_eligible(suggestion.decision, suggestion.confidence, threshold):
+                ordinal = db.scalar(
+                    select(func.count()).select_from(ScreeningDecision).where(
+                        ScreeningDecision.project_id == project.id, ScreeningDecision.decided_by == "ai",
+                        ScreeningDecision.decision == "exclude", ScreeningDecision.confidence >= threshold,
+                    )
+                ) or 0
+                if ai_quality.due_for_sample(ordinal, autoexclude_sample_rate):
+                    db.add(AutoExcludeAudit(
+                        project_id=project.id, source_id=source.id, stage="title_abstract",
+                        decision_id=decision_row.id, confidence=suggestion.confidence,
+                    ))
+                    audit.record(
+                        db, actor=audit.SYSTEM_WORKER, action="screening.autoexclude_sampled", project_id=project.id,
+                        payload={"source_id": str(source.id), "confidence": suggestion.confidence},
+                    )
             db.commit()
             result.suggested += 1
         except IntegrityError:  # a person decided this source while the model was answering
             db.rollback()
             result.skipped += 1
+            continue
+    if not project.ai_prescreen_disabled:
+        agreement = ai_human_agreement(db, project, "title_abstract")
+        if ai_quality.should_disable_prescreen(agreement, min_n=agreement_min_n, min_kappa=agreement_min_kappa):
+            project.ai_prescreen_disabled = True
+            project.ai_prescreen_disabled_reason = (
+                f"AI-human agreement (kappa={agreement.kappa:.2f} over {agreement.n} compared decisions) "
+                f"fell below the {agreement_min_kappa} threshold."
+            )
+            audit.record(
+                db, actor=audit.SYSTEM_WORKER, action="screening.ai_prescreen_auto_disabled", project_id=project.id,
+                payload={"kappa": agreement.kappa, "n": agreement.n, "threshold": agreement_min_kappa},
+            )
+            db.commit()
     return result
 
 

@@ -1,7 +1,50 @@
-import { $, el, label, toast, saveOnce } from "../dom.js";
+import { $, el, label, toast, saveOnce, formatDate } from "../dom.js";
 import { request, projectApi } from "../api.js";
 import { STAGES } from "../workflow.js";
+import { actorName } from "../provenance.js";
 import { gateCard } from "./common.js";
+
+const HISTORY_TEXT = {
+  "project.advanced": (p) => `Moved forward: ${label(p.from)} → ${label(p.to)}`,
+  "project.reentered": (p) =>
+    p.from === p.to ? `Reopened ${label(p.to)} for revision` : `Went back: ${label(p.from)} → ${label(p.to)}`,
+  "stage.condition_overridden": (p) => `Overrode condition ${p.condition} (${label(p.to)})`,
+  "gate.reset": (p) => `Approval of ${p.gate} voided (${p.because})`,
+  "gate.reopened": (p) => `Reopened ${p.gate}`,
+  "gate.approved": (p) => `Approved ${p.gate}`,
+  "gate.rejected": (p) => `Rejected ${p.gate}`,
+};
+
+function historyLine(ctx, event) {
+  const payload = event.payload_json || {};
+  const what = (HISTORY_TEXT[event.action] || (() => event.action))(payload);
+  const why = payload.reason ? `Reason: ${payload.reason}` : payload.note ? `Note: ${payload.note}` : "";
+  const item = el("li");
+  item.append(el("strong", { text: what }));
+  item.append(el("span", { className: "muted small", text: ` · ${actorName(ctx, event.actor)} · ${formatDate(event.timestamp)}` }));
+  if (why) item.append(el("p", { className: "muted small", text: why }));
+  return item;
+}
+
+async function historyPanel(ctx) {
+  const panel = el("div", { className: "panel" });
+  panel.append(el("h2", { text: "Stage history" }));
+  let events = [];
+  try {
+    events = await request(projectApi(ctx.project.id, "/stage/history"));
+  } catch (error) {
+    panel.append(el("p", { className: "muted small", text: error.message }));
+    return panel;
+  }
+  if (!events.length) {
+    panel.append(el("p", { className: "muted small", text: "No stage moves or approvals yet." }));
+    return panel;
+  }
+  const list = el("ul", { className: "warning-list" });
+  [...events].reverse().forEach((event) => list.append(historyLine(ctx, event)));
+  panel.append(list);
+  return panel;
+}
 
 function stageTrack(ctx) {
   const stage = ctx.summary.stage?.stage;
@@ -53,7 +96,8 @@ function openReenterDialog(ctx) {
   const select = form.elements.stage;
   select.replaceChildren();
   const currentIndex = STAGES.findIndex(([name]) => name === ctx.summary.stage?.stage);
-  STAGES.slice(0, currentIndex).forEach(([name]) => select.append(el("option", { text: label(name), attrs: { value: name } })));
+  STAGES.slice(0, currentIndex + 1).forEach(([name]) => select.append(el("option", { text: label(name), attrs: { value: name } })));
+  select.value = ctx.summary.stage?.stage;
   form.onsubmit = (event) => {
     event.preventDefault();
     saveOnce(form, async () => {
@@ -64,7 +108,7 @@ function openReenterDialog(ctx) {
         });
         dialog.close();
         toast(
-          `Moved back to ${label(result.to_stage)}. ${result.gates_reset.length} gate(s) reset, ${result.stale_artifacts.length} result(s) marked stale.`
+          `Reopened ${label(result.to_stage)}. ${result.gates_reset.length} gate(s) reset, ${result.stale_artifacts.length} result(s) marked stale.`
         );
         await ctx.refresh();
       } catch (error) {
@@ -105,20 +149,22 @@ async function render(root, ctx) {
   sections.push(gatesPanel);
 
   const currentIndex = STAGES.findIndex(([name]) => name === ctx.summary.stage?.stage);
-  if (ctx.isOwner && currentIndex > 0) {
+  if (ctx.isOwner && currentIndex >= 0) {
     const reenterPanel = el("div", { className: "panel" });
-    reenterPanel.append(el("h2", { text: "Go back to an earlier stage" }));
+    reenterPanel.append(el("h2", { text: "Reopen a stage" }));
     reenterPanel.append(
       el("p", {
         className: "muted small",
-        text: "Gates of the stages being redone return to pending; later results are marked stale.",
+        text: "Reopen the current stage or go back to an earlier one. That stage's gate and every later gate return to pending, and its results and later results are marked stale. Nothing is deleted.",
       })
     );
-    const open = el("button", { className: "quiet-button", text: "Go back…" });
+    const open = el("button", { className: "quiet-button", text: "Reopen…" });
     open.addEventListener("click", () => openReenterDialog(ctx));
     reenterPanel.append(open);
     sections.push(reenterPanel);
   }
+
+  sections.push(await historyPanel(ctx));
 
   root.replaceChildren(...sections);
 }

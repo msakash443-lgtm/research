@@ -153,7 +153,7 @@ No lint/format tooling is configured in the repo (no ruff/black/flake8 config fo
 
 ## Testing & QA
 
-- Framework: **pytest** (`pytest.ini`: `pythonpath = backend`, `testpaths = backend/tests`). No coverage tool/threshold configured — the only quantitative gate is the raw pass count tracked in `plan.md`'s "Test baseline" field (currently 1112 passed) and in the Work Log after each session; **never merge a change that lowers this count without explanation.**
+- Framework: **pytest** (`pytest.ini`: `pythonpath = backend`, `testpaths = backend/tests`). No coverage tool/threshold configured — the only quantitative gate is the raw pass count tracked in `plan.md`'s "Test baseline" field (see that field for the current count) and in the Work Log after each session; **never merge a change that lowers this count without explanation.**
 - Run: `pytest -q` from the repo root `research-main/`.
 - `backend/tests/conftest.py`: sets `DATABASE_URL=sqlite+pysqlite://` (in-memory), `AUTO_CREATE_SCHEMA=true`, `RUN_RESEARCH_INLINE=true` **before** importing the app; `isolated_database` fixture (autouse) drops/recreates all tables per test; `fake_llm` fixture fakes only the HTTP layer so the real request-building/parsing code still runs.
 - No shared `TestClient`/DB fixture — each test file defines its own small `_login(email)` / `_project(db)` helpers.

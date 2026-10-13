@@ -105,6 +105,7 @@ function fulltextText(source) {
   if (access.status === "link_only") return `Open-access copy found, but its licence (${licence}) doesn't allow storing a copy: link only`;
   if (access.status === "no_pdf") return "Open-access page found, but no PDF link";
   if (access.status === "no_oa") return "No open-access copy found";
+  if (access.status === "lookup_failed") return "Open-access lookup failed for at least one service; try again later";
   return null;
 }
 

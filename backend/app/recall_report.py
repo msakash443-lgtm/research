@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 from app.dedupe import doi_key, first_author_key, normalise_title
 from app.known_items import _checkable, _matches
 from app.models import Project, SeedPaper
-from app.prisma import _latest_runs
+from app.prisma import latest_runs
 
 DEFAULT_TARGET = 0.95
 
@@ -182,4 +182,4 @@ def project_report(db: Session, project: Project, target: float = DEFAULT_TARGET
         GoldPaper(id=str(s.id), title=s.title, doi=s.doi, year=s.year, authors=tuple(s.authors or ()))
         for s in seeds
     ]
-    return report(gold, _latest_runs(db, project), target)
+    return report(gold, latest_runs(db, project), target)

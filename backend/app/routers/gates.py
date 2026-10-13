@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import update
 from sqlalchemy.orm import Session
 
-from app import audit
+from app import audit, exit_conditions, prisma
 from app.database import get_db
 from app.dependencies import READ_ROLES, current_user, project_access, project_role
 from app.artifacts import stage_index
@@ -16,6 +16,9 @@ from app.models import Gate, GateCode, GateStatus, Project, ProjectRole, User, u
 from app.schemas import GateDecision, GateRead, GateReopen
 
 router = APIRouter(prefix="/projects/{project_id}/gates", tags=["gates"])
+
+# The gate row for G3/G4 approval itself is excluded from the Required check below: it is unmet until this approval.
+_OWN_GATE_ROW = {GateCode.G3: "EC-4.1", GateCode.G4: "EC-5.1"}
 
 
 def _reopen_problem(project: Project, gates: list[Gate], gate: Gate) -> str | None:
@@ -92,6 +95,30 @@ def decide_gate(
         )
     if outcome == GateStatus.rejected and not note:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Rejecting a gate needs a note explaining why")
+    if outcome == GateStatus.approved and code in _OWN_GATE_ROW:
+        unmet = [
+            c
+            for c in exit_conditions.conditions(db, project, GATE_STAGES[code])
+            if c.level is exit_conditions.Level.required and not c.met and c.id != _OWN_GATE_ROW[code]
+        ]
+        if unmet:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "message": f"Gate {code.value} cannot be approved while its stage's required conditions are unmet: {', '.join(c.id for c in unmet)}",
+                    "required": [{"id": c.id, "message": c.message, "fix": c.fix} for c in unmet],
+                },
+            )
+    if outcome == GateStatus.approved and code is GateCode.G3:
+        missing = prisma.flow_counts(db, project)["screening"]["exclusion_reasons_missing"]
+        if missing:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "message": f"Gate G3 cannot be approved while {missing} excluded record(s) have no valid reason code",
+                    "exclusion_reasons_missing": missing,
+                },
+            )
 
     # Conditional write: another request may have approved this gate since we read it.
     # The WHERE clause is re-checked by the database at write time, so an approval can't be

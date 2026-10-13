@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from app.database import Base, SessionLocal
 from app.main import app
-from app.models import AuditEvent, Cluster, ClusterMember, ClusterRun, Note, SourceEmbedding, Task
+from app.models import AuditEvent, Cluster, ClusterMember, ClusterRun, Note, ScreeningDecision, SourceEmbedding, Task
 from app.replication_export import CHILD_TABLES, EXCLUDED_TABLES, NOT_EXPORTED, project_tables, schema_revision
 
 
@@ -99,7 +99,9 @@ def test_private_and_derived_data_is_left_out_and_said_so(world):
     assert "vector" not in embedding and embedding["text_hash"] == "h" * 64
     assert all(world["email"] not in archive.read(n).decode() for n in names)
     manifest = json.loads(archive.read("manifest.json"))
-    assert set(manifest["excluded"]["tables"]) == {"notes", "tasks", "users", "external_identities", "note_revisions"}
+    assert set(manifest["excluded"]["tables"]) == {
+        "notes", "tasks", "users", "external_identities", "note_revisions", "connector_breaker_state",
+    }
     assert "vector" in manifest["excluded"]["columns"]["source_embeddings"]
 
 
@@ -133,3 +135,24 @@ def test_every_table_is_either_exported_or_excluded_with_a_reason():
     assert exported.isdisjoint(excluded)
     assert set(Base.metadata.tables) == exported | excluded
     assert Note.__tablename__ in excluded  # notes are per-user
+
+
+def test_the_export_carries_kappa_and_the_conflicts_it_was_computed_from(world):
+    """Two reviewers on four sources: they agree on three (include, include, exclude), disagree on one.
+    Hand-computed: p_o = 3/4; p_a(include) = 3/4, p_b(include) = 2/4, so p_e = 3/4*2/4 + 1/4*2/4 = 1/2 and
+    kappa = (3/4 - 1/2) / (1 - 1/2) = 0.5."""
+    owner, pid = world["owner"], world["pid"]
+    sids = [owner.post(f"/api/projects/{pid}/sources", json={"title": f"Paper {letter}"}).json()["id"] for letter in "ABCD"]
+    votes = {"alice": ["include", "include", "exclude", "include"], "bob": ["include", "include", "exclude", "exclude"]}
+    with SessionLocal() as db:
+        for seq, decider in enumerate(votes, start=1):  # alice is seq 1 and bob seq 2 on every source
+            for sid, decision in zip(sids, votes[decider]):
+                db.add(ScreeningDecision(project_id=uuid.UUID(pid), source_id=uuid.UUID(sid), stage="title_abstract", seq=seq,
+                                         decision=decision, decided_by="human", decider=decider))
+        db.commit()
+    title_abstract = json.loads(download(world).read("derived/agreement.json"))["title_abstract"]
+    assert (title_abstract["n"], title_abstract["agreed"]) == (4, 3)
+    assert title_abstract["kappa"] == pytest.approx(0.5)
+    assert title_abstract["scope"]["two_reviewers"] == 4
+    assert [c["title"] for c in title_abstract["conflicts"]] == ["Paper D"]
+    assert [d["decider"] for d in title_abstract["conflicts"][0]["decisions"]] == ["alice", "bob"]

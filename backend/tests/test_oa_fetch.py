@@ -75,7 +75,7 @@ def test_a_pdf_is_downloaded():
 
 def test_redirects_are_followed_and_each_hop_is_checked():
     def handler(request):
-        if request.url.host == "example.org":
+        if request.headers["host"] == "example.org":
             return httpx.Response(302, headers={"location": "https://cdn.example.org/files/a.pdf"})
         return httpx.Response(200, content=PDF)
 
@@ -96,7 +96,7 @@ def test_a_redirect_into_the_internal_network_is_refused_before_it_is_requested(
     asked = []
 
     def handler(request):
-        asked.append(request.url.host)
+        asked.append(request.headers["host"])
         return httpx.Response(302, headers={"location": "http://metadata.internal/latest"})
 
     with pytest.raises(FetchRefused, match="private"):

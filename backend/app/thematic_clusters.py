@@ -29,7 +29,8 @@ from sqlalchemy.orm import Session
 from app import audit
 from app.artifacts import register_artifact
 from app.models import Cluster, ClusterMember, ClusterRun, Project, ProjectStage, Source, SourceEmbedding
-from app.screening import STAGES, final_decision, rows_for_stage, screenable_sources
+from app.config import get_settings
+from app.screening import STAGES, audit_statuses_by_decision, autoexclude_threshold, dual_screen_status, effective_ai_exclusion, final_decision, rows_for_stage, screenable_sources
 from app.untrusted_text import clean_untrusted
 
 ARTIFACT_KIND = "thematic_clusters"
@@ -51,12 +52,30 @@ class Embedder(Protocol):
 
 
 def clusterable_sources(db: Session, project: Project) -> list[Source]:
-    """Sources not merged away and not excluded by a person at any screening stage, oldest first."""
+    """Sources not merged away and not excluded at any screening stage, oldest first: by a person, by
+    agreement in dual-screen mode, or by a trusted/confirmed AI auto-exclude (M2.5.1).
+
+    In dual-screen mode a source is excluded here only once both reviewers *agree* to exclude it; a
+    conflict (or only one reviewer having decided) is not a settled exclusion. AI auto-exclude only
+    applies outside dual-screen mode, and only when no person has decided the source yet.
+    """
+    settings = get_settings()
+    threshold = autoexclude_threshold(project, settings.screening_ai_autoexclude_confidence_threshold)
+    audit_statuses = audit_statuses_by_decision(db, project) if project.ai_autoexclude_enabled else {}
     excluded: set[uuid.UUID] = set()
     for stage in STAGES:
         for source_id, rows in rows_for_stage(db, project, stage).items():
-            final = final_decision(rows)
-            if final is not None and final.decision == "exclude":
+            if project.dual_screen_enabled:
+                status, rep = dual_screen_status(rows)
+                if status in ("agreed", "adjudicated") and rep.decision == "exclude":
+                    excluded.add(source_id)
+                continue
+            human = final_decision(rows)
+            if human is not None:
+                if human.decision == "exclude":
+                    excluded.add(source_id)
+                continue
+            if effective_ai_exclusion(rows, audit_statuses, enabled=project.ai_autoexclude_enabled, threshold=threshold, prescreen_disabled=project.ai_prescreen_disabled) is not None:
                 excluded.add(source_id)
     return [s for s in screenable_sources(db, project) if s.id not in excluded]
 

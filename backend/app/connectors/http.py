@@ -37,7 +37,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 
 import httpx
 
@@ -66,6 +66,21 @@ class NotFoundError(ConnectorError):
 
 class CircuitOpenError(ConnectorError):
     """Recent calls kept failing; this connector is paused until the cooldown ends."""
+
+
+class BreakerSync(Protocol):
+    """Persists breaker state somewhere shared (e.g. a DB row), so the breaker trips across
+    separate `ConnectorHttpClient` instances too — different tasks, different processes
+    (M1.3.8). `open_until`/the return value are wall-clock (`time.time()`) seconds, never the
+    instance's own (possibly monotonic) clock, because that clock means nothing to another
+    process. Optional: without one the breaker stays exactly the M1.3.2 in-memory behaviour.
+    """
+
+    def load(self) -> tuple[int, float | None]:
+        """Current (failures, open_until) as last saved, or (0, None) if never saved."""
+
+    def save(self, failures: int, open_until: float | None) -> None:
+        """Persist the latest (failures, open_until)."""
 
 
 @dataclass(frozen=True)
@@ -117,12 +132,16 @@ class ConnectorHttpClient:
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
         rng: random.Random | None = None,
+        wall_clock: Callable[[], float] = time.time,
+        breaker_sync: BreakerSync | None = None,
     ):
         self.name = name
         self.policy = policy or HttpPolicy()
         self._clock = clock
         self._sleep = sleep
         self._rng = rng or random.Random()
+        self._wall_clock = wall_clock
+        self._breaker_sync = breaker_sync
         self._lock = threading.Lock()
         self._next_slot = 0.0  # earliest time the next request may start
         self._failures = 0
@@ -139,14 +158,49 @@ class ConnectorHttpClient:
             follow_redirects=False,
             transport=transport,
         )
+        if self._breaker_sync is not None:
+            self._adopt_remote_locked()
 
     def close(self) -> None:
         self._client.close()
 
+    def attach_breaker_sync(self, sync: BreakerSync) -> None:
+        """Wire a shared store after construction (connectors build their own client, so the
+        factory attaches this rather than threading a constructor arg through every connector)."""
+        with self._lock:
+            self._breaker_sync = sync
+            self._adopt_remote_locked()
+
     # --- breaker -------------------------------------------------------------
+
+    def _wall_to_local(self, open_until_wall: float | None) -> float | None:
+        """A remote open-until, in wall-clock seconds, translated to this instance's own clock."""
+        if open_until_wall is None:
+            return None
+        remaining = open_until_wall - self._wall_clock()
+        if remaining <= 0:
+            return None
+        return self._clock() + remaining
+
+    def _local_to_wall(self) -> float | None:
+        if self._open_until is None:
+            return None
+        remaining = self._open_until - self._clock()
+        return self._wall_clock() + max(0.0, remaining)
+
+    def _adopt_remote_locked(self) -> None:
+        """Caller holds `self._lock`. Remote state wins: it is the one source of truth other
+        processes also read and write, so this instance's own counters just mirror it. Failures
+        below threshold (so `open_until` is None) still carry over — only a success zeroes
+        them, exactly like the in-memory breaker."""
+        failures, open_until_wall = self._breaker_sync.load()
+        self._failures = failures
+        self._open_until = self._wall_to_local(open_until_wall)
 
     def _before_call(self) -> None:
         with self._lock:
+            if self._breaker_sync is not None:
+                self._adopt_remote_locked()
             if self._open_until is None:
                 return
             if self._clock() < self._open_until or self._trial_in_flight:
@@ -154,15 +208,20 @@ class ConnectorHttpClient:
             self._trial_in_flight = True  # half-open: exactly one trial call
 
     def _record(self, ok: bool) -> None:
+        sync = None
         with self._lock:
             self._trial_in_flight = False
             if ok:
                 self._failures = 0
                 self._open_until = None
-                return
-            self._failures += 1
-            if self._failures >= self.policy.breaker_threshold:
-                self._open_until = self._clock() + self.policy.breaker_cooldown_seconds
+            else:
+                self._failures += 1
+                if self._failures >= self.policy.breaker_threshold:
+                    self._open_until = self._clock() + self.policy.breaker_cooldown_seconds
+            if self._breaker_sync is not None:
+                sync, failures, open_until_wall = self._breaker_sync, self._failures, self._local_to_wall()
+        if sync is not None:
+            sync.save(failures, open_until_wall)
 
     # --- rate gate -----------------------------------------------------------
 

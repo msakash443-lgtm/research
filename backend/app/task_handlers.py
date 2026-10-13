@@ -12,16 +12,21 @@ from app import audit
 from app.agent.executor import execute_research_run
 from app.database import SessionLocal
 from app.connectors.base import ConnectorError
-from app.connectors.factory import build_connector, build_unpaywall, enabled_lookup_names, unpaywall_unavailable_reason
+from app.connectors.factory import (
+    build_core_oa, build_openalex_oa, build_unpaywall, enabled_lookup_names, oa_source_enabled, unpaywall_unavailable_reason,
+)
+from app.connector_breaker_store import build_connector
 from app.models import GateCode, Project, ResearchRun, ResearchRunStatus, SearchAlert, SearchQuery, SnowballRun, Source, utcnow
-from app.agent.llm import LLMConfigurationError, OpenAICompatibleLLM
+from app.agent.llm import LLMConfigurationError
+from app.ai_controls import AIOffError, ensure_embeddings_allowed, llm_for_project
 from app.llm_usage import ProjectMeter
 from app.config import get_settings
 from app.prescreen import PrescreenError, run_prescreen
 from app.agent.embeddings import OpenAICompatibleEmbeddings
-from app.models import ClusterRun
+from app.models import ClusterRun, SeedCheckRun
+from app.seed_check_runner import run_seed_check
 from app.thematic_clusters import ClusteringError, run_clustering
-from app.oa_fetch import OaFetchError, fetch_open_access
+from app.oa_fetch import OaFetchError, OaSource, fetch_open_access
 from app.object_storage import get_object_store
 from app.safe_fetch import FetchRefused, fetch_pdf
 from app.search_query import BooleanQuery, QueryError
@@ -42,6 +47,7 @@ SCREENING_PRESCREEN = "screening_prescreen"
 THEMATIC_CLUSTERING = "thematic_clustering"
 FULLTEXT_FETCH = "fulltext_fetch"
 SNOWBALL_RUN = "snowball_run"
+SEED_FALSE_EXCLUSION_CHECK = "seed_false_exclusion_check"
 
 
 def _research_run_abandoned(task: ClaimedTask) -> None:
@@ -170,18 +176,60 @@ def handle_screening_prescreen(task: ClaimedTask) -> None:
             raise PermanentTaskError("The project for this pre-screen no longer exists.")
         try:
             result = run_prescreen(
-                db, project, llm=OpenAICompatibleLLM(
-                    settings,
-                    meter=ProjectMeter(project.id, settings, purpose="prescreen", budget_override=project.token_budget_override),
-                ), min_confidence=settings.prescreen_min_confidence,
+                db, project, llm=llm_for_project(settings, project, purpose="prescreen"),
+                min_confidence=settings.prescreen_min_confidence,
                 actor=str(payload.get("actor") or audit.SYSTEM_WORKER), ensure_owned=task.ensure_owned,
+                autoexclude_default_threshold=settings.screening_ai_autoexclude_confidence_threshold,
+                autoexclude_sample_rate=settings.screening_ai_autoexclude_sample_rate,
+                agreement_min_n=settings.screening_ai_agreement_min_n,
+                agreement_min_kappa=settings.screening_ai_agreement_min_kappa,
             )
-        except (LLMConfigurationError, PrescreenError) as exc:
+        except (AIOffError, LLMConfigurationError, PrescreenError) as exc:
             db.rollback()
             raise PermanentTaskError(str(exc)) from exc
         if result.failed:
             raise PermanentTaskError(
                 f"{result.failed} record(s) could not be pre-screened ({result.suggested} were); they are left for a person. See the audit log."
+            )
+    finally:
+        db.close()
+
+
+@register(SEED_FALSE_EXCLUSION_CHECK, requires_gate=GateCode.G2)
+def handle_seed_false_exclusion_check(task: ClaimedTask) -> None:
+    """Ask the pre-screen about each seed paper that matches a stored source and store its answers (M2.9.1).
+
+    Needs G2 like pre-screening (the criteria it screens against are the approved ones). Writes no screening
+    decision. An answer that can't be used is kept on its seed; the run is stored and the task then fails, so
+    the gap is visible instead of the rate looking complete.
+    """
+    payload = task.payload or {}
+    try:
+        project_id = uuid.UUID(str(payload["project_id"]))
+        run_id = uuid.UUID(str(payload["run_id"]))
+    except (KeyError, ValueError, TypeError) as exc:
+        raise PermanentTaskError("A seed_false_exclusion_check task needs a project_id and a run_id.") from exc
+    settings = get_settings()
+    db = SessionLocal()
+    try:
+        if db.get(SeedCheckRun, run_id) is not None:
+            return  # an earlier attempt stored this run before the worker could report it
+        project = db.get(Project, project_id)
+        if project is None:
+            raise PermanentTaskError("The project for this seed check no longer exists.")
+        try:
+            run = run_seed_check(
+                db, project, llm=llm_for_project(settings, project, purpose="seed_check"),
+                min_confidence=settings.prescreen_min_confidence,
+                autoexclude_default_threshold=settings.screening_ai_autoexclude_confidence_threshold,
+                actor=str(payload.get("actor") or audit.SYSTEM_WORKER), run_id=run_id, ensure_owned=task.ensure_owned,
+            )
+        except (AIOffError, LLMConfigurationError, PrescreenError) as exc:
+            db.rollback()
+            raise PermanentTaskError(str(exc)) from exc
+        if run.summary["failed"]:
+            raise PermanentTaskError(
+                f"The AI step failed on {run.summary['failed']} seed paper(s); the check is stored as incomplete."
             )
     finally:
         db.close()
@@ -205,6 +253,10 @@ def handle_thematic_clustering(task: ClaimedTask) -> None:
         project = db.get(Project, project_id)
         if project is None:
             raise PermanentTaskError("The project for this clustering no longer exists.")
+        try:
+            ensure_embeddings_allowed(project)
+        except AIOffError as exc:
+            raise PermanentTaskError(str(exc)) from exc
         embedder = OpenAICompatibleEmbeddings(
             settings,
             meter=ProjectMeter(project.id, settings, purpose="clustering", budget_override=project.token_budget_override),
@@ -244,7 +296,12 @@ def handle_fulltext_fetch(task: ClaimedTask) -> None:
             raise PermanentTaskError("The source for this fetch no longer exists in the project.")
         try:
             fetch_open_access(
-                db, project=project, source=source, unpaywall=build_unpaywall(),
+                db, project=project, source=source,
+                sources=[
+                    OaSource("unpaywall", build_unpaywall()),
+                    OaSource("openalex", build_openalex_oa() if oa_source_enabled("openalex") else None),
+                    OaSource("core", build_core_oa() if oa_source_enabled("core") else None),
+                ],
                 fetch_pdf=lambda url: fetch_pdf(url, max_bytes=settings.object_storage_max_bytes, timeout_seconds=settings.fulltext_fetch_timeout_seconds),
                 store=get_object_store(settings), allowed_licences=settings.fulltext_store_licences,
                 requested_by=str(payload.get("requested_by") or audit.SYSTEM_WORKER), before_write=task.ensure_owned,

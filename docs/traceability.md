@@ -5,7 +5,7 @@
 > that prove it. **plan.md is the source of truth for status**; this table is a snapshot and must be
 > updated whenever a task is added, finished or dropped (plan.md rule 31).
 >
-> Snapshot: 2026-10-10 (refreshed; first written 2026-10-03) · test baseline **2169 passed, 6 skipped, 0 failed** (Python 3.12 full run 2026-10-10) · tests live in `backend/tests/`. **M0 closed 2026-10-09** (plan.md M0 header `[x]`); M0-scoped rows below refreshed. M1.1.14 and M1.10.3/.4/.6 updated this pass; other M1–M7/X rows not re-verified — still as of 2026-10-07.
+> Snapshot: 2026-10-10 (refreshed) · test baseline **2336 passed, 6 skipped, 0 failed** (Python 3.12 full run 2026-10-10) · tests live in `backend/tests/`. **M0 closed 2026-10-09, M1 closed 2026-10-10** (plan.md M0/M1 headers `[x]`, every M1.1–M1.14 epic `[x]`); M0- and M1-scoped rows below refreshed to match. M2–M7/X rows not re-verified this pass — still as of 2026-10-09/2026-10-10 where they touch M1 dependencies.
 > Status here follows plan.md as of the snapshot date; where the two disagree, plan.md wins.
 
 **Status key:** `[x]` done · `[?]` built, awaiting review · `[~]` in progress · `[ ]` not started ·
@@ -29,27 +29,27 @@
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
 |---|---|---|---|---|---|
 | 5.2 in | Inclusion/exclusion criteria (PICO etc.) | M1.5.4 | criteria endpoints | `test_criteria.py` | `[x]` |
-| 5.2.1 | Boolean query builder, per-DB syntax | M1.5.1–M1.5.6 | search-query endpoints | `test_search_query*.py` | M1.5.1–.2 `[x]`; M1.5.3 (LLM synonyms), M1.5.5 (S2 bulk Boolean) `[?]`; M1.5.6 (re-runs of pre-bulk S2 searches refused) `[?]` |
-| 5.2.2 | Multi-source retrieval | M1.3, M1.4.1–M1.4.8 | connectors (OpenAlex, Crossref, Semantic Scholar, arXiv, Unpaywall, PubMed/Europe PMC, CORE, OpenCitations, Scopus, Web of Science, IEEE Xplore); `GET` connector list | `test_connector_*.py`, `test_*_connector.py`, `test_arxiv_fulltext.py`, `test_scopus_connector.py`, `test_web_of_science_connector.py`, `test_ieee_xplore_connector.py`, `test_search_runner.py` | M1.3.1–.2, .4–.5 and M1.4.1–.3, .5 `[x]`; M1.3.3 cache, M1.4.4, M1.4.6–.8 `[?]`; M1.3.6 `[?]` |
-| 5.2.2 | Web search / crawl / PDF via ARC (opt-in) | M1.1.1–M1.1.14 | `POST /api/projects/{id}/research-runs` (`use_web_retrieval`) | `test_arc_retrieval.py`, `test_arc_fencing.py` | M1.1.1–.9, .12, .14 `[x]`; M1.1.10, M1.1.11 `[x]` (reviewed 2026-10-08); M1.1.13 `[?]` |
+| 5.2.1 | Boolean query builder, per-DB syntax | M1.5.1–M1.5.6 | search-query endpoints | `test_search_query*.py` | `[x]` (M1.5 closed 2026-10-10) |
+| 5.2.2 | Multi-source retrieval | M1.3, M1.4.1–M1.4.8 | connectors (OpenAlex, Crossref, Semantic Scholar, arXiv, Unpaywall, PubMed/Europe PMC, CORE, OpenCitations, Scopus, Web of Science, IEEE Xplore); `GET` connector list | `test_connector_*.py`, `test_*_connector.py`, `test_arxiv_fulltext.py`, `test_scopus_connector.py`, `test_web_of_science_connector.py`, `test_ieee_xplore_connector.py`, `test_search_runner.py` | `[x]` (M1.3 incl. M1.3.8 cross-process breaker, and M1.4 both closed 2026-10-10) |
+| 5.2.2 | Web search / crawl / PDF via ARC (opt-in) | M1.1.1–M1.1.14 | `POST /api/projects/{id}/research-runs` (`use_web_retrieval`) | `test_arc_retrieval.py`, `test_arc_fencing.py` | `[x]` (M1.1 closed 2026-10-10, all 14 subtasks incl. M1.1.13) |
 | 5.2.2 | De-dup by DOI → title+year+first author | M0.2.2, M1.6.1–M1.6.3 | `POST .../sources` (DOI normalised) | `test_doi.py`, `test_dedupe.py`, `test_merge.py`, `test_source_merge.py` | M0.2.2 and M1.6.1–.4 `[x]` |
-| 5.2.3 | Snowballing N rounds | M1.9.1–M1.9.2 | `POST/GET /api/projects/{id}/snowball` (G2-gated task `snowball_run`); `found_via` on sources + screening queue; PRISMA `other_methods.citation_searching` | `test_snowball.py` | `[?]` |
+| 5.2.3 | Snowballing N rounds | M1.9.1–M1.9.2 | `POST/GET /api/projects/{id}/snowball` (G2-gated task `snowball_run`); `found_via` on sources + screening queue; PRISMA `other_methods.citation_searching` | `test_snowball.py` | `[x]` (M1.9 closed 2026-10-10) |
 | 5.2.4 | Saved-query alerts | M1.12 | `POST …/searches/{id}/alerts` (subscribe, 1 h–30 d interval), `GET …/alerts` (last-run state + new results), `POST …/alerts/{id}/run` (immediate), `DELETE …/alerts/{id}`; G2-gated task `query_alert`, worker sweep per due slot | `test_query_alerts.py` | M1.12 `[x]` (built + closed at user request 2026-10-10; v1: no email/calendar, results not saved as sources) |
 | 5.2.5 | Search log + PRISMA counts | M1.7.1–M1.7.3 | search runs, `GET …/prisma` | `test_search_runner.py`, `test_prisma.py` | `[x]` (counts for screening stages wait on M2) |
 | 5.2 gate | G2: approve strategy before bulk retrieval; known-item test | M1.8.1–M1.8.2 | G2 gate; `GET …/known-items` | `test_search_gate.py`, `test_known_items.py` | `[x]` |
-| 5.2 QC | Gold-set recall, report missed papers | M1.8.3–M1.8.4, **X.15** | — | `test_gold_set.py` (loader only), `test_recall_report.py` | M1.8.3 `[?]` (defect → M1.8.4 `[ ]`); X.15 `[!]` blocked on Q10 |
+| 5.2 QC | Gold-set recall, report missed papers | M1.8.3–M1.8.4, **X.15** | — | `test_gold_set.py` (loader only), `test_recall_report.py` | M1.8.3/M1.8.4 `[x]` (M1.8 closed 2026-10-10; exact-fraction rounding fix reviewed); **real recall number not measured** — X.15 `[!]` blocked on Q10 |
 
 ### §5.3 Screening
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
 |---|---|---|---|---|---|
-| 5.3 data | `ScreeningDecision`, reason codes, queue/decide/undo | M2.1.1–M2.1.3 | screening queue / decide / undo endpoints | `test_screening.py` | `[?]` |
-| 5.3.1 | AI pre-screen with rationale + confidence | M2.2.1–M2.2.3 | `POST …/screening/prescreen`, task `screening_prescreen` | `test_prescreen.py` | `[?]` (not tried against a real model) |
-| 5.3.2 | Active-learning prioritisation | M2.6 | — | — | `[ ]` |
-| 5.3.3 | Dual screen, kappa, conflict queue | M2.4.1–M2.4.2 | — | — | `[ ]` |
-| 5.3.4 | OA full-text fetch; paywalled → manual upload | M2.7.1–M2.7.4 | `POST …/sources/{id}/fulltext/fetch`, `POST …/sources/{id}/fulltext/upload` | `test_oa_fetch.py`, `test_fulltext_upload.py` | `[?]` (M2.7.4, full-text screening stage, still open) |
+| 5.3 data | `ScreeningDecision`, reason codes, queue/decide/undo | M2.1.1–M2.1.3 | screening queue / decide / undo endpoints | `test_screening.py` | `[x]` |
+| 5.3.1 | AI pre-screen with rationale + confidence | M2.2.1–M2.2.3 | `POST …/screening/prescreen`, task `screening_prescreen` | `test_prescreen.py` | `[x]` (not tried against a real model) |
+| 5.3.2 | Active-learning prioritisation | M2.6 | `GET/PUT …/screening/active-learning`, `screening/queue?sort=relevance` | `test_active_learning.py`, `test_screening.py`, `test_role_matrix.py` | `[x]` (naive-Bayes bag-of-words classifier, no embeddings; falls back to oldest-first with no training signal) |
+| 5.3.3 | Dual screen, kappa, conflict queue | M2.4.1–M2.4.2b | `GET/PUT …/screening/dual-screen`, `screening/queue` + `screening/decisions` (blinded), `screening/decisions/undo` (per-reviewer), `GET …/screening/agreement` | `test_screening.py`, `test_role_matrix.py`, `test_agreement.py` | `[x]` |
+| 5.3.4 | OA full-text fetch; paywalled → manual upload; full-text screening stage | M2.7.1–M2.7.4, M2.7.7 | `POST …/sources/{id}/fulltext/fetch`, `POST …/sources/{id}/fulltext/upload`, `GET …/sources/{id}/fulltext`, `screening/queue?stage=full_text` | `test_oa_fetch.py`, `test_fulltext_upload.py`, `test_screening.py`, `test_role_matrix.py` | `[x]` (M2.7.5 DNS-rebinding pin and M2.7.6 more OA sources still `[ ]`) |
 | 5.3 UI | Keyboard-first screening queue | M2.3.1–M2.3.2, **X.14** (wireframe first) | wireframe `docs/wireframes/screening-queue.html` (X.14, awaiting scholar walkthrough) | — | `[ ]` |
-| 5.3 gate | No AI auto-exclude without sampling audit; G3 | M2.5.1, M2.8.1 | — | — | `[ ]` |
-| 5.3 QC | Stop AI pre-screen when agreement drops | M2.5.2, M2.9 | — | — | `[ ]` |
+| 5.3 gate | No AI auto-exclude without sampling audit; G3 | M2.5.1, M2.8.1 | `GET/PUT …/screening/auto-exclude`, `GET …/screening/auto-exclude/audits`, `POST …/auto-exclude/audits/{id}/review` | `test_prescreen.py`, `test_screening.py`, `test_ai_quality.py`, `test_role_matrix.py` | `[x]` (M2.5.1 built; M2.8.1 gate wiring still `[ ]`) |
+| 5.3 QC | Stop AI pre-screen when agreement drops | M2.5.2, M2.9 | `GET …/screening/ai-agreement`, `PUT …/screening/ai-prescreen` | `test_prescreen.py`, `test_screening.py`, `test_ai_quality.py` | `[x]` (M2.5.2 built; M2.9 gold-set evaluation still `[ ]`, blocked on X.15) |
 
 ### §5.4 Extraction and evidence tables
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
@@ -156,11 +156,11 @@
 | §3.3 | Config service (discipline profile) | M0.7.1–M0.7.3 | project `discipline` / `config_json` | `test_discipline.py` | `[x]` (M0.7.3 reviewed 2026-10-09; 6 shipped profiles per Q3) |
 | §3.3 | Cost / rate limiter | M0.9.1–M0.9.3 | `GET .../usage`, `PUT .../usage/budget` | `test_llm_usage.py`, `test_retrieval_run_cap.py`, `test_project_token_budget_override.py` | `[x]` |
 | §4 | Paper model fields | M0.10.1 | — | `test_source_paper_fields.py` | `[x]` |
-| §6 | Connector interface, caching, backoff, ToS flags | M1.3.1–M1.3.4 | — | — | `[ ]` |
+| §6 | Connector interface, caching, backoff, ToS flags | M1.3.1–M1.3.4 | `GET /api/connectors` | `test_connector_*.py` | `[x]` (M1.3 closed 2026-10-10, incl. M1.3.8 cross-process circuit breaker) |
 | §6 | **ORCID/ROR author disambiguation** | X.18 *(new)* | — | — | `[ ]` |
 | §7.1 | Retrieval-grounded; untrusted-text fencing | M1.2.1–M1.2.5, M3.3.1 | `untrusted_text.py`, `note_guard.py` | `test_untrusted_text.py`, `test_prompt_fencing.py`, `test_arc_fencing.py`, `test_adversarial.py` | M1.2.1–.5 `[x]`; M3.3.1 `[ ]` |
 | §7.2 | JSON-schema outputs, reject + retry | M0.8.2, M0.8.6 | — | `test_llm_schema.py`, `test_llm_success_path.py` (fail-loudly paths), `test_structured_run.py` | M0.2.5, M0.8.2 `[x]`; M0.8.6 `[?]` |
-| §7.3 | Citation guard (hard block) | M1.10.3, M1.10.5, M1.13.1, M6.4 | research runs (`research_run.citation_rejected`); source cards: verify / check buttons | `test_citation_guard.py` | M1.10.3–.5, M1.10.6, M1.13.1 `[x]`; human sign-off X.30 `[!]`; claims/export wait for M3.11/M6.4 |
+| §7.3 | Citation guard (hard block) | M1.10.3, M1.10.5, M1.13.1, M6.4 | research runs (`research_run.citation_rejected`); source cards: verify / check buttons | `test_citation_guard.py` | M1.10.3–.5, M1.10.6, M1.13.1 `[x]`; **human sign-off X.30 approved 2026-10-10**; claims/export wait for M3.11/M6.4 |
 | §7.4 | Numbers from code | M6.3 | — | — | `[ ]` |
 | §7.5 | Confidence + abstention | M0.8.3, M0.8.6, M0.8.7 | `app/output_schemas.py` | `test_output_schemas.py`, `test_structured_run.py` | M0.8.3, M0.8.6, M0.8.7 `[?]` (M0.8.7 fixes a blank-answer defect found in review 2026-10-08) |
 | §7.6 | Versioned prompts; log `prompt_version` + `model_id` | M0.8.1, M0.2.3 | `GET .../research-runs` (`provider_model`, `input_snapshot`) | `test_run_read_fields.py`, `test_prompts.py`, `test_prompt_provenance.py` | M0.2.3, M0.8.1 `[x]` |
@@ -192,7 +192,7 @@
 | No fabrication (hard to do accidentally) | M1.10, M3.4, M3.11.2, M6.2–M6.4 | `test_llm_success_path.py` (no placeholder output) | `[ ]` |
 | AI-use disclosure from provenance log | M6.6; per-manuscript statement also covered by X.31.12 (design: `docs/researcher-workspace-design.md`) | — | `[ ]` |
 | Authorship / CRediT; AI never an author; authorship ledger (who typed/dictated/pasted/AI-accepted each span) | M6.6; authorship ledger covered by X.31.8–X.31.9, X.31.11 (append-only `authorship_events`, design doc) | — | `[ ]` |
-| Copyright: store full text only where licensed | M2.7.1, M1.3.4, M1.4.8 | `test_oa_fetch.py`, `test_arxiv_fulltext.py` | `[?]` (M1.4.8 awaits independent review) |
+| Copyright: store full text only where licensed | M2.7.1, M1.3.4, M1.4.8 | `test_oa_fetch.py`, `test_arxiv_fulltext.py` | `[x]` (M1.4.8 independently reviewed 2026-10-10) |
 | Participant protection (consent, anonymisation, retention) | M4.5, M5.6, X.4 | — | `[ ]` |
 | Reporting-guideline checklists | X.11 | — | `[ ]` |
 | One-click reproducibility package | X.8.1 | `test_replication_export.py` | `[?]` |
@@ -236,7 +236,7 @@
 
 | # | Check | Delivered by | Today |
 |---|---|---|---|
-| N1 | Every citation clicks through to a verified source; unverifiable is **blocked**, not warned | M1.10.3, M1.13, M3.5.1, M6.4 | Partly built: research-run answers citing unverified or unknown sources are blocked and audited (M1.10.3 `[x]`); the `evidence_synthesis.v3` prompt only allows verified sources (M1.10.5 `[x]`); source cards show verification status with check buttons (M1.13.1 `[x]`). Export and claims are not built, so "blocked at export" is untested. |
+| N1 | Every citation clicks through to a verified source; unverifiable is **blocked**, not warned | M1.10.3, M1.13, M3.5.1, M6.4 | **Built and human-signed-off for research runs:** answers citing unverified or unknown sources are blocked and audited (M1.10.3 `[x]`); the `evidence_synthesis.v3` prompt only allows verified sources (M1.10.5 `[x]`); source cards show verification status with check buttons (M1.13.1 `[x]`); the citation-block area of X.30 was approved by the user 2026-10-10. Export and claims are not built, so "blocked at export" is still untested (M3.11/M6.4). |
 | N2 | Every AI output shows producer, model, date, approval status | M0.4, M0.8.1, X.17 | Data recorded (`created_by`, `provider_model`, `prompt_version` via M0.8.1, audit events); the Activity step shows the audit trail; X.17 (`[?]`) adds a per-output badge (producer, requester, model, prompt, date, approval/stale) on research runs and agent-retrieved sources. Research answers can't be approved yet (X.38). |
 | N3 | The 11 gates block the next step until approved | M0.5.2–M0.5.4 + per-gate tasks in §8 table | Built for the gate mechanism (M0.5.2–.4 `[x]`: human-only approval, blocked tasks, stage advance needs the gate); only G2 and G3 have stage features behind them so far. Stage-by-stage gate tasks (§8) remain open. |
 | N4 | Changing an earlier stage marks downstream work stale | M0.5.5 | Built and human-confirmed (M0.5.5 `[x]`: owner-only re-entry, stale artifacts, gates reset; owner-only design choice confirmed by the user 2026-10-09 via X.30). |
@@ -280,3 +280,4 @@
 | X.35 `api.js` error messages | Usability of existing UI. |
 | B.1, B.2 backlog | Unscheduled; B.2 waits on Q5. |
 | X.27 review backlog | Found via the master-requirements-doc audit (2026-10-05); clears the growing `[?]` second-review backlog — process gap, not a spec requirement. |
+| X.40 step-by-step journey audit + design report (`docs/step-by-step-journey-audit.md`) | Owner-requested design/audit report; no code, no spec line. |

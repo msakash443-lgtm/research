@@ -1,6 +1,7 @@
 import { $, el, label, toast, emptyCard } from "../dom.js";
 import { request, projectApi } from "../api.js";
-import { gateCard, advanceCard } from "./common.js";
+import { gateCard } from "./common.js";
+import { renderFrame } from "./frame.js";
 
 const KIND_ORDER = ["question", "objective", "hypothesis", "methodology", "variable", "decision"];
 
@@ -106,11 +107,9 @@ async function render(root, ctx) {
   const gatePanel = el("div", { className: "panel" });
   gatePanel.append(el("h2", { text: "Approval" }));
   gatePanel.append(gateCard(ctx, "G1"));
-  const scopedOption = (ctx.summary.stage?.next || []).find((option) => option.stage === "scoped");
-  if (scopedOption) gatePanel.append(advanceCard(ctx, scopedOption));
   sections.push(gatePanel);
 
-  root.replaceChildren(...sections);
+  renderFrame(root, ctx, { stepId: "scope", work: sections, next: ["scoped"] });
 }
 
 export default { render };

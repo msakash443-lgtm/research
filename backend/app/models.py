@@ -3,7 +3,7 @@ import hashlib
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import event, CheckConstraint, and_, or_, DateTime, Enum, Float, ForeignKey, Index, JSON, String, Text, UniqueConstraint, false, func
+from sqlalchemy import event, select, CheckConstraint, and_, or_, DateTime, Enum, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, false, func
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -45,6 +45,26 @@ class ExternalIdentity(Timestamped, Base):
     provider: Mapped[str] = mapped_column(String(50))
     subject: Mapped[str] = mapped_column(String(255))
     user: Mapped[User] = relationship(back_populates="external_identities")
+
+
+class AiInvolvement(str, enum.Enum):
+    """How far AI may take part in a project (X.31.7, Q14/Q27). Stored per project.
+
+    `off`: no project text is sent to any AI. `suggestions_only`: AI may comment, challenge, find evidence and
+    check structure, but never supplies manuscript words. `full`: also reworded sentences the researcher may
+    choose to insert, always labelled in the writing record.
+    """
+
+    off = "off"
+    suggestions_only = "suggestions_only"
+    full = "full"
+
+
+class AiModelRoute(str, enum.Enum):
+    """Which model endpoint a project's AI calls use: the deployment's default, or only the local/self-hosted one."""
+
+    standard = "standard"
+    local = "local"
 
 
 class ProjectStage(str, enum.Enum):
@@ -92,6 +112,32 @@ class Project(Timestamped, Base):
     # Owner-set override of settings.project_token_budget for this project only (M0.9.3); NULL = use the
     # global default. 0 means "no limit" here too, same as the global setting.
     token_budget_override: Mapped[int | None] = mapped_column()
+    # Dual-screen mode (M2.4.1, spec 5.3.3): off by default. When on, screening at both stages needs
+    # two independent human deciders (blinded from each other's answer and from the AI suggestion
+    # until they submit their own) before a decision counts; disagreement is a conflict, not a decision.
+    dual_screen_enabled: Mapped[bool] = mapped_column(default=False, server_default=false())
+    # AI auto-exclude (M2.5.1, spec 5.3 human gate): off by default. When on, a title/abstract AI
+    # exclude at or above the confidence threshold counts as the final decision without a person
+    # deciding that record, as long as it is trusted or confirmed by the sampling audit
+    # (`AutoExcludeAudit`); NULL threshold uses `settings.screening_ai_autoexclude_confidence_threshold`.
+    ai_autoexclude_enabled: Mapped[bool] = mapped_column(default=False, server_default=false())
+    ai_autoexclude_confidence_threshold: Mapped[float | None] = mapped_column()
+    # AI pre-screen quality guard (M2.5.2, spec 5.3 quality checks): set automatically when
+    # AI-human agreement falls below threshold (`app.ai_quality.should_disable_prescreen`), or
+    # manually by the owner; `POST .../screening/prescreen` refuses while this is true.
+    ai_prescreen_disabled: Mapped[bool] = mapped_column(default=False, server_default=false())
+    ai_prescreen_disabled_reason: Mapped[str | None] = mapped_column(Text)
+    # Active-learning prioritisation (M2.6, spec 5.3.2): off by default. When on, the screening queue
+    # (`GET .../screening/queue?sort=relevance`) can rank unscreened records by a classifier trained
+    # fresh, each request, on the project's current human decisions (`app.active_learning`).
+    active_learning_enabled: Mapped[bool] = mapped_column(default=False, server_default=false())
+    # Project-wide AI controls (X.31.7). Default Suggestions only for new and existing projects (Q14).
+    ai_involvement: Mapped[AiInvolvement] = mapped_column(
+        Enum(AiInvolvement, name="ai_involvement"), default=AiInvolvement.suggestions_only, server_default=AiInvolvement.suggestions_only.value
+    )
+    ai_model_route: Mapped[AiModelRoute] = mapped_column(
+        Enum(AiModelRoute, name="ai_model_route"), default=AiModelRoute.standard, server_default=AiModelRoute.standard.value
+    )
     owner: Mapped[User] = relationship(back_populates="projects")
     context_items: Mapped[list["ResearchContextItem"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     sources: Mapped[list["Source"]] = relationship(back_populates="project", cascade="all, delete-orphan")
@@ -298,6 +344,50 @@ def _reject_screening_change(mapper, connection, target) -> None:
     raise ValueError("screening_decisions is append-only: rows cannot be updated or deleted")
 
 
+class AutoExcludeAudit(Base):
+    """The human sampling audit for one AI auto-exclude (spec 5.3 human gate, plan M2.5.1).
+
+    Every `screening_ai_autoexclude_sample_rate`-th eligible AI exclude gets one of these rows,
+    `status="pending"`, when the suggestion is written (`app.prescreen.run_prescreen`). Until a
+    person reviews it (`confirmed` or `overturned`), that one exclude does not count, even though
+    other, unsampled excludes at the same confidence already do. Never updated except by the single
+    review call that sets `status`/`reviewed_by`/`reviewed_at` once. The review endpoint does a
+    conditional `UPDATE ... WHERE status='pending'` and returns 409 when the rowcount is not 1, so two
+    concurrent reviews cannot both succeed. The `before_update` ORM guard below refuses a second review
+    on the ORM flush path. The DB CHECK only requires the review fields to be set together, so it does
+    not stop a second review.
+    """
+
+    __tablename__ = "auto_exclude_audits"
+    __table_args__ = (
+        UniqueConstraint("decision_id", name="uq_auto_exclude_audit_decision"),
+        CheckConstraint("status in ('pending','confirmed','overturned')", name="ck_auto_exclude_audit_status"),
+        CheckConstraint(
+            "(status = 'pending' and reviewed_by is null and reviewed_at is null) or "
+            "(status != 'pending' and reviewed_by is not null and reviewed_at is not null)",
+            name="ck_auto_exclude_audit_review_fields",
+        ),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    source_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sources.id"), index=True)
+    stage: Mapped[str] = mapped_column(String(20))
+    decision_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("screening_decisions.id"))
+    confidence: Mapped[float]
+    status: Mapped[str] = mapped_column(String(10), default="pending", server_default="pending")
+    reviewed_by: Mapped[str | None] = mapped_column(String(100))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+@event.listens_for(AutoExcludeAudit, "before_update")
+def _guard_auto_exclude_audit_single_review(mapper, connection, target) -> None:
+    current = connection.execute(select(AutoExcludeAudit.__table__.c.status).where(AutoExcludeAudit.__table__.c.id == target.id)).scalar()
+    if current != "pending":
+        raise ValueError("auto_exclude_audits: a reviewed row cannot be reviewed again")
+
+
 class SeedPaper(Timestamped, Base):
     """A paper the scholar already knows belongs in the review (spec 5.2 inputs; known-item test, M1.8.2).
 
@@ -314,6 +404,31 @@ class SeedPaper(Timestamped, Base):
     year: Mapped[int | None]
     note: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[str | None] = mapped_column(String(100))
+
+
+class SeedCheckRun(Base):
+    """One seed-based false-exclusion check (plan M2.9.1): the AI pre-screen's answer for each seed that
+    matches a stored source, with the model, prompt and settings used. A record of what the model said,
+    never a screening decision: nothing here counts toward PRISMA or the queue. Rows are never changed.
+    """
+
+    __tablename__ = "seed_check_runs"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    created_by: Mapped[str] = mapped_column(String(100))
+    model_id: Mapped[str] = mapped_column(String(255))
+    prompt_version: Mapped[str] = mapped_column(String(100))
+    min_confidence: Mapped[float]
+    autoexclude_threshold: Mapped[float]
+    summary: Mapped[dict] = mapped_column(JSON)
+    entries: Mapped[list] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+@event.listens_for(SeedCheckRun, "before_update")
+@event.listens_for(SeedCheckRun, "before_delete")
+def _reject_seed_check_change(mapper, connection, target) -> None:
+    raise ValueError("seed_check_runs is append-only: rows cannot be updated or deleted")
 
 
 class ProjectExtractionSchema(Timestamped, Base):
@@ -529,6 +644,63 @@ class NoteRevision(Base):
     note: Mapped[Note] = relationship(back_populates="revisions")
 
 
+class AiSuggestion(Base):
+    """One thing an AI proposed for one target (X.46.1). It is never the researcher's own text and is not
+    edited after it is written: what a person did with it lives in the append-only `AiSuggestionEvent` list,
+    and its state is computed from those events (`app/suggestions.py`). `parent_id` links an "ask again"
+    answer to the suggestion it replaces."""
+
+    __tablename__ = "ai_suggestions"
+    __table_args__ = (Index("ix_ai_suggestions_target", "project_id", "target_kind", "target_id"),)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    target_kind: Mapped[str] = mapped_column(String(40))
+    target_id: Mapped[str] = mapped_column(String(64))
+    target_field: Mapped[str | None] = mapped_column(String(60))
+    content: Mapped[str] = mapped_column(Text)
+    confidence: Mapped[float | None] = mapped_column(Float)
+    evidence_json: Mapped[list | None] = mapped_column(JSON)
+    model_id: Mapped[str] = mapped_column(String(255))
+    prompt_version: Mapped[str] = mapped_column(String(100))
+    producing_agent: Mapped[str] = mapped_column(String(60))
+    guidance: Mapped[str | None] = mapped_column(Text)
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("ai_suggestions.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    events: Mapped[list["AiSuggestionEvent"]] = relationship(order_by="AiSuggestionEvent.seq")
+
+
+class AiSuggestionEvent(Base):
+    """What a person did with a suggestion. Append-only (enforced by `suggestion_guard`). `final_text` is set
+    only on `edited_and_accepted` (the AI text stays on the suggestion, so both are kept); `result_ref`
+    names the target version an accept or undo wrote, when the target kind writes one."""
+
+    __tablename__ = "ai_suggestion_events"
+    __table_args__ = (UniqueConstraint("suggestion_id", "seq", name="uq_ai_suggestion_event_seq"),)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    suggestion_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("ai_suggestions.id"), index=True)
+    seq: Mapped[int]
+    kind: Mapped[str] = mapped_column(String(30))
+    actor: Mapped[str] = mapped_column(String(100))
+    final_text: Mapped[str | None] = mapped_column(Text)
+    result_ref: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AiItemLock(Base):
+    """"Never for this item" (X.46.3): while a row exists, no AI step may be given this item (project, target kind, target id).
+    Setting and clearing are audited, so the history of the lock lives in the audit log; the row itself is only the current state.
+    A note's lock is `Note.ai_locked`, read through the same check (`app/ai_item_locks.py`)."""
+
+    __tablename__ = "ai_item_locks"
+    __table_args__ = (UniqueConstraint("project_id", "target_kind", "target_id", name="uq_ai_item_lock"),)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    target_kind: Mapped[str] = mapped_column(String(40))
+    target_id: Mapped[str] = mapped_column(String(100))
+    locked_by: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class ResearchRunStatus(str, enum.Enum):
     queued = "queued"
     running = "running"
@@ -741,7 +913,26 @@ class ClusterMember(Base):
     distance: Mapped[float] = mapped_column(Float)  # cosine distance to the cluster centre (0 = at the centre)
 
 
+class ConnectorBreakerState(Base):
+    """Cross-process circuit breaker state for one connector (M1.3.8).
+
+    `ConnectorHttpClient` (M1.3.2) built its own in-memory breaker, but `connectors/factory.py`
+    builds a fresh client per task/request, so that breaker never actually accumulated failures
+    across separate searches, let alone across the web and worker processes. This row is the
+    shared source of truth instead: `connectors/breaker_store.py::DbBreakerSync` reads/writes
+    it in its own short transaction, independent of the caller's, so a remembered failure
+    survives even if the caller's own transaction later rolls back. `open_until` is wall-clock
+    (`time.time()`) seconds — `None` means the breaker is closed."""
+
+    __tablename__ = "connector_breaker_state"
+    name: Mapped[str] = mapped_column(String(100), primary_key=True)
+    failures: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    open_until: Mapped[float | None] = mapped_column(Float, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 # Registers the immutable-excerpt and append-only audit/note guards (ORM events + DB trigger DDL). Keep at the bottom.
 from app import excerpt_guard  # noqa: E402,F401
 from app import audit_guard  # noqa: E402,F401
 from app import note_guard  # noqa: E402,F401
+from app import suggestion_guard  # noqa: E402,F401

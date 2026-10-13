@@ -27,7 +27,7 @@ from app import audit
 from app.gates import GATE_STAGES, ensure_gates
 from app.models import Artifact, ArtifactEdge, ArtifactStatus, GateCode, GateStatus, Project, ProjectStage, utcnow
 
-STAGE_ORDER = list(ProjectStage)
+from app.stage_order import chain as stage_chain
 
 
 class ArtifactError(ValueError):
@@ -39,7 +39,7 @@ class StageError(ArtifactError):
 
 
 def stage_index(stage: ProjectStage) -> int:
-    return STAGE_ORDER.index(stage)
+    return stage_chain().index(stage)
 
 
 def gate_for_stage(stage: ProjectStage) -> GateCode | None:
@@ -127,17 +127,22 @@ class Reentry:
 
 
 def reenter_stage(db: Session, project: Project, target: ProjectStage, *, actor: str, reason: str) -> Reentry:
-    """Send the project back to an earlier stage. The caller commits (everything happens in one transaction)."""
+    """Reopen `target` (the current stage or an earlier one) for revision. The caller commits (one transaction).
+
+    Everything produced at `target` or later, and anything built from it, goes stale, and the gates of those
+    stages (the target's own included) return to pending, so a person must redo the work and approve again
+    (decided with the owner 2026-10-12; before, the target kept its gate and artifacts).
+    """
     current = project.stage
-    if stage_index(target) >= stage_index(current):
-        raise StageError(f"Re-entry must go back to an earlier stage; the project is already at '{current.value}'")
+    if stage_index(target) > stage_index(current):
+        raise StageError(f"Re-entry must go to the current stage or an earlier one; the project is at '{current.value}'")
     cutoff = stage_index(target)
     result = Reentry(current, target, reason)
     note = f"Re-entered '{target.value}' from '{current.value}': {reason}"
 
     artifacts = db.scalars(select(Artifact).where(Artifact.project_id == project.id)).all()
     by_id = {a.id: a for a in artifacts}
-    later = {a.id for a in artifacts if stage_index(a.stage) > cutoff}
+    later = {a.id for a in artifacts if stage_index(a.stage) >= cutoff}
     for artifact_id in later:
         artifact = by_id[artifact_id]
         if artifact.status == ArtifactStatus.current:
@@ -152,7 +157,7 @@ def reenter_stage(db: Session, project: Project, target: ProjectStage, *, actor:
 
     # The approvals belonging to stages we are going back over are void: a person must decide again.
     for gate in ensure_gates(db, project):
-        if stage_index(GATE_STAGES[gate.code]) > cutoff and gate.status != GateStatus.pending:
+        if stage_index(GATE_STAGES[gate.code]) >= cutoff and gate.status != GateStatus.pending:
             audit.record(
                 db, actor=actor, action="gate.reset", project_id=project.id,
                 payload={"gate": gate.code.value, "previous_status": gate.status.value, "previous_decided_by": gate.decided_by,
@@ -164,7 +169,7 @@ def reenter_stage(db: Session, project: Project, target: ProjectStage, *, actor:
             gate.note = None
             result.gates_reset.append(gate.code)
 
-    result.stages_to_redo = [(s, gate_for_stage(s)) for s in STAGE_ORDER if cutoff < stage_index(s) <= stage_index(current)]
+    result.stages_to_redo = [(s, gate_for_stage(s)) for s in stage_chain(project) if cutoff <= stage_index(s) <= stage_index(current)]
     project.stage = target
     project.touch()
     audit.record(
@@ -222,7 +227,7 @@ def rerun_path(db: Session, project: Project) -> list[dict]:
     ).all()
     gates = {g.code: g for g in ensure_gates(db, project)}
     steps = []
-    for stage in STAGE_ORDER:
+    for stage in stage_chain(project):
         members = sorted((a for a in stale if a.stage == stage), key=lambda a: (a.kind, a.ref_id))
         if not members:
             continue

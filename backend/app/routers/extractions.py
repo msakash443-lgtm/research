@@ -18,15 +18,27 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import audit, project_schemas
+from app.artifacts import refresh_artifact, register_artifact
 from app.database import get_db
 from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_access
 from app.extraction_schema import SchemaError, check_extraction, schema_version
-from app.models import Extraction, Gate, GateCode, GateStatus, Project, Source, User
+from app.models import Artifact, Extraction, Gate, GateCode, GateStatus, Project, ProjectStage, Source, User
 
 router = APIRouter(prefix="/projects/{project_id}/extractions", tags=["extractions"])
 
 MAX_PAYLOAD_BYTES = 200_000  # fields + evidence of one paper, serialised
 LOCKED_MESSAGE = "Gate G4 is approved for this project. Reopen the project at the extraction stage to change an extraction."
+
+EXTRACTION_KIND = "extraction"  # artifact kind for one extraction (X.42)
+
+
+def _record_extraction(db: Session, project: Project, row: Extraction, actor: str) -> None:
+    """One artifact per extraction: a new one is registered; an edited one is current again (it was redone)."""
+    artifact = db.scalar(select(Artifact).where(Artifact.project_id == project.id, Artifact.kind == EXTRACTION_KIND, Artifact.ref_id == str(row.id)))
+    if artifact is None:
+        register_artifact(db, project.id, EXTRACTION_KIND, str(row.id), ProjectStage.extracted, actor=actor)
+    else:
+        refresh_artifact(db, artifact)
 
 
 class ExtractionIn(BaseModel):
@@ -136,6 +148,7 @@ def create_extraction(
     )
     db.add(row)
     db.flush()
+    _record_extraction(db, project, row, actor)
     audit.record(
         db, actor=actor, action="extraction.created", project_id=project.id,
         payload={"extraction_id": str(row.id), "source_id": str(source.id), "schema_version": version,
@@ -180,6 +193,7 @@ def update_extraction(
         payload={"extraction_id": str(row.id), "source_id": str(row.source_id), "fields_before": before,
                  "fields": sorted(k for k, v in payload.fields.items() if v is not None)},
     )
+    _record_extraction(db, project, row, audit.user_actor(user))
     db.commit()
     db.refresh(row)
     return row

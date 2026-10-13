@@ -1,12 +1,16 @@
 import uuid
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, HttpUrl, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, HttpUrl, StringConstraints, field_validator, model_validator
 
 from app.discipline import EffectiveSettings, ProfileSettings, available_profiles
 from app.doi import normalize_doi
+from app.exit_conditions import Level
 from app.models import (
     ARC_SOURCE_TYPES,
+    AiInvolvement,
+    AiModelRoute,
     ArtifactStatus,
     ContextKind,
     GateCode,
@@ -42,6 +46,8 @@ class ProjectRead(ProjectBase):
     id: uuid.UUID
     stage: ProjectStage
     discipline: str | None = None
+    ai_involvement: AiInvolvement
+    ai_model_route: AiModelRoute
     created_at: datetime
     updated_at: datetime
 
@@ -59,6 +65,8 @@ class ContextItemRead(ContextItemCreate):
     created_at: datetime
     # Set by the list endpoint: whether research runs are given this item (agent/context.py).
     used_by_agent: bool | None = None
+    # Set by the list endpoint: whether the item is set to "never for this item" (ai_item_locks.py).
+    ai_locked: bool | None = None
 
 
 class SourceCreate(BaseModel):
@@ -271,6 +279,10 @@ class AdvanceRequest(BaseModel):
     # Optional: only needed where there is a choice (after `submitted`). Passing it also makes a retried
     # request safe: asking twice for the same stage is refused the second time instead of moving twice.
     stage: ProjectStage | None = None
+    # Reasons for unmet Recommended conditions, by condition id; 10–500 characters each. Required ones cannot be overridden.
+    override_reasons: dict[str, Annotated[str, StringConstraints(strip_whitespace=True, min_length=10, max_length=500)]] = Field(
+        default_factory=dict
+    )
 
 
 class AdvanceRead(BaseModel):
@@ -279,16 +291,44 @@ class AdvanceRead(BaseModel):
     gate: GateCode | None
 
 
+class ConditionRead(BaseModel):
+    id: str
+    level: Level
+    met: bool
+    message: str
+    fix: str | None
+
+
+class SuggestionRead(BaseModel):
+    """An unmet exit condition of a next move, explained (X.55). Advice only: it decides nothing."""
+
+    target: ProjectStage
+    condition_id: str
+    level: Level
+    message: str
+    fix: str | None
+    meaning: str | None  # None only for a condition the guide does not describe
+    step: str | None  # the web screen where it is fixed; None = no screen yet
+
+
 class StageOptionRead(BaseModel):
     stage: ProjectStage
     gate: GateCode | None
     gate_status: GateStatus | None
     ready: bool
+    conditions: list[ConditionRead]  # every exit condition for moving to this option (X.48.2)
+
+
+class StageChainItem(BaseModel):
+    stage: ProjectStage
+    gate: GateCode | None
 
 
 class StageRead(BaseModel):
     stage: ProjectStage
     next: list[StageOptionRead]
+    chain: list[StageChainItem]  # every stage in workflow order, with the gate that completes it (X.49)
+    suggestions: list[SuggestionRead]  # unmet, built exit conditions of the next moves, most binding first (X.55)
 
 
 class DisciplineProfileRead(BaseModel):

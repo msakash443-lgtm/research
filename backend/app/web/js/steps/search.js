@@ -1,7 +1,8 @@
 import { $, el, label, toast, saveOnce } from "../dom.js";
 import { request, projectApi } from "../api.js";
 import { SEARCHABLE } from "../workflow.js";
-import { gateCard, advanceCard } from "./common.js";
+import { gateCard } from "./common.js";
+import { renderFrame } from "./frame.js";
 
 const ACCESS_LABEL = { official_api: "Official API", licensed: "Licensed", scraping: "Scraping" };
 
@@ -192,11 +193,9 @@ async function render(root, ctx) {
   const gatePanel = el("div", { className: "panel" });
   gatePanel.append(el("h2", { text: "Approval" }));
   gatePanel.append(gateCard(ctx, "G2"));
-  const option = (ctx.summary.stage?.next || []).find((o) => o.stage === "search_planned");
-  if (option) gatePanel.append(advanceCard(ctx, option));
   sections.push(gatePanel);
 
-  root.replaceChildren(...sections);
+  renderFrame(root, ctx, { stepId: "search", work: sections, next: ["search_planned"] });
 }
 
 function update(root, ctx) {

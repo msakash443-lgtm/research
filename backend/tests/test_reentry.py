@@ -60,6 +60,11 @@ def _get(model, key):
         return row
 
 
+def db_events(world, action):
+    with SessionLocal() as db:
+        return list(db.scalars(select(AuditEvent).where(AuditEvent.project_id == world["pid"], AuditEvent.action == action)))
+
+
 def _reenter(world, target, reason="Rework needed", who="owner"):
     return world["clients"][who].post(f"/api/projects/{world['project']}/stage/reenter", json={"stage": target, "reason": reason})
 
@@ -119,7 +124,7 @@ def test_a_new_artifact_built_from_a_stale_one_starts_stale(world):
 
 # ---- re-entry: artifacts ---------------------------------------------------------------------
 
-def test_re_entry_marks_only_later_stage_artifacts_stale_and_records_why(world):
+def test_re_entry_marks_the_target_and_later_stage_artifacts_stale_and_records_why(world):
     _set_stage(world, S.screened)
     early = _artifact(world, "scoping", S.scoped)
     at_target = _artifact(world, "search_plan", S.search_planned)
@@ -129,9 +134,9 @@ def test_re_entry_marks_only_later_stage_artifacts_stale_and_records_why(world):
 
     assert response.status_code == 200
     body = response.json()
-    assert [a["kind"] for a in body["stale_artifacts"]] == ["screening"]
+    assert sorted(a["kind"] for a in body["stale_artifacts"]) == ["screening", "search_plan"]
     assert _get(Artifact, early).status == ArtifactStatus.current
-    assert _get(Artifact, at_target).status == ArtifactStatus.current  # the stage we went back *to* stays valid
+    assert _get(Artifact, at_target).status == ArtifactStatus.stale  # the stage being reopened is revised too
     stale = _get(Artifact, later)
     assert stale.status == ArtifactStatus.stale and stale.stale_at is not None
     assert "Re-entered 'search_planned' from 'screened': The search terms were too narrow" == stale.stale_reason
@@ -153,7 +158,7 @@ def test_staleness_follows_dependency_edges_even_into_an_earlier_stage(world):
 
 def test_a_transitive_chain_all_goes_stale(world):
     _set_stage(world, S.analyzed)
-    a = _artifact(world, "a", S.retrieved)  # earlier than the target below
+    a = _artifact(world, "a", S.search_planned)  # earlier than the target below
     b = _artifact(world, "b", S.extracted, depends_on=[a])
     c = _artifact(world, "c", S.synthesized, depends_on=[b])
     d = _artifact(world, "d", S.scoped, depends_on=[c])  # earlier stage, but downstream of c
@@ -201,10 +206,10 @@ def test_the_project_moves_back_and_gates_for_later_stages_are_voided(world):
     body = _reenter(world, "search_planned", "Redo the search").json()
 
     assert body["from_stage"] == "extracted" and body["to_stage"] == "search_planned"
-    assert body["gates_reset"] == ["G3", "G4"]
+    assert body["gates_reset"] == ["G2", "G3", "G4"]  # the reopened stage's own gate is voided too
     gates = _gates(world)
-    assert gates[GateCode.G1].status == gates[GateCode.G2].status == GateStatus.approved  # stages up to the target stand
-    for code in (GateCode.G3, GateCode.G4):
+    assert gates[GateCode.G1].status == GateStatus.approved  # stages before the target stand
+    for code in (GateCode.G2, GateCode.G3, GateCode.G4):
         g = gates[code]
         assert g.status == GateStatus.pending and g.decided_by is None and g.decided_at is None and g.note is None
     assert world["clients"]["owner"].get(f"/api/projects/{world['project']}").json()["stage"] == "search_planned"
@@ -244,9 +249,11 @@ def test_re_entry_is_audited_with_who_why_and_the_decisions_it_voided(world):
     entered = events["project.reentered"]
     assert entered.actor == world["owner_id"]
     assert entered.payload_json == {"from": "search_planned", "to": "scoped", "reason": "Scope changed after supervisor feedback",
-                                    "stale": 1, "gates_reset": ["G2"]}
-    reset = events["gate.reset"]
-    assert reset.payload_json["gate"] == "G2" and reset.payload_json["previous_status"] == "approved"
+                                    "stale": 1, "gates_reset": ["G1", "G2"]}
+    resets = {e.payload_json["gate"]: e for e in db_events(world, "gate.reset")}
+    assert set(resets) == {"G1", "G2"}
+    reset = resets["G2"]
+    assert reset.payload_json["previous_status"] == "approved"
     assert reset.payload_json["previous_decided_by"] == world["owner_id"]  # the history survives the reset
 
 
@@ -281,18 +288,58 @@ def test_the_response_spells_out_the_stages_to_redo_with_their_gates(world):
     body = _reenter(world, "scoped").json()
 
     assert body["stages_to_redo"] == [
-        {"stage": "search_planned", "gate": "G2"}, {"stage": "retrieved", "gate": None}, {"stage": "screened", "gate": "G3"},
+        {"stage": "scoped", "gate": "G1"}, {"stage": "search_planned", "gate": "G2"},
+        {"stage": "retrieved", "gate": None}, {"stage": "screened", "gate": "G3"},
     ]
 
 
-@pytest.mark.parametrize("target", ["screened", "extracted", "accepted"])
-def test_re_entry_must_go_to_an_earlier_stage(world, target):
-    _set_stage(world, S.screened)  # target 'screened' is the same stage; the others are later
+@pytest.mark.parametrize("target", ["extracted", "accepted"])
+def test_re_entry_cannot_go_to_a_later_stage(world, target):
+    _set_stage(world, S.screened)
 
     response = _reenter(world, target)
 
-    assert response.status_code == 409 and "earlier stage" in response.json()["detail"]
+    assert response.status_code == 409 and "current stage or an earlier one" in response.json()["detail"]
     assert world["clients"]["owner"].get(f"/api/projects/{world['project']}").json()["stage"] == "screened"  # nothing changed
+
+
+def test_the_current_stage_can_be_reopened_voiding_its_gate_and_stale_artifacts(world):
+    _set_stage(world, S.screened)
+    kept = _artifact(world, "screen-result", S.screened)
+    _approve(world, "G3")
+
+    response = _reenter(world, "screened", reason="Found a mis-screened record")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["from_stage"] == body["to_stage"] == "screened" and body["gates_reset"] == ["G3"]
+    assert [a["kind"] for a in body["stale_artifacts"]] == ["screen-result"]
+    assert body["stages_to_redo"] == [{"stage": "screened", "gate": "G3"}]
+    assert _get(Artifact, kept).status == ArtifactStatus.stale
+    assert _gates(world)[GateCode.G3].status == GateStatus.pending
+    event = [e for e in world["clients"]["owner"].get(f"/api/projects/{world['project']}/stage/history").json()
+             if e["action"] == "project.reentered"][-1]
+    assert event["payload_json"]["reason"] == "Found a mis-screened record" and event["payload_json"]["from"] == "screened"
+
+
+def test_stage_history_lists_advances_reentries_and_gate_changes_oldest_first_for_every_role(world):
+    _approve(world, "G1")
+    owner = world["clients"]["owner"]
+    url = f"/api/projects/{world['project']}/stage/advance"
+    blocked = owner.post(url, json={"stage": "scoped"})
+    unmet = blocked.json()["detail"].get("recommended", []) if blocked.status_code == 409 else []
+    overrides = {c["id"]: "Set up by this test; not what it checks." for c in unmet}
+    assert owner.post(url, json={"stage": "scoped", "override_reasons": overrides}).status_code == 200
+    _reenter(world, "idea", reason="Rethink the question")
+
+    for role, client in world["clients"].items():
+        history = client.get(f"/api/projects/{world['project']}/stage/history")
+        assert history.status_code == 200, role
+        actions = [e["action"] for e in history.json() if e["action"] != "stage.condition_overridden"]
+        assert sorted(actions) == sorted(["gate.approved", "project.advanced", "gate.reset", "project.reentered"]), role
+
+    stamps = [e["timestamp"] for e in history.json()]
+    assert stamps == sorted(stamps)
 
 
 def test_invalid_requests_are_rejected_and_change_nothing(world):
@@ -328,8 +375,8 @@ def test_artifacts_can_be_listed_and_filtered_by_status(world):
 
     assert {a["kind"] for a in owner.get(base).json()} == {"keep", "redo"}
     stale = owner.get(base, params={"status": "stale"}).json()
-    assert [a["kind"] for a in stale] == ["redo"] and stale[0]["status"] == "stale" and stale[0]["stage"] == "screened"
-    assert [a["kind"] for a in owner.get(base, params={"status": "current"}).json()] == ["keep"]
+    assert sorted(a["kind"] for a in stale) == ["keep", "redo"] and all(a["status"] == "stale" for a in stale)
+    assert owner.get(base, params={"status": "current"}).json() == []
     assert owner.get(base, params={"status": "bogus"}).status_code == 422
     assert world["clients"]["reviewer"].get(base).status_code == 200  # everyone on the project can see what is stale
 
@@ -351,6 +398,10 @@ def test_the_rerun_path_groups_stale_work_by_stage_in_order_with_each_gates_stat
         ("screened", "G3", "pending", ["screening", "screening_audit"]),
         ("extracted", "G4", "pending", ["extraction"]),
     ]
+    # Redo the stale work first: EC-0.2 (Required) counts stale work as replaced only by a newer current artifact of the same kind.
+    _artifact(world, "retrieval", S.retrieved, "r2")
+    _artifact(world, "screening", S.screened, "s3")
+    _artifact(world, "screening_audit", S.screened, "s4")
     _approve(world, "G3")  # a person re-approves once the work is redone
     after = owner.get(f"/api/projects/{world['project']}/rerun-path").json()
     assert next(s for s in after if s["stage"] == "screened")["gate_status"] == "approved"

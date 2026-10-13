@@ -166,6 +166,31 @@ input:focus,textarea:focus,select:focus { outline:2px solid #b9dfd8; border-colo
 .checklist-item.status-done { background:#e7f3f0; }
 .checklist-item.status-attention { background:#fff6e5; }
 
+/* Research path guide (X.55): suggested next steps on Overview, the Research path screen. */
+.suggestion-list,.journey { list-style:none; padding:0; margin:14px 0 0; display:grid; gap:10px; }
+.suggestion,.journey-stage,.path-card,.method-card { border:1px solid var(--line); border-radius:8px; padding:12px; background:white; }
+.suggestion p,.journey-stage p,.path-card p,.method-card p { margin:6px 0; }
+.level-badge { display:inline-block; padding:2px 9px; border-radius:999px; font-size:12px; font-weight:700; background:var(--warm); color:var(--navy); }
+.level-required { background:#fde8e8; color:#9b1c1c; }
+.level-recommended { background:#fff6e5; }
+.level-information { background:#e7f3f0; color:var(--teal); }
+.journey-stage h3,.path-card h3,.method-card h3 { margin:0 0 4px; font-size:16px; }
+.condition-list { list-style:none; padding:0; margin:0; display:grid; gap:10px; }
+.condition p { margin:6px 0 0; }
+.step-footer { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:start; gap:16px; padding-top:4px; }
+.step-next { display:grid; gap:12px; margin-left:auto; }
+.back-link { font-weight:650; }
+.journey-stage.done { background:#e7f3f0; }
+.journey-stage.current { border-color:var(--navy); border-width:2px; }
+.journey-stage.upcoming { color:var(--ink); }
+.path-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:14px; margin-top:14px; }
+.path-card.fit { border-color:var(--teal); background:#e7f3f0; }
+.check-list { margin:4px 0 8px; padding-left:20px; line-height:1.5; }
+.panel fieldset { border:none; padding:0; margin:0 0 12px; }
+.panel legend { font-weight:650; margin-bottom:6px; }
+.radio-line { display:flex; gap:8px; align-items:baseline; padding:3px 0; font-weight:500; }
+.radio-line input { width:auto; flex:none; }
+
 .criteria-rows,.concept-blocks { list-style:none; padding:0; margin:14px 0 0; display:grid; gap:10px; }
 .criteria-row { display:grid; grid-template-columns:110px 160px 1fr auto; gap:8px; align-items:center; }
 .concept-block { display:grid; gap:6px; border:1px solid var(--line); border-radius:8px; padding:10px; }
@@ -285,6 +310,7 @@ dialog .helper { margin:0; }
   button { min-height:44px; }
   input,textarea,select { font-size:16px; min-height:44px; }
   .checkbox-label input { min-height:0; width:20px; height:20px; }
+  .radio-line input { min-height:0; width:20px; height:20px; }
   .runs-heading { align-items:center; }
   .run-heading { flex-wrap:wrap; align-items:center; }
   .run-heading time { text-align:left; }
@@ -299,3 +325,40 @@ dialog .helper { margin:0; }
 }
 
 @media (prefers-reduced-motion:reduce) { .sidebar, body.nav-open .sidebar, body.memory-open .sidebar, .toast { transition:none; } }
+
+/* Screening step (M2.3.1) */
+.screen-counts { font-weight:650; margin:0 0 6px; }
+.screen-notice:empty { display:none; }
+.screen-layout { display:grid; grid-template-columns:minmax(180px,1fr) minmax(0,2.2fr) minmax(200px,1fr); gap:14px; align-items:start; }
+.screen-queue { padding:8px; max-height:70vh; overflow:auto; }
+.screen-list { list-style:none; margin:0; padding:0; display:grid; gap:4px; }
+.screen-item.active .screen-item-button { background:var(--warm); border-color:var(--navy); }
+.screen-item-button { width:100%; text-align:left; font-weight:550; }
+.screen-abstract { white-space:pre-wrap; line-height:1.55; }
+.screen-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; padding-top:14px; border-top:1px solid var(--line); }
+.screen-include { background:var(--teal); }
+.screen-exclude { background:#9b2c2c; }
+.screen-maybe { background:#8a6d1d; }
+.screen-side { display:grid; gap:14px; }
+.screen-reasons { display:grid; gap:6px; margin:10px 0; }
+.screen-reason { text-align:left; }
+@media (max-width:1100px) { .screen-layout { grid-template-columns:1fr; } .screen-queue { max-height:240px; } }
+.screen-bulk { display:flex; align-items:center; gap:8px; padding:6px 4px 10px; border-bottom:1px solid var(--line); margin-bottom:6px; flex-wrap:wrap; }
+.screen-item { display:flex; align-items:center; gap:6px; }
+.screen-conflicts { margin-top:14px; }
+.screen-conflict-list { padding-left:18px; }
+
+/* Shared AI suggestion panel (X.46.4). */
+.suggestion-panel { display:grid; gap:14px; border-style:dashed; }
+.suggestion-toggle { display:flex; align-items:center; gap:6px; font-weight:500; white-space:nowrap; }
+.suggestion-toggle input { width:auto; }
+.suggestion-card { border:1px solid var(--line); border-radius:8px; padding:12px 14px; background:white; }
+.suggestion-card.suggestion-accepted { border-color:var(--teal); }
+.suggestion-card.suggestion-discarded,.suggestion-card.suggestion-superseded,.suggestion-card.suggestion-locked { opacity:.75; }
+.suggestion-text { margin:0 0 8px; white-space:pre-wrap; overflow-wrap:anywhere; }
+.suggestion-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+.suggestion-details { margin-top:10px; display:grid; gap:8px; }
+.suggestion-evidence { margin:0; padding-left:20px; }
+.suggestion-bulk { display:flex; flex-wrap:wrap; align-items:center; gap:10px 14px; padding:10px 12px; background:var(--warm); border-radius:8px; }
+.suggestion-bulk input { width:70px; }
+.suggestion-bulk label { display:flex; align-items:center; gap:6px; font-weight:500; margin:0; }

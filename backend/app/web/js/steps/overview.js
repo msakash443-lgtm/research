@@ -1,6 +1,8 @@
 import { el, label } from "../dom.js";
-import { STAGES, STEPS, GATE_NAMES, stepStatus, nextAction } from "../workflow.js";
-import { advanceCard } from "./common.js";
+import { request } from "../api.js";
+import { STAGES, STEPS, GATE_NAMES, stepStatus, loadGuide } from "../workflow.js";
+import { errorCard } from "./common.js";
+import { renderFrame, LEVEL_LABEL } from "./frame.js";
 
 const CHECKLIST_IDS = ["scope", "criteria", "search", "results", "sources", "ask"];
 const STATUS_LABEL = { done: "Done", attention: "Needs attention", todo: "Not started", info: "" };
@@ -11,29 +13,78 @@ function progressLine(ctx) {
   return `Stage ${idx + 1} of ${STAGES.length} · ${label(stage || "")}`;
 }
 
-function render(root, ctx) {
+async function whereYouAre(ctx) {
+  let guide;
+  try {
+    guide = await loadGuide(ctx, request);
+  } catch (error) {
+    return errorCard(error.message, ctx.refresh);
+  }
+  const stage = guide.stages[ctx.summary.stage?.stage];
+  const box = el("div", { className: "next-step" });
+  box.append(el("p", { className: "eyebrow", text: "WHERE YOU ARE" }));
+  if (stage) {
+    box.append(
+      el("h3", { text: stage.title }),
+      el("p", { text: stage.meaning }),
+      el("p", { className: "muted", text: `What is advisable: ${stage.advice}` })
+    );
+  }
+  const more = el("button", { className: "quiet-button", text: "See the whole research path" });
+  more.addEventListener("click", () => ctx.navigate("guide"));
+  box.append(more);
+  return box;
+}
+
+// Built on the server from the real exit conditions of the next move (GET /stage `suggestions`, app/guidance.py).
+function suggestedSteps(ctx) {
+  const panel = el("div", { className: "panel" });
+  panel.append(el("h2", { text: "Suggested next steps" }));
+  const suggestions = ctx.summary.stage?.suggestions || [];
+  if (!suggestions.length) {
+    const done = (ctx.summary.stage?.next || []).length === 0;
+    panel.append(el("p", {
+      className: "muted",
+      text: done
+        ? "This project has reached the last stage."
+        : "Nothing is blocking the next stage. Use the card below to move on, or open Research path to see what comes after.",
+    }));
+    return panel;
+  }
+  const list = el("ol", { className: "suggestion-list" });
+  suggestions.forEach((s) => {
+    const item = el("li", { className: "suggestion" });
+    const message = s.message.charAt(0).toUpperCase() + s.message.slice(1);
+    item.append(
+      el("span", { className: `level-badge level-${s.level}`, text: LEVEL_LABEL[s.level] || label(s.level) }),
+      el("strong", { text: ` ${message}` })
+    );
+    if (s.meaning) item.append(el("p", { text: `Why it matters: ${s.meaning}` }));
+    if (s.fix) item.append(el("p", { className: "muted small", text: `Where: ${s.fix}` }));
+    if (s.level === "recommended") {
+      item.append(el("p", { className: "muted small", text: "You can move on without this, but you will be asked to write a reason." }));
+    }
+    const step = s.step && STEPS.find((candidate) => candidate.id === s.step);
+    if (step) {
+      const go = el("button", { className: "quiet-button", text: `Go to ${step.title}` });
+      go.addEventListener("click", () => ctx.navigate(step.id));
+      item.append(go);
+    } else {
+      item.append(el("p", { className: "muted small", text: "This has no screen in the app yet." }));
+    }
+    list.append(item);
+  });
+  panel.append(list);
+  return panel;
+}
+
+async function render(root, ctx) {
   const sections = [];
   sections.push(el("p", { className: "muted", text: progressLine(ctx) }));
-
-  const next = nextAction(ctx.summary);
-  const nextBox = el("div", { className: "next-step" });
-  nextBox.append(el("p", { className: "eyebrow", text: "NEXT ACTION" }));
-  if (next) {
-    nextBox.append(el("h3", { text: next.action }));
-    const go = el("button", { text: `Go to ${next.title}` });
-    go.addEventListener("click", () => ctx.navigate(next.id));
-    nextBox.append(go);
-  } else {
-    nextBox.append(el("h3", { text: "The planning and gathering steps are complete." }));
-  }
-  sections.push(nextBox);
+  sections.push(await whereYouAre(ctx));
+  sections.push(suggestedSteps(ctx));
 
   const options = ctx.summary.stage?.next || [];
-  if (options.length) {
-    const advanceWrap = el("div", { className: "process-grid" });
-    options.forEach((option) => advanceWrap.append(advanceCard(ctx, option)));
-    sections.push(advanceWrap);
-  }
 
   const waiting = options.filter((option) => {
     const gate = option.gate && (ctx.summary.gates || []).find((g) => g.code === option.gate);
@@ -64,8 +115,7 @@ function render(root, ctx) {
   });
   checklistWrap.append(checklist);
   sections.push(checklistWrap);
-
-  root.replaceChildren(...sections);
+  renderFrame(root, ctx, { stepId: "overview", work: sections, next: options.map((option) => option.stage) });
 }
 
 export default { render };

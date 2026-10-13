@@ -33,16 +33,20 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import audit
+from app.artifacts import register_artifact
 from app.connectors.http import bypass_cache
 from app.config import get_settings
 from app.connectors.access import is_enabled
 from app.connectors.base import Connector, ConnectorError, PaperRecord, SearchRequest
 from app.dedupe import doi_key, group_duplicates, work_key
-from app.models import Project, SearchQuery
+from app.models import Project, ProjectStage, SearchQuery
 from app.search_query import BooleanQuery
 from app.search_limits import DEFAULT_MAX_RESULTS, HARD_MAX_RESULTS
+
 from app.search_query_adapters import adapt
 from app.search_rerun import rerun_refusal
+
+SEARCH_RUN_KIND = "search_run"  # artifact kind for one completed search (X.42)
 
 PAGE_SIZE = 100
 
@@ -165,6 +169,7 @@ def _execute(
     )
     db.add(row)
     db.flush()
+    register_artifact(db, project.id, SEARCH_RUN_KIND, str(row.id), ProjectStage.retrieved, actor=actor)
     audit.record(
         db,
         actor=actor,

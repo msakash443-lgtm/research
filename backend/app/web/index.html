@@ -17,6 +17,7 @@
         </div>
         <div id="account" class="account" hidden>
           <span id="role-chip" class="role-chip" hidden></span>
+          <span id="ai-chip" class="role-chip" hidden></span>
           <button id="notes-button" class="quiet-button" type="button">Notes</button>
           <button id="capture-button" class="quiet-button" type="button">Capture</button>
           <button id="memory-toggle" class="quiet-button" type="button" aria-controls="memory-sidebar" aria-expanded="false" hidden>Memory</button>
@@ -163,11 +164,11 @@
       <div class="dialog-actions"><button type="button" class="quiet-button" data-close>Cancel</button><button type="submit">Reopen</button></div>
     </form></dialog>
 
-    <dialog id="reenter-dialog"><form id="reenter-form"><div class="dialog-heading"><h2>Go back to an earlier stage</h2><button type="button" class="close" data-close>×</button></div>
+    <dialog id="reenter-dialog"><form id="reenter-form"><div class="dialog-heading"><h2>Reopen a stage</h2><button type="button" class="close" data-close>×</button></div>
       <label>Stage<select name="stage"></select></label>
       <label>Reason<textarea name="reason" required maxlength="1000"></textarea></label>
-      <p class="helper">Gates of the stages being redone return to pending; later results are marked stale.</p>
-      <div class="dialog-actions"><button type="button" class="quiet-button" data-close>Cancel</button><button type="submit">Go back</button></div>
+      <p class="helper">That stage's gate and every later gate return to pending; its results and later results are marked stale. Nothing is deleted.</p>
+      <div class="dialog-actions"><button type="button" class="quiet-button" data-close>Cancel</button><button type="submit">Reopen</button></div>
     </form></dialog>
 
     <dialog id="invite-dialog"><form id="invite-form"><div class="dialog-heading"><h2>Invite member</h2><button type="button" class="close" data-close>×</button></div>

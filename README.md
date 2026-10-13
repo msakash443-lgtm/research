@@ -119,6 +119,8 @@ pytest -q
 
 The tests cover account identity reuse, project ownership, dashboard flow, source/excerpt persistence, and research-run safeguards.
 
+The web UI's DOM-free logic has its own tests, run with Node (22 or newer; no packages): `node --test backend/app/web/js/test/*.test.mjs`. `pytest -q` does not run them. So far they cover the screening step's key map, bulk loop and count updates (`web/js/steps/screenLogic.js`); the DOM wiring is still checked by hand in a browser.
+
 ## API overview
 
 | Endpoint | Purpose |

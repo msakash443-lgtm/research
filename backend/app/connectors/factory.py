@@ -73,3 +73,26 @@ def unpaywall_unavailable_reason() -> str | None:
 
 def build_unpaywall() -> UnpaywallConnector:
     return UnpaywallConnector(contact_email=get_settings().connector_contact_email)
+
+
+def build_openalex_oa() -> OpenAlexConnector:
+    return OpenAlexConnector(contact_email=get_settings().connector_contact_email)
+
+
+def build_core_oa() -> CoreConnector:
+    return CoreConnector(api_key=get_settings().core_api_key)
+
+
+def oa_source_enabled(name: str) -> bool:
+    """Whether an optional open-access source (OpenAlex, CORE) is consulted for full text (M2.7.6).
+
+    It must be listed in CONNECTORS_ENABLED. CORE also needs its API key: without one it is off, never anonymous.
+    """
+    from app.connectors.access import is_enabled
+
+    settings = get_settings()
+    if not is_enabled(name, settings.connectors_enabled, settings.connectors_allow_scraping):
+        return False
+    if name == "core":
+        return bool(settings.core_api_key and settings.core_api_key.get_secret_value().strip())
+    return True

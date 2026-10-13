@@ -12,7 +12,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from app.database import Base, engine
 from app.config import get_settings
 from app.middleware import ContentLengthLimitMiddleware
-from app.routers import audit, auth, bibliometrics, clusters, connectors, coverage, criteria, exports, extraction_schemas, extractions, gates, members, notes, prisma, profile, projects, replication, research_runs, screening, searches, alerts, seeds, snowball, sources, stage, usage, zotero
+from app.routers import ai_locks, ai_settings, audit, auth, bibliometrics, clusters, connectors, coverage, criteria, exports, extraction_schemas, extractions, gates, guide, members, notes, prisma, profile, projects, replication, research_runs, screening, searches, alerts, seeds, snowball, sources, stage, suggestions, usage, zotero
 
 # Production settings (session secret, HTTPS, Postgres, ...) are validated in Settings.
 settings = get_settings()
@@ -60,8 +60,11 @@ app.include_router(auth.router, prefix="/api")
 app.include_router(projects.router, prefix="/api")
 app.include_router(audit.router, prefix="/api")
 app.include_router(usage.router, prefix="/api")
+app.include_router(ai_settings.router, prefix="/api")
+app.include_router(ai_locks.router, prefix="/api")
 app.include_router(exports.router, prefix="/api")
 app.include_router(gates.router, prefix="/api")
+app.include_router(guide.router, prefix="/api")
 app.include_router(stage.router, prefix="/api")
 app.include_router(profile.router, prefix="/api")
 app.include_router(profile.catalogue, prefix="/api")
@@ -82,6 +85,7 @@ app.include_router(members.router, prefix="/api")
 app.include_router(sources.router, prefix="/api")
 app.include_router(research_runs.router, prefix="/api")
 app.include_router(notes.router, prefix="/api")
+app.include_router(suggestions.router, prefix="/api")
 app.include_router(alerts.router, prefix="/api")
 app.include_router(zotero.router, prefix="/api")
 

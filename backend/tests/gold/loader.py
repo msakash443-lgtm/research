@@ -17,8 +17,13 @@ def load_gold_set(path: Path | None = None) -> dict:
     return data
 
 
-def csv_to_gold_set(csv_path: Path, topic: str, supplied_by: str) -> dict:
-    """Convert the scholar's filled-in CSV to the fixture shape."""
+def csv_to_gold_set(csv_path: Path, topic: str, supplied_by: str,
+                    extractions_csv: Path | None = None) -> dict:
+    """Convert the scholar's filled-in CSV to the fixture shape.
+
+    `extractions_csv` (columns id,field,value,source_quote; one row per field) is optional and
+    attaches a verified extraction to the paper with that id.
+    """
     import csv
 
     papers = []
@@ -33,4 +38,18 @@ def csv_to_gold_set(csv_path: Path, topic: str, supplied_by: str) -> dict:
                 "known_relevant": row.get("known_relevant", "").strip().lower() in ("1", "true", "yes"),
                 "reason": row["reason"].strip(),
             })
+    if extractions_csv is not None:
+        by_id = {p["id"]: p for p in papers}
+        with extractions_csv.open(encoding="utf-8", newline="") as fh:
+            for row in csv.DictReader(fh):
+                paper = by_id.get(row["id"].strip())
+                if paper is None:
+                    raise ValueError(f"extraction row for unknown paper id {row['id']!r}")
+                field = row["field"].strip()
+                if not field:
+                    continue
+                fields = paper.setdefault("extraction", {})
+                if field in fields:
+                    raise ValueError(f"duplicate extraction field {field!r} for paper {paper['id']!r}")
+                fields[field] = {"value": row["value"].strip(), "source_quote": row["source_quote"].strip()}
     return {"topic": topic, "supplied_by": supplied_by, "papers": papers}

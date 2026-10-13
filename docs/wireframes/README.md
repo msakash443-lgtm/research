@@ -2,6 +2,9 @@
 
 Static, clickable prototypes for the three M2+ screens that plan.md rule 32 says must be walked through by the scholar **before** they are built. Open `index.html` in a browser (double-click works; no server, no build). Data is invented, nothing is saved, nothing calls the app's API.
 
+See also [`step-template-checklist.md`](step-template-checklist.md): a one-page checklist for the walkthrough of **every** screen in the app today, built and not-yet-built, added 2026-10-10 at the owner's request (X.40 decision 3).
+
+
 | File | Screen | Gates the build of | Spec |
 |---|---|---|---|
 | `screening-queue.html` | Keyboard-first title/abstract screening, AI suggestion + rationale, bulk actions, AI-exclude audit sample, dual-screen conflict, G3 | M2.3 (also shows M2.4, M2.5, M2.8 UI) | §5.3, §8 G3, §10 Usability |

@@ -1,10 +1,9 @@
-// Pure data and status logic, no DOM. Mirrors spec Appendix C / app/artifacts.py GATE_STAGES
-// (the stage a gate must be approved to reach).
-export const STAGES = [
-  ["idea"], ["scoped", "G1"], ["search_planned", "G2"], ["retrieved"], ["screened", "G3"], ["extracted", "G4"], ["synthesized"],
-  ["gaps_selected", "G5"], ["framework", "G6"], ["design_approved", "G7"], ["data_collected"], ["plan_locked", "G8"],
-  ["analyzed", "G9"], ["drafted", "G10"], ["revised"], ["submission_ready", "G11"], ["submitted"], ["revision_loop"], ["accepted"],
-];
+// Pure data and status logic, no DOM. The stage order comes from the server (GET /stage `chain`,
+// app/stage_order.py), so it is filled in by setStageChain(); nothing here hard-codes the workflow.
+export const STAGES = [];
+export function setStageChain(chain) {
+  STAGES.splice(0, STAGES.length, ...chain.map((item) => (item.gate ? [item.stage, item.gate] : [item.stage])));
+}
 export const GATE_NAMES = {
   G1: "Scope", G2: "Search plan", G3: "Screening", G4: "Extraction", G5: "Gap selection",
   G6: "Framework", G7: "Design", G8: "Analysis plan", G9: "Results", G10: "Draft", G11: "Final sign-off",
@@ -21,16 +20,19 @@ export const FRAMEWORK_ELEMENTS = {
   custom: [],
 };
 
-// Every screen the workspace builds. "overview" sits above the groups; everything else is
-// grouped in the left rail. Later spec stages (screening onward) have no screen yet (rule 32) —
+// Every screen the workspace builds. Steps without a group ("overview", "guide") sit above the groups; everything
+// else is grouped in the left rail. Later spec stages (screening onward) have no screen yet (rule 32) —
 // they only appear, locked, in the "Later stages" disclosure built from STAGES.
+// Mirrored by app/guidance.py UI_STEPS (a guide entry may only point at a screen listed here).
 export const STEPS = [
   { id: "overview", title: "Overview" },
+  { id: "guide", title: "Research path" },
   { id: "scope", title: "Scope", group: "Plan" },
   { id: "criteria", title: "Criteria & seeds", group: "Plan" },
   { id: "search", title: "Search", group: "Gather" },
   { id: "results", title: "Results check", group: "Gather" },
   { id: "sources", title: "Sources", group: "Gather" },
+  { id: "screen", title: "Screening", group: "Gather" },
   { id: "ask", title: "Ask", group: "Synthesize" },
   { id: "approvals", title: "Approvals", group: "Project" },
   { id: "team", title: "Team", group: "Project" },
@@ -43,6 +45,11 @@ export const GUIDES = {
   overview: {
     what: "Where this project stands and what to do next.",
     why: "One place to see progress and anything waiting on you.",
+    approval: null,
+  },
+  guide: {
+    what: "What each stage means, which kind of review fits your question, and when meta-analysis is advisable.",
+    why: "So you always know what comes next and why.",
     approval: null,
   },
   scope: {
@@ -70,6 +77,11 @@ export const GUIDES = {
     why: "Only verified sources may be cited in answers.",
     approval: null,
   },
+  screen: {
+    what: "Screen titles and abstracts one record at a time: include, exclude with a reason, or maybe.",
+    why: "Your decisions, not the AI's, decide what reaches the included set; every exclusion reason feeds the PRISMA counts.",
+    approval: "G3 Screening: owner or supervisor approves the included set.",
+  },
   ask: {
     what: "Ask a research question answered from saved context and sources.",
     why: "Every run records its plan, inputs, model and prompt version.",
@@ -90,15 +102,6 @@ export const GUIDES = {
     why: "Accountability: who did what, when, with which model.",
     approval: null,
   },
-};
-
-const ACTION_TEXT = {
-  scope: "Write your research question",
-  criteria: "Set screening criteria",
-  search: "Plan and queue a search",
-  results: "Check search results",
-  sources: "Verify your sources",
-  ask: "Ask the agent",
 };
 
 function gate(summary, code) {
@@ -170,13 +173,9 @@ export function stepStatus(stepId, summary) {
   }
 }
 
-const NEXT_ORDER = ["scope", "criteria", "search", "results", "sources", "ask"];
-
-export function nextAction(summary) {
-  for (const id of NEXT_ORDER) {
-    if (stepStatus(id, summary).status !== "done") {
-      return { id, title: STEPS.find((s) => s.id === id).title, action: ACTION_TEXT[id] };
-    }
-  }
-  return null;
+// The research-path guide (GET /api/guide, app/guides/journey.toml) is the same for every project, so it is
+// fetched once and kept in ctx.cache. `request` is passed in to keep this module free of fetch/DOM code.
+export async function loadGuide(ctx, request) {
+  if (!ctx.cache.guide) ctx.cache.guide = await request("/api/guide");
+  return ctx.cache.guide;
 }

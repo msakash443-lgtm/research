@@ -1,4 +1,5 @@
 import { el, label, emptyCard } from "../dom.js";
+import { renderFrame } from "./frame.js";
 
 const STATUS_LABEL = { found: "Found", missing: "Missing", not_searched: "Not searched", cannot_check: "Cannot check" };
 
@@ -77,7 +78,12 @@ function knownItemsBox(ctx) {
 }
 
 function render(root, ctx) {
-  root.replaceChildren(prismaBox(ctx), knownItemsBox(ctx));
+  const searches = ctx.summary.prisma?.identification?.searches || [];
+  if (searches.length === 0) {
+    root.replaceChildren(emptyCard("No results yet", "Run a search on the Search step, then come back here to check the results."));
+    return;
+  }
+  renderFrame(root, ctx, { stepId: "results", work: [prismaBox(ctx), knownItemsBox(ctx)], next: ["retrieved"] });
 }
 
 export default { render };

@@ -57,7 +57,16 @@ def _reenter(world, stage):
 
 
 def _advance(world):
-    return world["client"].post(f"/api/projects/{world['project']}/stage/advance", json={})
+    body = {}
+    url = f"/api/projects/{world['project']}/stage/advance"
+    response = world["client"].post(url, json=body)
+    detail = response.json().get("detail") if response.status_code == 409 else None
+    locked = detail.get("recommended") if isinstance(detail, dict) else None
+    if locked:
+        # These tests check staleness and re-entry; lock levels are covered in test_stage_condition_overrides.py.
+        body["override_reasons"] = {c["id"]: "Set up by this test; not what it checks." for c in locked}
+        response = world["client"].post(url, json=body)
+    return response
 
 
 def _stage(world):
@@ -176,7 +185,8 @@ def test_the_stage_view_shows_the_next_stage_as_not_ready(after_reentry):
 
     body = world["client"].get(f"/api/projects/{world['project']}/stage").json()
 
-    assert body["next"] == [{"stage": "synthesized", "gate": None, "gate_status": None, "ready": False}]
+    option = body["next"][0]
+    assert (option["stage"], option["gate"], option["gate_status"], option["ready"]) == ("synthesized", None, None, False)
     _artifact(world, "research_run", S.synthesized)
     assert world["client"].get(f"/api/projects/{world['project']}/stage").json()["next"][0]["ready"] is True
 

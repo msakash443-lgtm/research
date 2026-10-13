@@ -5,6 +5,7 @@ and generated, by whom, with which model and prompt version, and check the files
 
 * `data/<table>.json` and `data/<table>.csv` for every project-scoped table, rows in a stable order;
 * `derived/prisma.json`: the PRISMA counts computed at export time;
+* `derived/agreement.json`: Cohen's kappa per screening stage, its scope counts and the conflict list, computed at export time;
 * `manifest.json`: sha256 and row count per file, schema revision, prompt/schema/model versions seen,
   what was left out and why, who exported and when;
 * `README.md`: how to read it.
@@ -33,6 +34,7 @@ from sqlalchemy.orm import Session
 from app import prisma
 from app.database import Base
 from app.models import Project
+from app.screening import STAGES, stage_agreement
 
 FORMAT_VERSION = 1
 # Spreadsheet apps treat cells starting with these as formulas (same guard as the audit CSV export).
@@ -52,11 +54,13 @@ CHILD_TABLES = [
     ("source_excerpts", "sources", "source_id"),
     ("clusters", "cluster_runs", "run_id"),
     ("cluster_members", "clusters", "cluster_id"),
+    ("ai_suggestion_events", "ai_suggestions", "suggestion_id"),
 ]
 NOT_EXPORTED = {
     "users": "accounts and emails are personal data; members are exported as user id + role",
     "external_identities": "sign-in identities (personal data)",
     "note_revisions": "history of per-user notes (see notes)",
+    "connector_breaker_state": "operational circuit-breaker state (M1.3.8), not scoped to any project",
 }
 
 
@@ -143,9 +147,11 @@ regenerated for the export.
 * `data/audit_events` is the append-only trail of who did what (user ids or `agent:<name>`), with the
   model and prompt version of every AI step.
 * `data/research_runs` keeps each run's `input_snapshot`: the exact sources and excerpts the model saw.
-* `data/search_queries` is the versioned search log; `derived/prisma.json` the PRISMA counts at export time.
+* `data/search_queries` is the versioned search log; `derived/prisma.json` the PRISMA counts at export time; `derived/agreement.json` the Cohen's kappa, scope counts and conflicts per stage at export time.
 * AI pre-screen suggestions are rows in `data/screening_decisions` with `decided_by = "ai"`; they are not
   decisions.
+* A row with `decided_by = "arbiter"` is an owner's or supervisor's ruling on two reviewers who disagreed. It settles
+  that record's outcome; the two reviewers' own rows stay, and `derived/agreement.json` still compares only them.
 
 Left out on purpose (see `manifest.json` → `excluded`): per-user notes, the task queue, embedding vectors,
 user accounts/emails and all full-text PDFs (only their stored paths). The package can contain quoted text
@@ -176,6 +182,16 @@ def build_package(db: Session, project: Project, *, exported_by: str, exported_a
         add_table(table, table.c[fk].in_(ids_by_table.get(parent, [])))
 
     files["derived/prisma.json"] = _json(prisma.flow_counts(db, project))
+    agreement_json = {}
+    for stage in STAGES:
+        result = stage_agreement(db, project, stage)
+        a = result.agreement
+        agreement_json[stage] = {
+            "n": a.n, "agreed": a.agreed, "percent_agreement": a.percent_agreement, "kappa": a.kappa, "band": a.band,
+            "categories": list(a.categories), "matrix": a.matrix, "note": a.note,
+            "scope": result.scope, "conflicts": result.conflicts,
+        }
+    files["derived/agreement.json"] = _json(agreement_json)
 
     rows_of = lambda name: json.loads(files[f"data/{name}.json"])  # noqa: E731
     versions = {

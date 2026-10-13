@@ -21,7 +21,7 @@ from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_acce
 from app.connectors.factory import enabled_lookup_names, unpaywall_unavailable_reason
 from app.fulltext import FullTextError, extract_pdf_text
 from app.models import SOURCE_ORIGIN_RETRIEVED, Project, Source, SourceExcerpt, Task, TaskStatus, User, excerpt_hash, utcnow
-from app.object_storage import ObjectConflict, fulltext_key, get_object_store
+from app.object_storage import ObjectConflict, ObjectNotFound, fulltext_key, get_object_store
 from app.task_handlers import FULLTEXT_FETCH, SOURCE_CHECK
 from app.task_queue import enqueue_task
 from app.refmanager import parse_bibtex, parse_ris, to_bibtex, to_ris
@@ -337,6 +337,64 @@ async def upload_fulltext(
     )
     db.commit()
     return source_response(_load_source(db, source.id))
+
+
+class FullTextPageRead(BaseModel):
+    number: int
+    label: str | None
+    start: int
+    end: int
+
+
+class FullTextSectionRead(BaseModel):
+    title: str
+    name: str
+    page: int
+    start: int
+
+
+class FullTextRead(BaseModel):
+    text: str
+    pages: list[FullTextPageRead]
+    sections: list[FullTextSectionRead]
+    empty_pages: list[int]
+    sha256: str
+
+
+@router.get("/{source_id}/fulltext", response_model=FullTextRead)
+def get_fulltext(
+    source_id: uuid.UUID,
+    project: Project = Depends(project_access(READ_ROLES)),
+    db: Session = Depends(get_db),
+):
+    """The stored full text, with page/section anchors, for full-text screening and later extraction (M3.4).
+
+    404 if no PDF has been fetched or uploaded for this source yet (`fulltext_access` on the source
+    says why: `no_oa`/`no_pdf`/`link_only`, or nothing attempted). Re-extracted on each call; the text
+    itself is not cached.
+    """
+    source = db.scalar(select(Source).where(Source.id == source_id, Source.project_id == project.id, Source.merged_into.is_(None)))
+    if source is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
+    if not source.fulltext_path:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No stored full text for this source yet")
+    settings = get_settings()
+    store = get_object_store(settings)
+    try:
+        data = store.get(source.fulltext_path)
+    except ObjectNotFound as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="The stored full text is missing from storage") from exc
+    try:
+        parsed = extract_pdf_text(data, max_pages=settings.fulltext_max_pages)
+    except FullTextError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"The stored full text could not be read: {exc}") from exc
+    return FullTextRead(
+        text=parsed.text,
+        pages=[FullTextPageRead(number=p.number, label=p.label, start=p.start, end=p.end) for p in parsed.pages],
+        sections=[FullTextSectionRead(title=s.title, name=s.name, page=s.page, start=s.start) for s in parsed.sections],
+        empty_pages=list(parsed.empty_pages),
+        sha256=parsed.sha256,
+    )
 
 
 class ReferenceImport(BaseModel):

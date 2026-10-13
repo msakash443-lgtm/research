@@ -16,7 +16,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import audit
-from app.agent.llm import LLMConfigurationError, LLMResponseError, OpenAICompatibleLLM
+from app.agent.llm import LLMConfigurationError, LLMResponseError
+from app.ai_controls import llm_for_project, require_ai_on
 from app.config import get_settings
 from app.connectors.access import is_enabled
 from app.connectors.factory import SEARCHABLE
@@ -26,7 +27,6 @@ from app.models import Project, SearchQuery, Task, TaskStatus, User
 from app.search_query import BooleanQuery, ConceptBlock, QueryError
 from app.search_query_adapters import adapt
 from app.search_rerun import rerun_refusal
-from app.llm_usage import ProjectMeter
 from app.synonym_suggest import SuggestionError, suggest_synonyms
 from app.search_limits import DEFAULT_MAX_RESULTS, HARD_MAX_RESULTS
 from app.task_handlers import SEARCH_RUN
@@ -181,8 +181,9 @@ def suggest_search_synonyms(
 ):
     """Ask the model for extra terms for one concept. Proposals only: nothing is saved or searched."""
     settings = get_settings()
-    llm = OpenAICompatibleLLM(settings, meter=ProjectMeter(project.id, settings, purpose="synonyms", budget_override=project.token_budget_override))
+    require_ai_on(project)
     try:
+        llm = llm_for_project(settings, project, purpose="synonyms")
         result = suggest_synonyms(llm, body.block, project.title)
     except LLMConfigurationError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc

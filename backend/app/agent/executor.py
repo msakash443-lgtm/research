@@ -15,17 +15,19 @@ from sqlalchemy.orm import Session, selectinload
 from app import audit
 from app.agent.arc_client import ArcRetrievalClient, ArcRetrievalError
 from app.agent.context import select_agent_context
-from app.agent.llm import LLMConfigurationError, LLMResponseError, OpenAICompatibleLLM
-from app.llm_usage import ProjectMeter
+from app.agent.llm import LLMConfigurationError, LLMResponseError
+from app.ai_controls import AI_OFF_MESSAGE, llm_for_project
+from app.ai_item_locks import CONTEXT_ITEM_KIND, locked_ids, locked_uuids
 from app.output_schemas import EVIDENCE_SYNTHESIS_SCHEMA
 from app.prompt_registry import Prompt, load_prompt
 from app.answer_guard import check_answer
-from app.untrusted_text import clean_untrusted
+from app.untrusted_text import clean_untrusted, _strip_invisible
 from app.task_registry import TaskOwnershipLost
 from app.config import get_settings
 from app.database import SessionLocal
 from app.artifacts import register_artifact
 from app.models import (
+    AiInvolvement,
     Project,
     ProjectStage,
     ResearchContextItem,
@@ -84,13 +86,22 @@ def _source_snapshot(source: Source) -> dict[str, Any]:
 # A citation group like [S1], [S1, S3], [S2; S4], [S1 and S2] or a range [S1-S3] / [S1–S3]. Used to turn
 # well-formed groups into links (Obsidian export); the hard block below does not rely on it alone.
 _CITATION_GROUP = re.compile(r"\[\s*(S\d+(?:\s*(?:[,;]|-|–|and)\s*S?\d+)*)\s*\]", re.IGNORECASE)
-# Fail-closed reading (M1.10.6): inside any [...], every S# token starts or continues a chain, however
-# it is written ("[S2, p. 4]", "[S1, S2, and S3]", "[S1 & S2]", "[S1/S2]", "[S 2]"); a chain also takes
-# bare numbers and ranges after an S# ("[S1, 2]", "[S1 to S3]"). A page number after "p." is not a source.
+# Fail-closed reading (M1.10.6/M1.10.7): inside any [...], every S# token starts or continues a chain,
+# however it is written ("[S2, p. 4]", "[S1, S2, and S3]", "[S1 & S2]", "[S1/S2]", "[S 2]"); a chain also
+# takes bare numbers and ranges after an S# ("[S1, 2]", "[S1 to S3]"). A page number after "p." is not a
+# source. Bracket contents come from `_bracket_contents` below (handles nesting/unclosed brackets, no
+# length cap — M1.10.7: a cap let an oversized bracket hide its S# token from the reader entirely instead
+# of it being read or at least flagged as unparseable).
 _SEP = r"(?:,\s*and|,\s*or|[,;/&]|\band\b|\bor\b)"
 _RANGE = r"(?:-|–|—|\bto\b|\bthrough\b)"
 _CHAIN = re.compile(rf"(?<![A-Za-z0-9])S\s*\d+(?:\s*(?:{_SEP}|{_RANGE})\s*(?:S\s*)?\d+(?![\d.]))*", re.IGNORECASE)
 _CHAIN_PART = re.compile(rf"\s*(?:(?P<range>{_RANGE})|{_SEP})?\s*(?P<s>S\s*)?(?P<n>\d+)", re.IGNORECASE)
+# M1.10.7: a bracket can still hold an S-then-digit token the chain reader above cannot read (unknown
+# punctuation between them, e.g. "[S.2]"). Rather than silently read that as "no citation", it is flagged
+# as unparseable so the run fails closed instead of possibly letting an unverified citation through. Same
+# word-start boundary as `_CHAIN` so an ordinary word ending in "s" before a number ("Jones 2020") doesn't
+# false-positive — only a standalone "S" (not part of a longer word) counts.
+_SUSPICIOUS_TOKEN = re.compile(r"(?<![A-Za-z0-9])S\W{0,10}\d", re.IGNORECASE)
 
 
 def _bracket_contents(answer: str):
@@ -108,9 +119,14 @@ def _bracket_contents(answer: str):
 
 def _cited_indices(answer: str) -> set[int]:
     """Every source number an answer cites inside [...], ranges expanded. Errs towards finding a citation:
-    a number read as a source that wasn't meant as one can only block a run, never let one through."""
+    a number read as a source that wasn't meant as one can only block a run, never let one through.
+
+    Invisible Unicode format characters (zero-width spaces, bidi overrides, ...) are stripped before
+    parsing (M1.10.7): they can split a token like "S2" into "S\u200b2", which renders identically but
+    is invisible to the chain reader below. This view is parsing-only; the stored answer is never altered."""
     cited: set[int] = set()
-    for inside in _bracket_contents(answer):
+    parsing_view, _ = _strip_invisible(answer)
+    for inside in _bracket_contents(parsing_view):
         for chain in _CHAIN.finditer(inside):
             previous = None
             for part in _CHAIN_PART.finditer(chain.group(0)):
@@ -126,11 +142,26 @@ def _cited_indices(answer: str) -> set[int]:
     return cited
 
 
+def _unparseable_citation_bracket(answer: str) -> bool:
+    """True if some [...] contains an S-then-digit token `_cited_indices` could not read at all (M1.10.7).
+    Checked on the same invisible-stripped view, with every span the chain reader *did* consume removed
+    first, so this only fires on a genuine leftover (e.g. "[S.2]"), never on a normal citation."""
+    parsing_view, _ = _strip_invisible(answer)
+    for inside in _bracket_contents(parsing_view):
+        remainder = _CHAIN.sub(" ", inside)
+        if _SUSPICIOUS_TOKEN.search(remainder):
+            return True
+    return False
+
+
 def _citation_problem(answer: str, sources: list[dict[str, Any]]) -> tuple[int, str] | None:
-    """The first citation that can't stand: an [S#] with no source behind it in this run, or one whose
-    source hasn't passed citation verification (a person's or the automatic check). None if all are fine.
+    """The first citation that can't stand: an [S#] with no source behind it in this run, one whose source
+    hasn't passed citation verification (a person's or the automatic check), or a bracket that looks like
+    an attempted citation but can't be fully read (M1.10.7). None if all are fine.
 
     Unverifiable citations are blocked, not warned (plan M1.10.3, rule 24)."""
+    if _unparseable_citation_bracket(answer):
+        return 0, "unparseable_citation_bracket"
     for index in sorted(_cited_indices(answer)):
         if not 1 <= index <= len(sources):
             return index, "unknown_citation_index"
@@ -395,25 +426,48 @@ def execute_research_run(
             return
 
         settings = get_settings()
-        web_retrieval = None
-        llm_configuration_error = None
-        if run.use_web_retrieval and settings.arc_retrieval_enabled:
-            try:
-                OpenAICompatibleLLM(settings).validate_configuration()
-            except LLMConfigurationError as exc:
-                llm_configuration_error = exc
-            else:
-                web_retrieval = _ingest_arc_sources(db, project, run, settings, ensure_owned=ensure_owned)
+        if project.ai_involvement == AiInvolvement.off:
+            # Off means no project text goes to any AI (X.31.7). Checked here as well as when the run is
+            # requested, because the owner may have switched AI off while this run waited in the queue.
+            run.status = ResearchRunStatus.failed
+            run.answer = None
+            run.error_message = AI_OFF_MESSAGE
+            run.completed_at = utcnow()
+            audit.record(
+                db, actor=audit.AGENT_RESEARCH_RUN, action="research_run.refused_ai_off", project_id=run.project_id,
+                payload={"run_id": str(run.id)},
+            )
+            if ensure_owned is not None:
+                ensure_owned(db)
+            db.commit()
+            return
 
+        web_retrieval = None
+        llm = None
+        llm_configuration_error = None
+        try:
+            llm = llm_for_project(settings, project, purpose="research_run", run_id=run.id)
+            if run.use_web_retrieval and settings.arc_retrieval_enabled:
+                llm.validate_configuration()
+        except LLMConfigurationError as exc:
+            llm_configuration_error = exc
+        if llm_configuration_error is None and run.use_web_retrieval and settings.arc_retrieval_enabled:
+            web_retrieval = _ingest_arc_sources(db, project, run, settings, ensure_owned=ensure_owned)
+
+        # Items set to "never for this item" are left out before anything is built from them (X.46.3).
         context_rows = select_agent_context(
-            db.scalars(select(ResearchContextItem).where(ResearchContextItem.project_id == project.id)).all()
+            db.scalars(select(ResearchContextItem).where(ResearchContextItem.project_id == project.id)).all(),
+            locked_ids=locked_ids(db, project.id, CONTEXT_ITEM_KIND),
         )
         # Researcher-entered (or reviewed) sources take priority over auto-retrieved ones,
         # so a retrieval run can never push manual evidence out of the source cap.
         automated_rank = case((Source.is_automated, 1), else_=0)
         sources = db.scalars(
             select(Source)
-            .where(Source.project_id == project.id, Source.merged_into.is_(None))
+            .where(
+                Source.project_id == project.id, Source.merged_into.is_(None),
+                Source.id.not_in(locked_uuids(db, project.id, "source")),
+            )
             .order_by(automated_rank, Source.created_at.desc())
             .limit(MAX_SOURCES)
             # Eager-load excerpts in one bounded query; no implicit lazy loads in the worker.
@@ -455,7 +509,7 @@ def execute_research_run(
         else:
             # Record the model before calling it, so failed attempts show which model was used.
             prompt = load_prompt(*EVIDENCE_SYNTHESIS_PROMPT)
-            run.provider_model = settings.llm_model
+            run.provider_model = llm.model
             run.prompt_version = prompt.ref
             # Don't hold a write transaction (e.g. retrieved sources) across the model call: the usage
             # meter writes in its own session, and on SQLite that write would wait on our lock.
@@ -467,13 +521,7 @@ def execute_research_run(
                 system_prompt, user_prompt = _agent_prompts(prompt, run, context, source_snapshot, nonce=nonce)
                 if ensure_owned is not None:
                     ensure_owned()
-                reply = OpenAICompatibleLLM(
-                    settings,
-                    meter=ProjectMeter(
-                        run.project_id, settings, purpose="research_run", run_id=run.id,
-                        budget_override=project.token_budget_override,
-                    ),
-                ).complete_json(system_prompt, user_prompt, EVIDENCE_SYNTHESIS_SCHEMA)
+                reply = llm.complete_json(system_prompt, user_prompt, EVIDENCE_SYNTHESIS_SCHEMA)
                 abstained = bool(reply["insufficient_evidence"]["insufficient"])
                 # Both the answer and an abstention reason are model text: check whichever is stored.
                 answer = reply["insufficient_evidence"]["reason"] if abstained else reply["answer"]
@@ -500,6 +548,14 @@ def execute_research_run(
                         run.error_message = (
                             f"The answer cited [S{index}], which doesn't match any source in this run's evidence. "
                             "The citation was rejected rather than guessed."
+                        )
+                    elif reason == "unparseable_citation_bracket":
+                        # M1.10.7: something inside [...] looks like an attempted S# citation but the
+                        # reader couldn't fully parse it (odd punctuation, truncated token, ...) — treated
+                        # as suspicious rather than silently read as "no citation" (rule 22, fail loudly).
+                        run.error_message = (
+                            "The answer contains a bracketed reference that looks like a source citation "
+                            "but isn't in a form that could be checked. It was rejected rather than guessed."
                         )
                     else:
                         run.error_message = (

@@ -140,6 +140,44 @@ def test_citing_a_source_the_run_does_not_have_is_blocked(world, fake_llm):
     assert_blocked(research(c, pid), rejections(c, pid), 2, "unknown_citation_index", "cited [S2], which doesn't match any source")
 
 
+def test_an_oversized_or_invisible_split_citation_still_blocks_an_unverified_source(world, fake_llm):
+    """M1.10.7: a bracket over the old 300-char cap, or a zero-width space splitting "S" from its digit,
+    must not hide the citation from the parser — both must still be read and, here, blocked."""
+    c, pid = world
+    add_source(c, pid, title="An unverified study", doi="10.1234/one")
+    oversized = "[S1 " + "x" * 310 + "]"
+    fake_llm.handler = lambda request: chat_reply(f"Productivity rose {oversized}.")
+
+    run = research(c, pid)
+
+    assert_blocked(run, rejections(c, pid), 1, "unverified_citation", "cited an unverified source ([S1])")
+
+
+def test_a_zero_width_space_inside_a_citation_marker_still_blocks_an_unverified_source(world, fake_llm):
+    """M1.10.7: "[S\\u200b1]" renders identically to "[S1]" but a naive parser misses it."""
+    c, pid = world
+    add_source(c, pid, title="An unverified study", doi="10.1234/one")
+    fake_llm.handler = lambda request: chat_reply("Productivity rose [S\u200b1].")
+
+    run = research(c, pid)
+
+    assert_blocked(run, rejections(c, pid), 1, "unverified_citation", "cited an unverified source ([S1])")
+
+
+def test_a_bracket_the_parser_cannot_read_fails_the_run_instead_of_being_ignored(world, fake_llm):
+    """M1.10.7: "[S.1]" is neither a recognised citation nor safely ignorable (unlike "[Smith 2020]") —
+    it must fail the run rather than silently being read as "no citation"."""
+    c, pid = world
+    verified = add_source(c, pid, title="A verified study", doi="10.1234/one")
+    assert c.post(f"/api/projects/{pid}/sources/{verified}/verify").status_code == 200
+    fake_llm.handler = lambda request: chat_reply("Productivity rose [S.1].")
+
+    run = research(c, pid)
+
+    assert_blocked(run, rejections(c, pid), 0, "unparseable_citation_bracket", "isn't in a form that could be checked")
+
+
+
 @pytest.mark.parametrize(
     "citation",
     [
@@ -211,7 +249,10 @@ def test_older_prompt_versions_render_without_the_citation_marker():
         ("[S2, 2019]", {2}),  # a bare four-digit number is a year
         ("[Smith and Jones 2020]", set()),
         ("[CS2 model]", set()),
-        ("no brackets S2 here", set()),
+        # M1.10.7: a bracket with no length cap and a zero-width space stripped before parsing — both
+        # used to hide the citation from the reader entirely instead of it being read.
+        ("[S1 " + "x" * 310 + "]", {1}),
+        ("[S\u200b1]", {1}),
     ],
 )
 def test_the_citation_reader_finds_every_source_number_however_it_is_written(text, expected):
@@ -244,3 +285,25 @@ def test_the_citation_reader_checks_source_markers_inside_nested_or_unclosed_bra
     assert _cited_indices(citation) == expected
     sources = [{"verified": index != 1} for index in range(1, max(expected) + 1)]
     assert _citation_problem(citation, sources) == (1, "unverified_citation")
+@pytest.mark.parametrize("text", ["[S.1]", "[S:1]", "[S*1]"])
+def test_a_bracket_with_an_s_number_token_the_reader_cannot_parse_is_flagged_unparseable(text):
+    """M1.10.7: punctuation between "S" and its digit isn't a recognised separator, so it must be flagged
+    rather than silently read as "no citation" — a run can still be rejected even with no known index."""
+    from app.agent.executor import _unparseable_citation_bracket
+
+    assert _unparseable_citation_bracket(text) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "[Smith and Jones 2020]", "[CS2 model]", "[see discussion, section 2]",
+        "[S1, S2]", "[S1 to S3]", "no brackets S2 here", "[S_1]",  # underscore is a word char, not a separator
+    ],
+)
+def test_ordinary_non_citation_brackets_are_never_flagged_unparseable(text):
+    """The M1.10.7 fallback must not fire on text M1.10.6 deliberately treats as not-a-citation, or on a
+    normal, fully-readable citation."""
+    from app.agent.executor import _unparseable_citation_bracket
+
+    assert _unparseable_citation_bracket(text) is False
