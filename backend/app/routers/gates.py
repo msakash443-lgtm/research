@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app import audit
 from app.database import get_db
+from app.extraction_verification import g4_problem
 from app.dependencies import READ_ROLES, current_user, project_access, project_role
 from app.artifacts import stage_index
 from app.gates import (
@@ -79,6 +80,8 @@ def decide_gate(
     db.refresh(project, with_for_update=True)
     gates = ensure_gates(db, project)
     gate = next(g for g in gates if g.code == code)
+    if code == GateCode.G4 and outcome == GateStatus.approved:
+        db.refresh(gate, with_for_update=True)
     if gate.status == GateStatus.approved:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Gate {code.value} is already approved")
     waiting_for = pending_earlier_gates(gates, code)
@@ -92,6 +95,10 @@ def decide_gate(
         )
     if outcome == GateStatus.rejected and not note:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Rejecting a gate needs a note explaining why")
+    if code == GateCode.G4 and outcome == GateStatus.approved:
+        problem = g4_problem(db, project)
+        if problem:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=problem)
 
     # Conditional write: another request may have approved this gate since we read it.
     # The WHERE clause is re-checked by the database at write time, so an approval can't be

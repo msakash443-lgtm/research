@@ -10,12 +10,14 @@ import criteria from "./js/steps/criteria.js";
 import search from "./js/steps/search.js";
 import results from "./js/steps/results.js";
 import sources from "./js/steps/sources.js";
+import evidence from "./js/steps/evidence.js";
+import verification from "./js/steps/verification.js";
 import ask from "./js/steps/ask.js";
 import approvals from "./js/steps/approvals.js";
 import team from "./js/steps/team.js";
 import activity from "./js/steps/activity.js";
 
-const STEP_MODULES = { overview, scope, criteria, search, results, sources, ask, approvals, team, activity };
+const STEP_MODULES = { overview, scope, criteria, search, results, sources, evidence, verification, ask, approvals, team, activity };
 
 const state = {
   user: null,

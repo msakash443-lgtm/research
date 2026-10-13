@@ -8,6 +8,10 @@
     "eval": "none",
     "reason": "No gold dataset type for synthesis answers yet; its citations are checked on every run by the citation guard (M1.10)."
   },
+  "evidence_extraction@1": {
+    "eval": "none",
+    "reason": "No extraction gold set is available yet; field-level extraction precision and recall will be evaluated when the scholar supplies one."
+  },
   "synonym_suggestions@1": {
     "eval": "none",
     "reason": "Suggestions are proposals the scholar edits before use (M1.5.3); there is no gold dataset type for them."

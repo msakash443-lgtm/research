@@ -10,9 +10,10 @@ from starlette.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.database import Base, engine
+from app.source_gate_guard import ExtractionGateLocked
 from app.config import get_settings
 from app.middleware import ContentLengthLimitMiddleware
-from app.routers import audit, auth, bibliometrics, clusters, connectors, coverage, criteria, exports, extraction_schemas, extractions, gates, members, notes, prisma, profile, projects, replication, research_runs, screening, searches, alerts, seeds, snowball, sources, stage, usage, zotero
+from app.routers import audit, auth, bibliometrics, claims, clusters, connectors, coverage, criteria, evidence_matrix, exports, extraction_schemas, extractions, gates, members, notes, prisma, profile, projects, replication, research_runs, screening, searches, alerts, seeds, snowball, sources, stage, usage, zotero
 
 # Production settings (session secret, HTTPS, Postgres, ...) are validated in Settings.
 settings = get_settings()
@@ -35,6 +36,11 @@ app = FastAPI(
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
 )
+
+
+@app.exception_handler(ExtractionGateLocked)
+def extraction_gate_locked_handler(request, exc: ExtractionGateLocked):
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
 app.add_middleware(
     ContentLengthLimitMiddleware,
     max_body_bytes=settings.max_request_body_bytes,
@@ -69,9 +75,11 @@ app.include_router(connectors.router, prefix="/api")
 app.include_router(criteria.router, prefix="/api")
 app.include_router(screening.router, prefix="/api")
 app.include_router(extractions.router, prefix="/api")
+app.include_router(claims.router, prefix="/api")
 app.include_router(extraction_schemas.router, prefix="/api")
 app.include_router(clusters.router, prefix="/api")
 app.include_router(coverage.router, prefix="/api")
+app.include_router(evidence_matrix.router, prefix="/api")
 app.include_router(bibliometrics.router, prefix="/api")
 app.include_router(replication.router, prefix="/api")
 app.include_router(prisma.router, prefix="/api")
