@@ -68,6 +68,7 @@ POSTGRES_TRIGGERS = (
 for statement in (SQLITE_VERIFY, SQLITE_INSERT):
     event.listen(Claim.__table__, "after_create", DDL(statement).execute_if(dialect="sqlite"))
 event.listen(ClaimEvidence.__table__, "after_create", DDL(SQLITE_DELETE).execute_if(dialect="sqlite"))
+event.listen(ClaimEvidence.__table__, "after_create", DDL(SQLITE_MOVE).execute_if(dialect="sqlite"))
 event.listen(ClaimEvidence.__table__, "after_create", DDL(POSTGRES_FUNCTION).execute_if(dialect="postgresql"))
 for statement in POSTGRES_TRIGGERS:
     event.listen(ClaimEvidence.__table__, "after_create", DDL(statement).execute_if(dialect="postgresql"))
