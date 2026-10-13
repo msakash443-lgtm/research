@@ -96,8 +96,34 @@ def test_a_screening_decision_is_an_artifact_at_screened_and_goes_stale_on_re_en
     assert _statuses(world["pid"], "screening_decision") == {ArtifactStatus.stale}
 
 
-def test_an_extraction_is_an_artifact_at_extracted_and_goes_stale_on_re_entry(world):
-    source_id = world["owner"].post(f"/api/projects/{world['pid']}/sources", json={"title": "A paper"}).json()["id"]
+def _source_with_pdf(world, monkeypatch):
+    """A source whose stored PDF contains the quotes in EXTRACTION (extractions are span-checked against it)."""
+    from app.models import Source
+    from app.object_storage import fulltext_key
+    from app.routers import extractions as extraction_routes
+    from tests.test_fulltext import make_pdf
+
+    sid = world["owner"].post(f"/api/projects/{world['pid']}/sources", json={"title": "A paper"}).json()["id"]
+    pdf = make_pdf([["Other", "Unrelated page text"], [
+        "Introduction", "We ask whether remote work raises output",
+        "Method", "120 clerks in the Netherlands", "a randomised trial",
+    ]])
+    key = fulltext_key(uuid.UUID(world["pid"]), uuid.UUID(sid), "pdf")
+
+    class Store:
+        def get(self, requested_key):
+            assert requested_key == key
+            return pdf
+
+    monkeypatch.setattr(extraction_routes, "get_object_store", lambda settings: Store())
+    with SessionLocal() as db:
+        db.get(Source, uuid.UUID(sid)).fulltext_path = key
+        db.commit()
+    return sid
+
+
+def test_an_extraction_is_an_artifact_at_extracted_and_goes_stale_on_re_entry(world, monkeypatch):
+    source_id = _source_with_pdf(world, monkeypatch)
     created = world["owner"].post(f"/api/projects/{world['pid']}/extractions", json={"source_id": source_id, **EXTRACTION})
     assert created.status_code == 201
     assert [(r.ref_id, r.stage, r.status) for r in _artifacts(world["pid"], "extraction")] == [(created.json()["id"], S.extracted, ArtifactStatus.current)]
@@ -105,8 +131,8 @@ def test_an_extraction_is_an_artifact_at_extracted_and_goes_stale_on_re_entry(wo
     assert _statuses(world["pid"], "extraction") == {ArtifactStatus.stale}
 
 
-def test_editing_a_stale_extraction_makes_its_artifact_current_again(world):
-    source_id = world["owner"].post(f"/api/projects/{world['pid']}/sources", json={"title": "A paper"}).json()["id"]
+def test_editing_a_stale_extraction_makes_its_artifact_current_again(world, monkeypatch):
+    source_id = _source_with_pdf(world, monkeypatch)
     extraction_id = world["owner"].post(f"/api/projects/{world['pid']}/extractions", json={"source_id": source_id, **EXTRACTION}).json()["id"]
     _reenter_to_scoped(world["pid"])
     assert world["owner"].put(f"/api/projects/{world['pid']}/extractions/{extraction_id}", json=EXTRACTION).status_code == 200

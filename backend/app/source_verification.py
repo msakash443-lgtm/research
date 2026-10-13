@@ -24,12 +24,13 @@ from __future__ import annotations
 
 from typing import Sequence
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import audit
 from app.citation_verifier import Reference, VerificationResult, Verdict, verify_citation
 from app.connectors.base import Connector
-from app.models import Project, Source, utcnow
+from app.models import Claim, ClaimEvidence, Project, Source, utcnow
 
 AGENT_VERIFIER = "agent:citation-verifier"
 
@@ -62,6 +63,18 @@ def verify_source(db: Session, *, project: Project, source: Source, connectors: 
             db, actor=AGENT_VERIFIER, action="source.verification_revoked", project_id=project.id,
             payload={"source_id": str(source.id), "reasons": summary["reasons"], "requested_by": requested_by},
         )
+        claim_ids = db.scalars(
+            select(Claim.id).join(ClaimEvidence, ClaimEvidence.claim_id == Claim.id).where(
+                Claim.project_id == project.id, ClaimEvidence.source_id == source.id, Claim.verified.is_(True)
+            ).distinct()
+        ).all()
+        if claim_ids:
+            db.query(Claim).filter(Claim.id.in_(claim_ids)).update({Claim.verified: False}, synchronize_session=False)
+            audit.record(
+                db, actor=AGENT_VERIFIER, action="claim.verification_revoked", project_id=project.id,
+                payload={"source_id": str(source.id), "claim_ids": [str(claim_id) for claim_id in claim_ids],
+                         "claim_count": len(claim_ids), "reason": "source_verification_revoked"},
+            )
     if "retracted" in result.flags and "retracted" not in (source.quality_flags or []):
         source.quality_flags = [*(source.quality_flags or []), "retracted"]
 

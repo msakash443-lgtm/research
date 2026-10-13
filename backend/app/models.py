@@ -563,6 +563,7 @@ class Extraction(Timestamped, Base):
 
     __tablename__ = "extractions"
     __table_args__ = (
+        UniqueConstraint("task_id", name="uq_extraction_task"),
         CheckConstraint(
             "verified_by_human = false OR (verified_by IS NOT NULL AND verified_at IS NOT NULL)",
             name="ck_extraction_verified_has_verifier",
@@ -570,11 +571,13 @@ class Extraction(Timestamped, Base):
         CheckConstraint("extracted_by IN ('human', 'ai')", name="ck_extraction_extracted_by"),
     )
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    task_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("tasks.id"), nullable=True)
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
     source_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sources.id"), index=True)  # the spec's `paper_id`
     schema_version: Mapped[str] = mapped_column(String(80))
     fields_json: Mapped[dict] = mapped_column(JSON)
     evidence_spans: Mapped[dict] = mapped_column(JSON)
+    confidence_json: Mapped[dict | None] = mapped_column(JSON)  # per-field confidence for AI extractions; NULL for human entries
     verified_by_human: Mapped[bool] = mapped_column(default=False, server_default=false())
     verified_by: Mapped[str | None] = mapped_column(String(100))
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -582,6 +585,33 @@ class Extraction(Timestamped, Base):
     extractor: Mapped[str] = mapped_column(String(100))  # user id, or `agent:<name>`
     model_id: Mapped[str | None] = mapped_column(String(200))
     prompt_version: Mapped[str | None] = mapped_column(String(100))
+
+
+class Claim(Timestamped, Base):
+    """A proposed synthesis statement; only a person may verify linked evidence."""
+
+    __tablename__ = "claims"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    extraction_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("extractions.id"), index=True)
+    run_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("research_runs.id"), index=True)
+    text: Mapped[str] = mapped_column(Text)
+    verified: Mapped[bool] = mapped_column(default=False, server_default=false())
+    strength: Mapped[str | None] = mapped_column(String(30))
+    section_id: Mapped[uuid.UUID | None] = mapped_column()
+    created_by: Mapped[str] = mapped_column(String(100))
+    evidence: Mapped[list["ClaimEvidence"]] = relationship(back_populates="claim", cascade="all, delete-orphan")
+
+
+class ClaimEvidence(Base):
+    __tablename__ = "claim_evidence"
+    __table_args__ = (UniqueConstraint("claim_id", "source_id", name="uq_claim_evidence_source"),)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    claim_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("claims.id"), index=True)
+    source_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sources.id"), index=True)
+    excerpt_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("source_excerpts.id"), index=True)
+    quote: Mapped[str] = mapped_column(Text)
+    claim: Mapped[Claim] = relationship(back_populates="evidence")
 
 
 class NoteKind(str, enum.Enum):
@@ -936,3 +966,6 @@ from app import excerpt_guard  # noqa: E402,F401
 from app import audit_guard  # noqa: E402,F401
 from app import note_guard  # noqa: E402,F401
 from app import suggestion_guard  # noqa: E402,F401
+from app import project_schema_guard  # noqa: E402,F401
+from app import source_gate_guard  # noqa: E402,F401
+from app import claim_guard  # noqa: E402,F401

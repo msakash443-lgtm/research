@@ -1,0 +1,6 @@
+name = "demo"
+version = 1
+placeholders = ["t"]
+system = "s"
+user = "${t}"
+source_block = '''<<<SOURCE ${index}>>> ${excerpt} <<<END>>>'''

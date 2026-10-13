@@ -54,12 +54,12 @@
 ### §5.4 Extraction and evidence tables
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
 |---|---|---|---|---|---|
-| 5.4.1 | Versioned discipline schemas with nested Appendix B value validation | M3.1.1–M3.1.2 | `extraction_schema.py`, `extraction_schemas/` | `test_extraction_schema.py`, `test_project_schemas.py` | M3.1 `[~]` (in progress) |
-| 5.4.2 | LLM extraction with evidence spans | M3.2.1, M3.3.1–M3.3.2 | `routers/extractions.py` (versioned extraction API) | `test_extractions.py` | M3.2 `[?]` (awaiting independent review) |
+| 5.4.1 | Versioned discipline schemas with nested Appendix B value validation | M3.1.1–M3.1.2 | `extraction_schema.py`, `extraction_schemas/` | `test_extraction_schema.py`, `test_project_schemas.py`, `test_project_schema_guard.py` | M3.1 `[x]` (independent review found no defect) |
+| 5.4.2 | LLM extraction with evidence spans | M3.2.1, M3.3.1–M3.3.2 | `ai_extraction.py`, `routers/extractions.py`, `evidence_extraction.v1.toml` | `test_ai_extraction.py`, `test_extractions.py`, `test_role_matrix.py` | M3.2 `[x]`; M3.3 `[x]` (independently reviewed; post-fix full suite: 2186 passed, 6 skipped) |
 | 5.4.3 | Verbatim span verification | M3.4.1–M3.4.2; groundwork M0.2.6 (immutable excerpts) | — | `test_excerpt_immutability.py` | M0.2.6 `[?]`, M3.4 `[ ]` |
 | 5.4.4 | Matrix view, every cell links to source; CSV/Excel | M3.5.1–M3.5.2, **X.14** | wireframe `docs/wireframes/evidence-table.html` (X.14, awaiting scholar walkthrough) | — | `[ ]` |
 | 5.4 gate | G4 verify critical fields, side-by-side PDF | M3.6.1–M3.6.2 | — | — | `[ ]` |
-| 5.4 QC | Double extraction on a sample | M3.3.3 | — | — | `[ ]` |
+| 5.4 QC | Double extraction on a sample | M3.3.3 | — | — | `[ ]` (10% stable hash-based sample selected; implementation not started) |
 
 ### §5.5 Synthesis, constructs and gaps
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
@@ -158,7 +158,7 @@
 | §4 | Paper model fields | M0.10.1 | — | `test_source_paper_fields.py` | `[x]` |
 | §6 | Connector interface, caching, backoff, ToS flags | M1.3.1–M1.3.4 | `GET /api/connectors` | `test_connector_*.py` | `[x]` (M1.3 closed 2026-10-10, incl. M1.3.8 cross-process circuit breaker) |
 | §6 | **ORCID/ROR author disambiguation** | X.18 *(new)* | — | — | `[ ]` |
-| §7.1 | Retrieval-grounded; untrusted-text fencing | M1.2.1–M1.2.5, M3.3.1 | `untrusted_text.py`, `note_guard.py` | `test_untrusted_text.py`, `test_prompt_fencing.py`, `test_arc_fencing.py`, `test_adversarial.py` | M1.2.1–.5 `[x]`; M3.3.1 `[ ]` |
+| §7.1 | Retrieval-grounded; untrusted-text fencing | M1.2.1–M1.2.5, M3.3.1 | `untrusted_text.py`, `ai_extraction.py`, `evidence_extraction.v1.toml` | `test_untrusted_text.py`, `test_prompt_fencing.py`, `test_arc_fencing.py`, `test_adversarial.py`, `test_ai_extraction.py` | M1.2.1–.5 `[x]`; M3.3.1 `[x]` (independently reviewed; post-fix full suite passed) |
 | §7.2 | JSON-schema outputs, reject + retry | M0.8.2, M0.8.6 | — | `test_llm_schema.py`, `test_llm_success_path.py` (fail-loudly paths), `test_structured_run.py` | M0.2.5, M0.8.2 `[x]`; M0.8.6 `[?]` |
 | §7.3 | Citation guard (hard block) | M1.10.3, M1.10.5, M1.13.1, M6.4 | research runs (`research_run.citation_rejected`); source cards: verify / check buttons | `test_citation_guard.py` | M1.10.3–.5, M1.10.6, M1.13.1 `[x]`; **human sign-off X.30 approved 2026-10-10**; claims/export wait for M3.11/M6.4 |
 | §7.4 | Numbers from code | M6.3 | — | — | `[ ]` |

@@ -1,0 +1,9 @@
+name = "demo"
+version = 1
+description = "A demo profile."
+
+[settings]
+citation_style = "apa"
+databases = ["openalex", "pubmed"]
+methods = ["cohort_study"]
+reporting_guideline = "STROBE"

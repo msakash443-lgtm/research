@@ -15,12 +15,14 @@ from fastapi.testclient import TestClient
 
 from app.database import SessionLocal
 from app.main import app
+from app.object_storage import fulltext_key
 from app.models import (
     utcnow,
     SOURCE_ORIGIN_RETRIEVED,
     AutoExcludeAudit,
     Cluster,
     ClusterRun,
+    Claim,
     Extraction,
     Project,
     ProjectMember,
@@ -38,6 +40,7 @@ UPLOAD_PDF = make_pdf([["Role matrix upload body text."]])
 
 ALL = {"owner", "co_author", "supervisor", "reviewer"}
 WRITE = {"owner", "co_author"}
+VERIFY = {"owner", "co_author", "supervisor"}
 MANAGE = {"owner"}
 APPROVE_G1 = {"owner", "supervisor"}  # gate G1; owner-only gates are in test_gate_decisions.py
 
@@ -81,6 +84,9 @@ MATRIX = [
     ("DELETE", "/api/projects/{p}/alerts/{a}", WRITE, 204),
     ("GET", "/api/projects/{p}/research-runs", ALL, 200),
     ("POST", "/api/projects/{p}/research-runs", WRITE, 202),
+    ("GET", "/api/projects/{p}/claims", ALL, 200),
+    ("POST", "/api/projects/{p}/claims", WRITE, 201),
+    ("POST", "/api/projects/{p}/claims/{h}/verify", VERIFY, 409),
     ("GET", "/api/projects/{p}/members", ALL, 200),
     ("POST", "/api/projects/{p}/members", MANAGE, 201),
     ("DELETE", "/api/projects/{p}/members/{u}", MANAGE, 204),
@@ -118,14 +124,22 @@ MATRIX = [
     ("PUT", "/api/projects/{p}/screening/active-learning", MANAGE, 200),  # owner only: whether the queue may rank by predicted relevance
     ("GET", "/api/projects/{p}/extractions", ALL, 200),
     ("GET", "/api/projects/{p}/extractions/{e}", ALL, 200),
+    ("GET", "/api/projects/{p}/extractions/verification-queue", ALL, 200),
+    ("GET", "/api/projects/{p}/extractions/{e}/pdf", ALL, 200),
+    ("POST", "/api/projects/{p}/extractions/{e}/verify", VERIFY, 200),
     ("POST", "/api/projects/{p}/extractions", WRITE, 201),
     ("PUT", "/api/projects/{p}/extractions/{e}", WRITE, 200),
+    ("POST", "/api/projects/{p}/extractions/ai", WRITE, 202),
     ("GET", "/api/projects/{p}/extraction-schemas", ALL, 200),
     ("GET", "/api/projects/{p}/extraction-schemas/{n}", ALL, 200),
     ("POST", "/api/projects/{p}/extraction-schemas", WRITE, 201),
     ("PUT", "/api/projects/{p}/extraction-schemas/{n}", WRITE, 200),
     ("GET", "/api/projects/{p}/clusters", ALL, 200),
     ("GET", "/api/projects/{p}/coverage-matrix", ALL, 200),
+    ("GET", "/api/projects/{p}/evidence-matrix", ALL, 200),
+    ("GET", "/api/projects/{p}/evidence-matrix/export.csv", ALL, 200),
+    ("GET", "/api/projects/{p}/evidence-matrix/export.xlsx", ALL, 200),
+    ("GET", "/api/projects/{p}/evidence-matrix/{e}/fields/{field_key}/source-text", ALL, 200),
     ("GET", "/api/projects/{p}/bibliometrics/publication-trends", ALL, 200),
     ("GET", "/api/projects/{p}/export/replication", ALL, 200),
     ("GET", "/api/projects/{p}/clusters/{c}", ALL, 200),
@@ -166,6 +180,7 @@ BODIES = {
     ("POST", "/api/projects/{p}/searches/suggest-synonyms"): {"block": {"label": "work", "terms": ["remote work"]}},
     ("POST", "/api/projects/{p}/sources/import"): {"format": "bibtex", "text": "@article{k, title={Imported}}"},
     ("POST", "/api/projects/{p}/research-runs"): {"question": "A long enough question?"},
+    ("POST", "/api/projects/{p}/claims"): {"text": "A claim awaiting evidence"},
     ("POST", "/api/projects/{p}/seeds"): {"title": "Another seed paper", "doi": "10.1234/seedx"},
     ("POST", "/api/projects/{p}/searches"): {"database": "openalex", "blocks": [{"label": "a", "terms": ["remote work"]}]},
     ("POST", "/api/projects/{p}/snowball"): {"connector": "openalex", "rounds": 1},
@@ -182,6 +197,8 @@ BODIES = {
     ("PUT", "/api/projects/{p}/screening/auto-exclude"): {"enabled": True, "confidence_threshold": 0.9},
     ("PUT", "/api/projects/{p}/screening/ai-prescreen"): {"disabled": True},
     ("PUT", "/api/projects/{p}/screening/active-learning"): {"enabled": True},
+    ("POST", "/api/projects/{p}/extractions/{e}/verify"): {"confirmed_critical_fields": ["measures", "sample", "key_findings"]},
+    ("POST", "/api/projects/{p}/extractions/ai"): {"source_id": ""},
 }
 
 # Principals: the four roles (the creator is the owner), a second owner added via a member row,
@@ -214,6 +231,24 @@ def world(monkeypatch, fake_llm):
     owner, _ = _login(f"matrix-owner-{tag}@example.com")
     project_id = owner.post("/api/projects", json={"title": "Matrix"}).json()["id"]
     source_id = owner.post(f"/api/projects/{project_id}/sources", json={"title": "Seed", "doi": "10.1234/seed"}).json()["id"]
+    source_pdf = make_pdf([["Introduction", "We ask why"]])
+    extraction_source_id = owner.post(
+        f"/api/projects/{project_id}/sources", json={"title": "Extraction target"}
+    ).json()["id"]
+    source_key = fulltext_key(uuid.UUID(project_id), uuid.UUID(extraction_source_id), "pdf")
+
+    class ExtractionStore:
+        def get(self, requested_key):
+            assert requested_key == source_key
+            return source_pdf
+
+    from app.routers import extractions as extraction_routes
+    monkeypatch.setattr(extraction_routes, "get_object_store", lambda settings: ExtractionStore())
+    from app.routers import evidence_matrix as evidence_routes
+    monkeypatch.setattr(evidence_routes, "get_object_store", lambda settings: ExtractionStore())
+    with SessionLocal() as db:
+        db.get(Source, uuid.UUID(extraction_source_id)).fulltext_path = source_key
+        db.commit()
     twin_id = owner.post(f"/api/projects/{project_id}/sources", json={"title": "Seed (copy)", "doi": "10.1234/seed"}).json()["id"]
     with SessionLocal() as db:  # past the first stage, so there is somewhere earlier to re-enter
         db.get(Project, uuid.UUID(project_id)).stage = ProjectStage.search_planned  # next stage (retrieved) has no gate
@@ -263,8 +298,21 @@ def world(monkeypatch, fake_llm):
 
     with SessionLocal() as db:  # an unverified extraction to read and edit
         extraction_id = uuid.uuid4()
-        db.add(Extraction(id=extraction_id, project_id=uuid.UUID(project_id), source_id=uuid.UUID(source_id), schema_version="default@1",
-                          fields_json={}, evidence_spans={}, extracted_by="human", extractor="seed"))
+        db.add(Extraction(id=extraction_id, project_id=uuid.UUID(project_id), source_id=uuid.UUID(extraction_source_id), schema_version="default@1",
+                          fields_json={"research_question": "Why?"},
+                          evidence_spans={"research_question": {"quote": "We ask why", "page": 1}},
+                          extracted_by="human", extractor="seed"))
+        db.commit()
+
+    with SessionLocal() as db:
+        claim_id = uuid.uuid4()
+        db.add(Claim(id=claim_id, project_id=uuid.UUID(project_id), text="A pending claim",
+                     verified=False, created_by="matrix"))
+        db.commit()
+
+    ai_source = owner.post(f"/api/projects/{project_id}/sources", json={"title": "AI extraction target"}).json()
+    with SessionLocal() as db:
+        db.get(Source, uuid.UUID(ai_source["id"])).fulltext_path = fulltext_key(uuid.UUID(project_id), uuid.UUID(ai_source["id"]), "pdf")
         db.commit()
 
     with SessionLocal() as db:  # a project extraction schema to read and edit
@@ -298,7 +346,7 @@ def world(monkeypatch, fake_llm):
         db.commit()
     return {
         "clients": clients,
-        "ids": {"p": project_id, "s": source_id, "u": removable_id, "q": str(search_id), "d": str(seed_id), "e": str(extraction_id), "c": str(clustering_id), "l": str(cluster_id), "n": "lab_schema", "a": str(alert_id), "k": str(audit_id), "g": _fresh_suggestion(project_id, [])},
+        "ids": {"p": project_id, "s": source_id, "extract_s": extraction_source_id, "ai_s": ai_source["id"], "h": str(claim_id), "field_key": "research_question", "u": removable_id, "q": str(search_id), "d": str(seed_id), "e": str(extraction_id), "c": str(clustering_id), "l": str(cluster_id), "n": "lab_schema", "a": str(alert_id), "k": str(audit_id), "g": _fresh_suggestion(project_id, [])},
         "twin": twin_id,
         "invitee": f"matrix-invitee-{tag}@example.com",
     }
@@ -344,7 +392,9 @@ def _call(world, principal, method, template):
             db.commit()
         return world["clients"][principal].post(path, json={"source_id": fresh["id"], "decision": "include"})
     if (method, template) == ("POST", "/api/projects/{p}/extractions"):
-        body = {"source_id": world["ids"]["s"], "fields": {"research_question": None}}
+        body = {"source_id": world["ids"]["extract_s"], "fields": {"research_question": None}}
+    if (method, template) == ("POST", "/api/projects/{p}/extractions/ai"):
+        body = {"source_id": world["ids"]["ai_s"]}
     if (method, template) == ("POST", "/api/projects/{p}/screening/decisions/undo"):
         body = {"source_id": world["ids"]["s"]}
         # there must be a decision to take back; the owner records it, whoever is being tested
@@ -436,7 +486,7 @@ def test_role_matrix(world, principal, method, template, allowed, success):
 def test_the_matrix_covers_every_project_scoped_route():
     """A new project route must be added to MATRIX, or this fails."""
     routed = {
-        (method, route.path.replace("{project_id}", "{p}").replace("{source_id}", "{s}").replace("{user_id}", "{u}").replace("{code}", "G1").replace("{search_id}", "{q}").replace("{seed_id}", "{d}").replace("{extraction_id}", "{e}").replace("{clustering_id}", "{c}").replace("{cluster_id}", "{l}").replace("{schema_name}", "{n}").replace("{alert_id}", "{a}").replace("{audit_id}", "{k}").replace("{suggestion_id}", "{g}").replace("{target_kind}", "source").replace("{target_id}", "{s}"))
+        (method, route.path.replace("{project_id}", "{p}").replace("{source_id}", "{s}").replace("{user_id}", "{u}").replace("{code}", "G1").replace("{search_id}", "{q}").replace("{seed_id}", "{d}").replace("{extraction_id}", "{e}").replace("{claim_id}", "{h}").replace("{field_key}", "{field_key}").replace("{clustering_id}", "{c}").replace("{cluster_id}", "{l}").replace("{schema_name}", "{n}").replace("{alert_id}", "{a}").replace("{audit_id}", "{k}").replace("{suggestion_id}", "{g}").replace("{target_kind}", "source").replace("{target_id}", "{s}"))
         for route in app.routes
         if "{project_id}" in getattr(route, "path", "")
         for method in route.methods

@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from app import audit
 from app.agent.executor import execute_research_run
+from app.ai_extraction import AiExtractionError, run_ai_extraction
 from app.database import SessionLocal
 from app.connectors.base import ConnectorError
 from app.connectors.factory import (
@@ -17,7 +18,7 @@ from app.connectors.factory import (
 )
 from app.connector_breaker_store import build_connector
 from app.models import GateCode, Project, ResearchRun, ResearchRunStatus, SearchAlert, SearchQuery, SnowballRun, Source, utcnow
-from app.agent.llm import LLMConfigurationError
+from app.agent.llm import LLMConfigurationError, LLMResponseError, OpenAICompatibleLLM
 from app.ai_controls import AIOffError, ensure_embeddings_allowed, llm_for_project
 from app.llm_usage import ProjectMeter
 from app.config import get_settings
@@ -27,7 +28,7 @@ from app.models import ClusterRun, SeedCheckRun
 from app.seed_check_runner import run_seed_check
 from app.thematic_clusters import ClusteringError, run_clustering
 from app.oa_fetch import OaFetchError, OaSource, fetch_open_access
-from app.object_storage import get_object_store
+from app.object_storage import ObjectStorageError, get_object_store
 from app.safe_fetch import FetchRefused, fetch_pdf
 from app.search_query import BooleanQuery, QueryError
 from app.source_verification import verify_source
@@ -46,6 +47,7 @@ SOURCE_CHECK = "source_check"
 SCREENING_PRESCREEN = "screening_prescreen"
 THEMATIC_CLUSTERING = "thematic_clustering"
 FULLTEXT_FETCH = "fulltext_fetch"
+AI_EXTRACTION = "ai_extraction"
 SNOWBALL_RUN = "snowball_run"
 SEED_FALSE_EXCLUSION_CHECK = "seed_false_exclusion_check"
 
@@ -311,6 +313,41 @@ def handle_fulltext_fetch(task: ClaimedTask) -> None:
             raise PermanentTaskError(str(exc)) from exc
         task.ensure_owned(db)
         db.commit()
+    finally:
+        db.close()
+
+
+@register(AI_EXTRACTION)
+def handle_ai_extraction(task: ClaimedTask) -> None:
+    """Extract one source from its stored PDF; results stay unverified until a person reviews them."""
+    payload = task.payload or {}
+    try:
+        project_id = uuid.UUID(str(payload["project_id"]))
+        source_id = uuid.UUID(str(payload["source_id"]))
+        schema_name = str(payload["schema_name"])
+    except (KeyError, ValueError, TypeError) as exc:
+        raise PermanentTaskError("An ai_extraction task needs project_id, source_id and schema_name.") from exc
+    settings = get_settings()
+    db = SessionLocal()
+    try:
+        task.ensure_owned(db)
+        project = db.get(Project, project_id)
+        source = db.scalar(select(Source).where(Source.id == source_id, Source.project_id == project_id))
+        if project is None or source is None:
+            raise PermanentTaskError("The source for this extraction no longer exists in the project.")
+        try:
+            run_ai_extraction(
+                db, project, source, schema_name=schema_name, task_id=task.id,
+                actor=str(payload.get("requested_by") or audit.SYSTEM_WORKER), store=get_object_store(settings),
+                llm=OpenAICompatibleLLM(
+                    settings,
+                    meter=ProjectMeter(project.id, settings, purpose="extraction", budget_override=project.token_budget_override),
+                ),
+                max_pages=settings.fulltext_max_pages, ensure_owned=task.ensure_owned,
+            )
+        except (AiExtractionError, LLMConfigurationError, LLMResponseError, ObjectStorageError) as exc:
+            db.rollback()
+            raise PermanentTaskError(str(exc)) from exc
     finally:
         db.close()
 

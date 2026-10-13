@@ -20,6 +20,7 @@ PUBLISHED_CHECKSUMS = {
     "evidence_synthesis.v3.toml": "f94fd8fccaecf3676588012090e478198c4695ae92a5c4bb87f1b7a9d3fc702d",
     "synonym_suggestions.v1.toml": "c8d1ea6e85f3dd2290b7039141752482d8da70b24a57c4a1dcbe4c42ee6106f3",
     "evidence_synthesis.v4.toml": "25cd8e1df356aae21d24746a5df38df1aede6d48d98e43f934a16ce3610015fb",
+    "evidence_extraction.v1.toml": "62e11c27ca4d3a2bdbe668b88db7d8b7cb87b0659588e9f8a6bf8c79bd529055",
 }
 
 

@@ -143,7 +143,7 @@ class OpenAICompatibleLLM:
         """The model id this adapter will call (recorded with every AI output)."""
         return self._model
 
-    def complete(self, system_prompt: str, user_prompt: str) -> str:
+    def complete(self, system_prompt: str, user_prompt: str, *, max_tokens: int = 1800) -> str:
         self.validate_configuration()
 
         base_url = self._api_base_url.rstrip("/")
@@ -155,7 +155,7 @@ class OpenAICompatibleLLM:
                 {"role": "user", "content": user_prompt},
             ],
             "temperature": 0.1,
-            "max_tokens": 1800,
+            "max_tokens": max_tokens,
         }
         if self._meter is not None:
             self._meter.before_call()
@@ -195,6 +195,8 @@ class OpenAICompatibleLLM:
         user_prompt: str,
         schema: dict[str, Any],
         max_attempts: int | None = None,
+        *,
+        max_tokens: int = 1800,
     ) -> Any:
         """Call the model until its reply is JSON that satisfies `schema`.
 
@@ -210,7 +212,12 @@ class OpenAICompatibleLLM:
         prompt = user_prompt
         reason = ""
         for _ in range(attempts):
-            output = self.complete(system_prompt, prompt)
+            # Keep the original call shape for adapters/test doubles when using the existing default.
+            output = (
+                self.complete(system_prompt, prompt)
+                if max_tokens == 1800
+                else self.complete(system_prompt, prompt, max_tokens=max_tokens)
+            )
             value, reason = _violation(output, schema)
             if reason is None:
                 return value

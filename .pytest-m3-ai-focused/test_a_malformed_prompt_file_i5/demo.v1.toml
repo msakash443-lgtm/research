@@ -1,0 +1,5 @@
+name = "demo"
+version = 1
+placeholders = ["topic", "unused"]
+system = "Be careful."
+user = "About ${topic}."

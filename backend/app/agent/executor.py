@@ -28,6 +28,8 @@ from app.database import SessionLocal
 from app.artifacts import register_artifact
 from app.models import (
     AiInvolvement,
+    Claim,
+    ClaimEvidence,
     Project,
     ProjectStage,
     ResearchContextItem,
@@ -67,6 +69,7 @@ def _source_snapshot(source: Source) -> dict[str, Any]:
     parts = [part for part in (title, url, body, locator) if part is not None]
     return {
         "id": str(source.id),
+        "excerpt_id": str(excerpt.id) if excerpt else None,
         "title": title.text,
         "url": url.text if url else None,
         "year": source.year,
@@ -168,6 +171,44 @@ def _citation_problem(answer: str, sources: list[dict[str, Any]]) -> tuple[int, 
         if not sources[index - 1].get("verified"):
             return index, "unverified_citation"
     return None
+
+
+def _store_cited_claims(db: Session, run: ResearchRun, answer: str, sources: list[dict[str, Any]]) -> None:
+    """Persist cited statements and the exact excerpt records behind their run-snapshot markers."""
+    parts = [part.strip() for part in re.split(r"(?<=[.!?])\s+|\n+", answer) if part.strip()]
+    sentences: list[str] = []
+    for part in parts:
+        if sentences and part.startswith("[") and _cited_indices(part):
+            sentences[-1] = f"{sentences[-1]} {part}"
+        else:
+            sentences.append(part)
+    created_ids = []
+    for sentence in sentences:
+        indices = sorted(_cited_indices(sentence))
+        if not indices:
+            continue
+        # _citation_problem runs first; fail closed if the evidence changed before persistence.
+        if any(not 1 <= index <= len(sources) for index in indices):
+            raise ValueError("A claim cited a source outside the run snapshot")
+        claim = Claim(project_id=run.project_id, run_id=run.id, text=sentence,
+                      verified=False, created_by=audit.AGENT_RESEARCH_RUN)
+        for index in indices:
+            snapshot = sources[index - 1]
+            excerpt_id = snapshot.get("excerpt_id")
+            excerpt = db.get(SourceExcerpt, uuid.UUID(excerpt_id)) if excerpt_id else None
+            if excerpt is None or str(excerpt.source_id) != snapshot["id"] or not snapshot.get("verified"):
+                raise ValueError("A claim's source excerpt is missing or unverified")
+            claim.evidence.append(ClaimEvidence(source_id=excerpt.source_id, excerpt_id=excerpt.id,
+                                                quote=excerpt.content))
+        db.add(claim)
+        db.flush()
+        created_ids.append(str(claim.id))
+    if created_ids:
+        audit.record(
+            db, actor=audit.AGENT_RESEARCH_RUN, action="claim.created", project_id=run.project_id,
+            payload={"run_id": str(run.id), "claim_ids": created_ids, "claim_count": len(created_ids)},
+            model_id=run.provider_model, prompt_version=run.prompt_version,
+        )
 
 
 # The exact prompt every research run uses. Changing wording means adding a new version file
@@ -569,6 +610,8 @@ def execute_research_run(
                     )
                 else:
                     # An abstention keeps its reason out of `answer`, so `answer` only ever holds an answer.
+                    if not abstained:
+                        _store_cited_claims(db, run, answer, source_snapshot)
                     run.answer = None if abstained else answer
                     run.insufficient_evidence = abstained
                     run.insufficient_reason = answer if abstained else None

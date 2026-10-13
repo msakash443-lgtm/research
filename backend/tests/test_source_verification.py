@@ -12,7 +12,7 @@ from app.config import get_settings
 from app.connectors.base import ConnectorBase, ConnectorError, PaperRecord, SearchPage
 from app.database import SessionLocal
 from app.main import app
-from app.models import Source
+from app.models import Claim, ClaimEvidence, Source, SourceExcerpt, excerpt_hash
 
 TITLE = "Remote work and worker productivity: evidence from a field experiment"
 AUTHORS = ["Ada Lovelace", "Grace Hopper"]
@@ -174,6 +174,29 @@ def test_a_later_mismatch_revokes_an_automatic_verification_but_not_a_persons(wo
     check(c, pid, human)  # services now disagree
     h = get(c, pid, human)
     assert h["metadata_verified"] is True and h["verification_method"] == "human" and h["verification"]["verdict"] == "mismatch"
+
+
+def test_source_revocation_unverifies_linked_claim_and_audits_it(world, services):
+    c, pid = world
+    sid = add(c, pid)
+    with SessionLocal() as db:
+        excerpt = SourceExcerpt(source_id=uuid.UUID(sid), content="Observed effect.", content_hash=excerpt_hash("Observed effect."))
+        db.add(excerpt)
+        db.flush()
+        claim = Claim(project_id=uuid.UUID(pid), text="Observed effect [S1]", verified=False, created_by="reviewer")
+        claim.evidence = [ClaimEvidence(source_id=uuid.UUID(sid), excerpt_id=excerpt.id, quote="Observed effect.")]
+        db.add(claim)
+        db.commit()
+        claim.verified = True  # the DB refuses a claim inserted as verified; verify once evidence is stored
+        db.commit()
+        claim_id = claim.id
+    check(c, pid, sid)
+    services.record = rec(year=2001)
+    check(c, pid, sid)
+    with SessionLocal() as db:
+        assert db.get(Claim, claim_id).verified is False
+    events = audit_of(c, pid, "claim.verification_revoked")
+    assert len(events) == 1 and str(claim_id) in events[0]["payload_json"]["claim_ids"]
 
 
 def test_not_found_or_outage_does_not_revoke(world, services):

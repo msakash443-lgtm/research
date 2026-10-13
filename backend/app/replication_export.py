@@ -52,6 +52,7 @@ EXCLUDED_COLUMNS = {
 # Tables without a project_id that belong to the project through a parent row: (table, parent table, fk column).
 CHILD_TABLES = [
     ("source_excerpts", "sources", "source_id"),
+    ("claim_evidence", "claims", "claim_id"),
     ("clusters", "cluster_runs", "run_id"),
     ("cluster_members", "clusters", "cluster_id"),
     ("ai_suggestion_events", "ai_suggestions", "suggestion_id"),

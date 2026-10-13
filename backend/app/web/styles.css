@@ -199,6 +199,20 @@ input:focus,textarea:focus,select:focus { outline:2px solid #b9dfd8; border-colo
 
 .versions-table { width:100%; border-collapse:collapse; margin-top:10px; font-size:13px; }
 .versions-table th,.versions-table td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); }
+.evidence-controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.evidence-workspace { display:grid; grid-template-columns:minmax(0, 2fr) minmax(250px, 1fr); gap:16px; align-items:start; }
+.evidence-scroll { overflow:auto; }
+.evidence-table { min-width:600px; }
+.evidence-table th,.evidence-table td { min-width:150px; vertical-align:top; }
+.evidence-cell { width:100%; text-align:left; white-space:normal; overflow-wrap:anywhere; }
+.evidence-cell small { display:block; margin-top:4px; }
+.evidence-passage { white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.6; }
+.verification-pdf { width:100%; min-height:650px; border:1px solid var(--line); }
+.verification-field { padding:12px 0; border-top:1px solid var(--line); }
+.verification-field pre { white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; }
+.verification-field blockquote { border-left:3px solid var(--line); margin:8px 0; padding-left:12px; white-space:pre-wrap; }
+.verification-check { display:block; margin:10px 0; }
+@media (max-width:900px) { .evidence-workspace { grid-template-columns:1fr; } }
 
 .warning-list { margin:10px 0 0; padding-left:20px; color:#87520c; }
 .criteria-table { margin-top:16px; }

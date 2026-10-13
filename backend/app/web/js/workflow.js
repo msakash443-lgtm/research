@@ -33,6 +33,8 @@ export const STEPS = [
   { id: "results", title: "Results check", group: "Gather" },
   { id: "sources", title: "Sources", group: "Gather" },
   { id: "screen", title: "Screening", group: "Gather" },
+  { id: "evidence", title: "Evidence table", group: "Synthesize" },
+  { id: "verification", title: "Verify extraction", group: "Synthesize" },
   { id: "ask", title: "Ask", group: "Synthesize" },
   { id: "approvals", title: "Approvals", group: "Project" },
   { id: "team", title: "Team", group: "Project" },
@@ -81,6 +83,16 @@ export const GUIDES = {
     what: "Screen titles and abstracts one record at a time: include, exclude with a reason, or maybe.",
     why: "Your decisions, not the AI's, decide what reaches the included set; every exclusion reason feeds the PRISMA counts.",
     approval: "G3 Screening: owner or supervisor approves the included set.",
+  },
+  evidence: {
+    what: "Compare extracted fields across papers and inspect every populated cell against stored source text.",
+    why: "The table keeps each value tied to its quote, page or section, and review status.",
+    approval: "Critical fields need a person's verification before G4 can be approved.",
+  },
+  verification: {
+    what: "Compare each extraction with its stored PDF and confirm every critical field.",
+    why: "Human checks make sample sizes, measures and effects accountable before synthesis.",
+    approval: "G4 opens only after every included paper's current extraction is verified.",
   },
   ask: {
     what: "Ask a research question answered from saved context and sources.",
@@ -146,6 +158,9 @@ export function stepStatus(stepId, summary) {
       if (unverified === 0) return { status: "done" };
       return { status: "attention", count: unverified };
     }
+    case "evidence":
+    case "verification":
+      return { status: "info" };
     case "ask": {
       const runs = summary.runs || [];
       if (runs.length === 0) return { status: "todo" };

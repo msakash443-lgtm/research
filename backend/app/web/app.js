@@ -13,12 +13,14 @@ import search from "./js/steps/search.js";
 import results from "./js/steps/results.js";
 import sources from "./js/steps/sources.js";
 import screen from "./js/steps/screen.js";
+import evidence from "./js/steps/evidence.js";
+import verification from "./js/steps/verification.js";
 import ask from "./js/steps/ask.js";
 import approvals from "./js/steps/approvals.js";
 import team from "./js/steps/team.js";
 import activity from "./js/steps/activity.js";
 
-const STEP_MODULES = { overview, guide, scope, criteria, search, results, sources, screen, ask, approvals, team, activity };
+const STEP_MODULES = { overview, guide, scope, criteria, search, results, sources, screen, evidence, verification, ask, approvals, team, activity };
 
 const state = {
   user: null,
