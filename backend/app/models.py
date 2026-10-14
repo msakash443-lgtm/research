@@ -1260,9 +1260,6 @@ from app import suggestion_guard  # noqa: E402,F401
 from app import project_schema_guard  # noqa: E402,F401
 from app import source_gate_guard  # noqa: E402,F401
 from app import claim_guard  # noqa: E402,F401
-<<<<<<< Updated upstream
 from app import ledger_guard  # noqa: E402,F401
-=======
 from app import theory_construct_guard  # noqa: E402,F401
 from app import research_question_guard  # noqa: E402,F401
->>>>>>> Stashed changes

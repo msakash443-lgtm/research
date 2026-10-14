@@ -178,15 +178,12 @@ MATRIX = [
     ("GET", "/api/projects/{p}/evidence-matrix/export.xlsx", ALL, 200),
     ("GET", "/api/projects/{p}/evidence-matrix/{e}/fields/{field_key}/source-text", ALL, 200),
     ("GET", "/api/projects/{p}/bibliometrics/publication-trends", ALL, 200),
-<<<<<<< Updated upstream
     ("GET", "/api/projects/{p}/scholar-metrics", ALL, 200),
-=======
     ("GET", "/api/projects/{p}/bibliometrics/inputs/{s}", ALL, 200),
     ("PUT", "/api/projects/{p}/bibliometrics/inputs/{s}", WRITE, 200),
     ("GET", "/api/projects/{p}/bibliometrics/networks", ALL, 200),
     ("GET", "/api/projects/{p}/bibliometrics/export/vosviewer/co_citation.zip", ALL, 200),
     ("GET", "/api/projects/{p}/bibliometrics/export/citespace.csv", ALL, 200),
->>>>>>> Stashed changes
     ("GET", "/api/projects/{p}/export/replication", ALL, 200),
     ("GET", "/api/projects/{p}/clusters/{c}", ALL, 200),
     ("POST", "/api/projects/{p}/clusters", WRITE, 202),  # queues only
@@ -219,12 +216,9 @@ MATRIX = [
 ]
 
 BODIES = {
-<<<<<<< Updated upstream
     ("POST", "/api/projects/{p}/documents"): {"title": "Matrix section", "position": 9},
     ("PATCH", "/api/projects/{p}/documents/{doc}"): {"title": "Matrix title"},
-=======
     ("PUT", "/api/projects/{p}/bibliometrics/inputs/{s}"): {"reference_ids": ["10.1234/ref"], "keywords": ["research"]},
->>>>>>> Stashed changes
     ("PUT", "/api/projects/{p}/usage/budget"): {"override": 5000},
     ("POST", "/api/projects/{p}/sources/{s}/excerpts"): {"content": "Matrix passage.", "locator": "p. 1"},
     ("PUT", "/api/projects/{p}/ai-settings"): {"ai_involvement": "suggestions_only"},
@@ -424,11 +418,8 @@ def world(monkeypatch, fake_llm):
     doc_id = _seed_document(project_id, owner_id)
     return {
         "clients": clients,
-<<<<<<< Updated upstream
         "ids": {"p": project_id, "s": source_id, "extract_s": extraction_source_id, "ai_s": ai_source["id"], "h": str(claim_id), "field_key": "research_question", "u": removable_id, "q": str(search_id), "d": str(seed_id), "e": str(extraction_id), "c": str(clustering_id), "l": str(cluster_id), "n": "lab_schema", "a": str(alert_id), "k": str(audit_id), "g": _fresh_suggestion(project_id, []), "doc": doc_id, "rep": _seed_report(project_id, owner_id, doc_id), "v": "1", "author": owner_id},
-=======
-        "ids": {"p": project_id, "s": source_id, "extract_s": extraction_source_id, "ai_s": ai_source["id"], "h": str(claim_id), "gap_id": gap_id, "rq": question_id, "hp": hypothesis_id, "field_key": "research_question", "u": removable_id, "q": str(search_id), "d": str(seed_id), "e": str(extraction_id), "plan_id": str(uuid.uuid4()), "c": str(clustering_id), "l": str(cluster_id), "n": "lab_schema", "a": str(alert_id), "k": str(audit_id), "g": _fresh_suggestion(project_id, [])},
->>>>>>> Stashed changes
+        "ids": {"p": project_id, "s": source_id, "extract_s": extraction_source_id, "ai_s": ai_source["id"], "h": str(claim_id), "gap_id": gap_id, "rq": question_id, "hp": hypothesis_id, "field_key": "research_question", "u": removable_id, "q": str(search_id), "d": str(seed_id), "e": str(extraction_id), "plan_id": str(uuid.uuid4()), "c": str(clustering_id), "l": str(cluster_id), "n": "lab_schema", "a": str(alert_id), "k": str(audit_id), "g": _fresh_suggestion(project_id, []), "doc": doc_id, "rep": _seed_report(project_id, owner_id, doc_id), "v": "1", "author": owner_id},
         "twin": twin_id,
         "invitee": f"matrix-invitee-{tag}@example.com",
     }
@@ -637,11 +628,7 @@ def test_role_matrix(world, principal, method, template, allowed, success):
 def test_the_matrix_covers_every_project_scoped_route():
     """A new project route must be added to MATRIX, or this fails."""
     routed = {
-<<<<<<< Updated upstream
-        (method, route.path.replace("{project_id}", "{p}").replace("{source_id}", "{s}").replace("{user_id}", "{u}").replace("{code}", "G1").replace("{search_id}", "{q}").replace("{seed_id}", "{d}").replace("{extraction_id}", "{e}").replace("{claim_id}", "{h}").replace("{field_key}", "{field_key}").replace("{clustering_id}", "{c}").replace("{cluster_id}", "{l}").replace("{schema_name}", "{n}").replace("{alert_id}", "{a}").replace("{audit_id}", "{k}").replace("{suggestion_id}", "{g}").replace("{document_id}", "{doc}").replace("{number}", "{v}").replace("{target_kind}", "source").replace("{target_id}", "{s}").replace("{report_id}", "{rep}"))
-=======
-            (method, route.path.replace("{project_id}", "{p}").replace("{source_id}", "{s}").replace("{user_id}", "{u}").replace("{code}", "G1").replace("{search_id}", "{q}").replace("{seed_id}", "{d}").replace("{extraction_id}", "{e}").replace("{evidence_id}", "{e}").replace("{plan_id}", "{plan_id}").replace("{claim_id}", "{h}").replace("{gap_id}", "{gap_id}").replace("{field_key}", "{field_key}").replace("{clustering_id}", "{c}").replace("{cluster_id}", "{l}").replace("{schema_name}", "{n}").replace("{alert_id}", "{a}").replace("{audit_id}", "{k}").replace("{suggestion_id}", "{g}").replace("{target_kind}", "source").replace("{target_id}", "{s}").replace("{kind}", "co_citation"))
->>>>>>> Stashed changes
+            (method, route.path.replace("{project_id}", "{p}").replace("{source_id}", "{s}").replace("{user_id}", "{u}").replace("{code}", "G1").replace("{search_id}", "{q}").replace("{seed_id}", "{d}").replace("{extraction_id}", "{e}").replace("{evidence_id}", "{e}").replace("{plan_id}", "{plan_id}").replace("{claim_id}", "{h}").replace("{gap_id}", "{gap_id}").replace("{field_key}", "{field_key}").replace("{clustering_id}", "{c}").replace("{cluster_id}", "{l}").replace("{schema_name}", "{n}").replace("{alert_id}", "{a}").replace("{audit_id}", "{k}").replace("{suggestion_id}", "{g}").replace("{document_id}", "{doc}").replace("{number}", "{v}").replace("{target_kind}", "source").replace("{target_id}", "{s}").replace("{kind}", "co_citation").replace("{report_id}", "{rep}"))
         for route in app.routes
         if "{project_id}" in getattr(route, "path", "")
         for method in route.methods

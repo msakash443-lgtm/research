@@ -13,11 +13,8 @@ from app.database import Base, engine
 from app.source_gate_guard import ExtractionGateLocked
 from app.config import get_settings
 from app.middleware import ContentLengthLimitMiddleware
-<<<<<<< Updated upstream
 from app.routers import ai_locks, ai_settings, audit, provenance_reports, workspace_ai, auth, bibliometrics, claims, clusters, connectors, coverage, criteria, evidence_matrix, exports, extraction_schemas, extractions, gates, guide, integrity, members, notes, documents, prisma, profile, projects, replication, research_runs, scholar_metrics, screening, searches, alerts, seeds, snowball, sources, stage, suggestions, usage, zotero
-=======
-from app.routers import ai_locks, ai_settings, audit, auth, bibliometrics, claims, clusters, connectors, constructs, coverage, criteria, evidence_matrix, exports, extraction_schemas, extractions, gaps, gates, guide, members, meta_analysis, notes, prisma, profile, projects, replication, research_questions, research_runs, screening, searches, alerts, seeds, snowball, sources, stage, suggestions, usage, zotero
->>>>>>> Stashed changes
+from app.routers import constructs, gaps, meta_analysis, research_questions
 
 # Production settings (session secret, HTTPS, Postgres, ...) are validated in Settings.
 settings = get_settings()
