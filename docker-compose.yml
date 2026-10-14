@@ -4,9 +4,10 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-research_ai}
       POSTGRES_USER: ${POSTGRES_USER:-research_ai}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     ports:
-      - "5432:5432"
+      # X.4.4: loopback only, so the dev database is not reachable from the network.
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -19,7 +20,7 @@ services:
     build: .
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-research_ai}:${POSTGRES_PASSWORD:-change-me}@db:5432/${POSTGRES_DB:-research_ai}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-research_ai}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-research_ai}
       RUN_RESEARCH_INLINE: "false"
       OBJECT_STORAGE_ROOT: /data/objects
     volumes:
@@ -40,7 +41,7 @@ services:
     command: ["python", "-m", "app.worker"]
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-research_ai}:${POSTGRES_PASSWORD:-change-me}@db:5432/${POSTGRES_DB:-research_ai}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-research_ai}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-research_ai}
       RUN_RESEARCH_INLINE: "false"
       OBJECT_STORAGE_ROOT: /data/objects
     volumes:

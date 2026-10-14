@@ -51,7 +51,7 @@ def test_production_refuses_unknown_connector_names():
     base = dict(
         environment="production",
         session_secret="x" * 40,
-        database_url="postgresql+psycopg://u:p@h/db",
+        database_url="postgresql+psycopg://u:p@h/db?sslmode=require",
         auto_create_schema=False,
         public_origin="https://lab.example.org",
         google_client_id="id",

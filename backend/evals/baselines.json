@@ -15,5 +15,21 @@
   "synonym_suggestions@1": {
     "eval": "none",
     "reason": "Suggestions are proposals the scholar edits before use (M1.5.3); there is no gold dataset type for them."
+  },
+  "workspace_challenge@1": {
+    "eval": "none",
+    "reason": "Side-panel challenge on the researcher's own passage. No gold set exists for this task; every reply is schema-checked and leak-checked in code, and it only proposes comments a person may accept or reject."
+  },
+  "workspace_find_evidence@1": {
+    "eval": "none",
+    "reason": "Side-panel evidence matching against project source excerpts. No gold set exists for this task; ids are checked against what was sent, and nothing is stored as verified."
+  },
+  "workspace_clearer_sentence@1": {
+    "eval": "none",
+    "reason": "Side-panel clearer-wording proposals (Full level only). No gold set exists for this task; proposals are reviewed by the researcher before any insert."
+  },
+  "workspace_argument_check@1": {
+    "eval": "none",
+    "reason": "Side-panel argument-structure checks on the researcher's own passage. No gold set exists for this task; every reply is schema-checked and leak-checked in code."
   }
 }

@@ -34,7 +34,7 @@ from app.config import get_settings
 from app.database import SessionLocal
 from app.models import GateCode, Task, TaskStatus, utcnow
 from app.gates import gate_is_approved
-from app.task_registry import FAILURE_HOOKS, REQUIRED_GATES, ClaimedTask
+from app.task_registry import FAILURE_HOOKS, PAYLOAD_SCRUBS, REQUIRED_GATES, ClaimedTask
 
 logger = logging.getLogger(__name__)
 
@@ -178,10 +178,24 @@ def heartbeat(task_id: uuid.UUID, attempt: int, now: datetime | None = None) -> 
         db.close()
 
 
+def _scrubbed(task_type: str, payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The payload to keep once a task of this type has ended for good (see `PAYLOAD_SCRUBS`)."""
+    scrub = PAYLOAD_SCRUBS.get(task_type)
+    if scrub is None or payload is None:
+        return payload
+    return scrub(payload)
+
+
 def complete_task(task_id: uuid.UUID, attempt: int) -> bool:
     db = SessionLocal()
     try:
-        done = _transition(db, task_id, *_owned(attempt), status=TaskStatus.completed, lease_expires_at=None, error=None)
+        task = db.get(Task, task_id)
+        if task is None:
+            return False
+        done = _transition(
+            db, task_id, *_owned(attempt), status=TaskStatus.completed, lease_expires_at=None, error=None,
+            payload=_scrubbed(task.type, task.payload),
+        )
         db.commit()
         return done
     finally:
@@ -216,9 +230,12 @@ def _fail_or_retry(
         status, run_after, action = TaskStatus.failed, None, "task.failed"
     else:
         status, run_after, action = TaskStatus.queued, now + timedelta(seconds=backoff_seconds(task.attempts)), "task.requeued"
+    values = {}
+    if status == TaskStatus.failed:
+        values["payload"] = _scrubbed(task.type, task.payload)
     if not _transition(
         db, task.id, *_owned(task.attempts), *conditions,
-        status=status, run_after=run_after, error=error, lease_expires_at=None,
+        status=status, run_after=run_after, error=error, lease_expires_at=None, **values,
     ):
         return None
     audit.record(

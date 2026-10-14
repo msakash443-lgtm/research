@@ -115,6 +115,13 @@ hardening.
   research integrity: pseudonymise the person (blank email/name on `users`, keep the UUID so the audit
   trail stays intact) and state that audit notes are retained under the research-integrity exemption
   for a fixed period. That is a policy choice for the owner/university. → **Q23**, then **X.4.7**.
+  *Status 2026-10-14 (X.4.7.1, built on a provisional Q23 basis; the DPO has not answered):* a signed-in
+  person can pseudonymise their own account (`POST /api/auth/erase-account`, typing their email to
+  confirm). The email becomes `erased-<id>@erased.invalid`, the name and Google identity links are removed,
+  all sessions end, and the account can never sign in again; the user id and every audit row are kept.
+  Refused while the person is the only owner of a project that has other members. Not yet covered: audit
+  notes/reasons are not rewritten (append-only) and have no retention period yet (X.4.7.4); private notes
+  and AI-suggestion text of the person remain (X.4.7.5); project and file deletion are X.4.7.2/.3.
 - **5c (Medium) No data export for a person** (access/portability request). The per-project audit
   export exists, but nothing gathers what the platform holds about one user. → **X.4.8**.
 

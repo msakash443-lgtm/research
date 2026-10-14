@@ -109,6 +109,8 @@ The application refuses to start in production (`ENVIRONMENT=production`) if:
 - `PUBLIC_ORIGIN` is not `https://`, or `GOOGLE_REDIRECT_URI` does not start with it;
 - the Google OAuth client id or secret is missing;
 - `ARC_RETRIEVAL_ENABLED=true` and `ARC_RETRIEVAL_BASE_URL` is not `https://`, or `ARC_RETRIEVAL_TOKEN` is shorter than 16 characters.
+- `CONNECTORS_ENABLED` names a connector that is not in the catalogue (`backend/app/connectors/access.py`; the check is `config.py::validate_production_settings`);
+- `core` is enabled without `CORE_API_KEY`, or `scopus`, `web_of_science` or `ieee_xplore` is enabled without `SCOPUS_API_KEY`, `WEB_OF_SCIENCE_API_KEY` or `IEEE_XPLORE_API_KEY`.
 
 ### Secrets
 
@@ -120,6 +122,46 @@ The application refuses to start in production (`ENVIRONMENT=production`) if:
 | `LLM_API_KEY` | worker (and web only if `RUN_RESEARCH_INLINE=true`) | Set provider-side spend limits too. |
 | `ARC_RETRIEVAL_TOKEN` | worker **and** the ARC service (same value) | Only when retrieval is enabled. Rotate both sides together. |
 | `TAVILY_API_KEY` | ARC service only | Optional; without it ARC uses its keyless search fallback (open question Q7 in `plan.md`). |
+| Connector keys (`SEMANTIC_SCHOLAR_API_KEY`, `NCBI_API_KEY`, `CORE_API_KEY`, `SCOPUS_API_KEY`, `SCOPUS_INST_TOKEN`, `WEB_OF_SCIENCE_API_KEY`, `IEEE_XPLORE_API_KEY`, `OPENCITATIONS_ACCESS_TOKEN`) | worker (the connectors run there; the web process only reads `CONNECTORS_ENABLED`) | Optional, except the keys named in the start-up checks above. Licensed indexes (Scopus, Web of Science, IEEE Xplore) need an institutional licence. |
+
+### Supplying secrets from files
+
+`DATABASE_URL` and every secret setting (the ones in the table above, plus the object-storage, Zotero and `LOCAL_LLM_API_KEY` secrets) can be given as `<NAME>_FILE=<path>` instead of `<NAME>=<value>`. The file's contents are used, with trailing newlines removed. This matches Docker secrets (mounted at `/run/secrets/<name>`) and Kubernetes secret volumes.
+
+```dotenv
+SESSION_SECRET_FILE=/run/secrets/session_secret
+DATABASE_URL_FILE=/run/secrets/database_url
+```
+
+- Setting both `<NAME>` and `<NAME>_FILE` is refused at start-up. An unreadable file is also refused. Neither error prints a secret.
+- Settings that are not secrets (for example `LLM_MODEL`) do not accept `_FILE`.
+- Production checks (for example the 32-character `SESSION_SECRET` minimum) apply to the value read from the file.
+- If your platform injects secrets as ordinary environment variables from a secret manager, use those and skip `_FILE`.
+
+### Rotating `SESSION_SECRET`
+
+1. Generate a new random value of 32 or more characters and store it in the secret manager.
+2. Update it on **every** web replica at the same time and restart them. Replicas with different secrets reject each other's cookies.
+3. Every signed-in user is signed out and must sign in again. This is the intended effect, and it is the way to end all sessions after a suspected leak.
+4. The old value is not needed afterwards. To end sessions for one user only, use "sign out everywhere" (`POST /api/auth/logout-everywhere`).
+
+## Scholarly connectors (optional)
+
+Scholarly search and look-up (OpenAlex, Crossref, Semantic Scholar, arXiv, Unpaywall, PubMed/Europe PMC, CORE, OpenCitations, and the licensed Scopus, Web of Science and IEEE Xplore) is off by default. The catalogue is `backend/app/connectors/access.py`; a connector runs only if its name is in `CONNECTORS_ENABLED`.
+
+```dotenv
+CONNECTORS_ENABLED=["openalex","crossref"]   # JSON list of catalogue names; [] = all off
+CONNECTORS_ALLOW_SCRAPING=false              # needed only for connectors whose access kind is "scraping"
+CONNECTOR_CONTACT_EMAIL=<monitored-address>  # polite-pool contact sent to OpenAlex/Crossref; required for Unpaywall
+CONNECTOR_CACHE_TTL_SECONDS=0                # 0 = every search is live
+CONNECTOR_BREAKER_SHARED=false               # true = share the circuit breaker across worker processes via the DB
+```
+
+- `official_api` connectors (the free public APIs) need no key beyond the optional ones in the secrets table, with one exception: CORE has no anonymous access and needs a free `CORE_API_KEY`. The start-up checks refuse to start with `core` enabled and no key.
+- `licensed` connectors (Scopus, Web of Science, IEEE Xplore) are unusable without their key and an institutional licence; the start-up checks refuse to start with them enabled and no key.
+- `scraping` connectors (currently `google_scholar`, catalogue entry only, no connector built) stay off even if named, unless `CONNECTORS_ALLOW_SCRAPING=true`. Do not enable them without a ToS review.
+- An unknown name in `CONNECTORS_ENABLED` stops the application at start-up in production.
+- Connector calls run in the worker (search and snowball tasks). The web process only checks the enabled list when a person asks for a search, so keep `CONNECTORS_ENABLED` identical on the web and worker services.
 
 ## Worker, leases and retries
 
@@ -160,14 +202,14 @@ Env:     ARC_RETRIEVAL_TOKEN   required, 16+ characters; the service refuses to 
 - Their text is treated as untrusted data: cleaned and fenced in the prompt, never followed as instructions.
 - If ARC fails or is unreachable, the run continues without it and the retrieval failure is recorded on the run and in the audit log.
 
-**Before enabling it in production** (status on 2026-10-03; see `plan.md`):
+**Before enabling it in production** (status on 2026-10-14; `plan.md` is the source of truth):
 
-- [ ] M1.1.8: service smoke test (`curl POST /v1/retrieve`). Not run yet; waiting on Q7 (Tavily or the keyless fallback).
-- [ ] M1.1.10: end-to-end smoke with both services.
-- [ ] M1.1.11: ARC hardening (SSRF re-check on redirects, response-size caps, writable cache dir for the non-root user).
-- [ ] X.1.2: ARC retrieval tests in CI.
+- [x] M1.1.8: service smoke test (`curl POST /v1/retrieve`).
+- [x] M1.1.10: end-to-end smoke with both services.
+- [x] M1.1.11: ARC hardening (SSRF re-check on redirects, response-size caps, writable cache dir for the non-root user).
+- [ ] X.1.2: ARC retrieval tests in CI. The tests are vendored in `backend/tests/test_arc_retrieval_api.py` and pass locally, but the CI workflow has not yet run on GitHub, so this stays open until it does.
 
-Until these are done, keep `ARC_RETRIEVAL_ENABLED=false` in production.
+Until X.1.2 is closed, keep `ARC_RETRIEVAL_ENABLED=false` in production.
 
 ## Database and network
 
@@ -186,6 +228,48 @@ Until these are done, keep `ARC_RETRIEVAL_ENABLED=false` in production.
 - Keep `CORS_ORIGINS=[]` while the dashboard and API remain same-origin.
 - Do not enable the development-login route in production; it is automatically unavailable there.
 
+## Security: encryption, proxy and rate limits
+
+The application does not encrypt stored data itself. Encryption at rest is a **hosting requirement** (decision Q24, 2026-10-11); the application enforces encryption in transit where it can.
+
+### Encryption at rest (required from the host)
+
+| Data | Requirement |
+| --- | --- |
+| PostgreSQL (projects, sources, notes, audit log, run snapshots) | Managed Postgres with storage encryption enabled, or an encrypted volume. Backups and point-in-time-recovery copies must be encrypted too. |
+| Object storage (uploaded files) | With `OBJECT_STORAGE_BACKEND=s3`: server-side encryption on the bucket (S3 SSE or the provider's equivalent). With `local`: an encrypted volume. The default `./data/objects` path and the dev SQLite file are plain files and are for development only. |
+
+- The hosting platform is not chosen yet (Q13), so the exact mechanism is not named here. Record it in the pre-flight decisions once it is, and confirm it in the provider's console before any real user or participant data is stored.
+- Nothing in the application can check this. Treat it as a manual item on the release checklist.
+
+### Encryption in transit
+
+- Terminate TLS at the load balancer or platform ingress. The web container speaks plain HTTP on port 8080 and must not be reachable except through that proxy.
+- In production the application refuses to start unless `PUBLIC_ORIGIN` is `https://`, `LLM_API_BASE_URL` is `https://`, `DATABASE_URL` requests TLS (`sslmode=require`, `verify-ca` or `verify-full`), and `LOCAL_LLM_API_BASE_URL` (if set) is `https://`.
+- Opt-outs exist for private setups: `DATABASE_TLS_OPT_OUT=true` (local socket or sidecar database that never leaves the host) and `LOCAL_LLM_ALLOW_HTTP=true` (self-hosted model on a private network). Do not set either for a database or model reached over a shared network.
+- In production the app sends `Strict-Transport-Security: max-age=31536000; includeSubDomains`. Only enable this on a domain where every subdomain is HTTPS.
+
+### Proxy headers
+
+The image starts uvicorn with `--proxy-headers`, which trusts `X-Forwarded-*` only from `127.0.0.1` by default. When the proxy is in another container or host, the app sees the scheme as `http` and the proxy's address as the client. Set `FORWARDED_ALLOW_IPS` on the web service to the proxy's address or network (comma-separated), for example `FORWARDED_ALLOW_IPS=10.0.0.0/8`.
+
+- Never use `*` unless the web port is reachable only from the proxy: any client that can reach it directly could forge `X-Forwarded-For` and `X-Forwarded-Proto`.
+- Today the cookie `Secure` flag comes from `ENVIRONMENT=production` and the OAuth redirect from `GOOGLE_REDIRECT_URI` (which production start-up requires to begin with `PUBLIC_ORIGIN`), not from the request, so nothing breaks if this is unset. Anything built later from `request.url` or the client address would depend on it.
+
+### Rate limiting
+
+The application caps model spend (`RESEARCH_RUN_LIMIT_PER_DAY` and the token budget) but does **not** throttle requests. Apply request rate limits at the reverse proxy or platform edge:
+
+- A low limit per client address on `/api/auth/*` (sign-in and callback), to slow abuse of the OAuth flow.
+- A moderate per-address limit on `/api/*` overall, and a lower one on endpoints that enqueue work (research runs, searches, uploads).
+- `MAX_REQUEST_BODY_BYTES` bounds request bodies; set the proxy's body limit at or above it so oversize uploads are rejected early.
+- Return `429` and log rejected requests at the proxy. The numbers depend on the number of users and are not set here.
+
+### Sessions
+
+- `SESSION_MAX_AGE_SECONDS` sets the browser session lifetime (default 14 days); shorten it for shared machines.
+- "Sign out everywhere" (`POST /api/auth/logout-everywhere`) ends one user's sessions; rotating `SESSION_SECRET` ends everyone's (see above).
+
 ## Release checklist
 
 1. Run `pytest -q` and build the container image.
@@ -199,6 +283,7 @@ Until these are done, keep `ARC_RETRIEVAL_ENABLED=false` in production.
    If ARC retrieval is enabled: check `GET /api/health` on the ARC service, then start one run with retrieval ticked and confirm the new sources appear as "Auto-retrieved, unverified".
 9. Enable application/platform error logging with redaction for secrets and source content.
 10. Document rollback: retain the prior image and use backward-compatible migrations.
+11. Security (see "Security: encryption, proxy and rate limits"): confirm encryption at rest is on for Postgres, its backups and object storage; confirm the proxy terminates TLS and the web port is not public; set `FORWARDED_ALLOW_IPS`; configure proxy rate limits.
 
 ## Safeguards before adding more agent tools
 

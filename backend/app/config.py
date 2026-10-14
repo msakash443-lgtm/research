@@ -1,7 +1,9 @@
 import ipaddress
+import os
 import re
 from functools import lru_cache
-from urllib.parse import urlsplit
+from typing import Any, get_args
+from urllib.parse import parse_qs, urlsplit
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -40,10 +42,28 @@ def local_llm_url_problem(url: str) -> str | None:
     return f"points at {host}, which is not a local or private host name"
 
 
+def _database_requests_tls(url: str) -> bool:
+    """True when the URL's `sslmode` asks for encryption that is verified or at least required (X.4.1)."""
+    modes = parse_qs(urlsplit(url).query).get("sslmode", [])
+    return bool(modes) and modes[-1] in {"require", "verify-ca", "verify-full"}
+
+
+def _file_secret_fields(settings_cls: type[BaseSettings]) -> list[str]:
+    """Names of the settings that may be supplied as `<NAME>_FILE`: `database_url` and every secret field."""
+    names = ["database_url"]
+    for name, field in settings_cls.model_fields.items():
+        annotation = field.annotation
+        if SecretStr is annotation or SecretStr in get_args(annotation):
+            names.append(name)
+    return names
+
+
 class Settings(BaseSettings):
     database_url: str = "sqlite:///./research_ai.db"
     environment: str = "development"
     session_secret: SecretStr = SecretStr("development-only-change-me")
+    # Browser session lifetime (X.4.3). Starlette's own default is 14 days.
+    session_max_age_seconds: int = Field(default=14 * 24 * 60 * 60, gt=0)
     public_origin: str = "http://localhost:8000"
     allowed_hosts: list[str] = ["localhost", "127.0.0.1", "testserver"]
     cors_origins: list[str] = []
@@ -82,6 +102,12 @@ class Settings(BaseSettings):
     # LOCAL_LLM_API_BASE_URL must name a local/private host (`local_llm_url_problem`). Set true only on purpose,
     # for a self-hosted server reachable at a public address (M0.8.8).
     local_llm_allow_public_host: bool = False
+    # Production only: LOCAL_LLM_API_BASE_URL is https unless this is true (X.4.1). Use it for a local model
+    # on a private network that serves plain http.
+    local_llm_allow_http: bool = False
+    # Production only: DATABASE_URL must request TLS (`sslmode=require`, `verify-ca` or `verify-full`).
+    # Set true only for a local socket or sidecar database that never leaves the host (X.4.1).
+    database_tls_opt_out: bool = False
     # Safe default: participant data is refused (loudly) rather than silently sent to
     # LLM_API_BASE_URL unless a local model is configured. Set false only after an
     # explicit decision that the third-party model may see participant data (Q4).
@@ -162,6 +188,9 @@ class Settings(BaseSettings):
     cluster_max_sources: int = Field(default=1000, ge=2)
     # Obsidian vault export (X.34.1): GET /api/projects/{id}/export/obsidian. Off by default; 404 while off.
     obsidian_export_enabled: bool = False
+    # Institutional similarity check (X.31.15): the name of a registered connector in `similarity_providers.CONNECTORS`.
+    # Empty = none. No connector exists until a licence is confirmed (Q17), so any value is "not configured" for now.
+    similarity_institutional_provider: str = ""
     # Zotero library sync (M1.11.2): pull items from, and push verified sources into, a Zotero user
     # library over the official API. Off by default; the credentials are used only while enabled.
     # `zotero_collection_key` is the collection pushes create items in; pulls read the whole library
@@ -172,6 +201,31 @@ class Settings(BaseSettings):
     zotero_collection_key: str | None = None
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def read_secret_files(cls, data: Any) -> Any:
+        """Fill secret fields from `<NAME>_FILE` (Docker/Kubernetes secrets, X.4.5).
+
+        Only `DATABASE_URL` and the `SecretStr` fields are eligible. Setting both `NAME` and `NAME_FILE`
+        is refused, and an unreadable file fails start-up; neither error quotes a secret value.
+        """
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        for name in _file_secret_fields(cls):
+            env_name = f"{name.upper()}_FILE"
+            path = os.environ.get(env_name)
+            if not path:
+                continue
+            if data.get(name) not in (None, ""):
+                raise ValueError(f"set {name.upper()} or {env_name}, not both")
+            try:
+                with open(path, encoding="utf-8") as handle:
+                    data[name] = handle.read().rstrip("\r\n")
+            except OSError as exc:
+                raise ValueError(f"{env_name} points at a file that cannot be read ({exc.strerror})") from None
+        return data
 
     @model_validator(mode="after")
     def validate_production_settings(self) -> "Settings":
@@ -223,6 +277,12 @@ class Settings(BaseSettings):
             raise ValueError("Google OAuth credentials are required in production")
         if not self.google_redirect_uri.startswith(self.public_origin):
             raise ValueError("GOOGLE_REDIRECT_URI must start with PUBLIC_ORIGIN")
+        if self.llm_api_base_url and urlsplit(self.llm_api_base_url).scheme != "https":
+            raise ValueError("LLM_API_BASE_URL must use HTTPS in production (research content is sent there)")
+        if self.local_llm_api_base_url and urlsplit(self.local_llm_api_base_url).scheme != "https" and not self.local_llm_allow_http:
+            raise ValueError("LOCAL_LLM_API_BASE_URL must use HTTPS in production; set LOCAL_LLM_ALLOW_HTTP=true for a private-network model that serves plain http")
+        if not self.database_tls_opt_out and not _database_requests_tls(self.database_url):
+            raise ValueError("DATABASE_URL must request TLS in production (add sslmode=require, verify-ca or verify-full), or set DATABASE_TLS_OPT_OUT=true for a local socket or sidecar")
         from app.connectors.access import unknown_connectors
 
         bad = unknown_connectors(self.connectors_enabled)

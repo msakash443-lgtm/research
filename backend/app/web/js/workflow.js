@@ -36,6 +36,7 @@ export const STEPS = [
   { id: "evidence", title: "Evidence table", group: "Synthesize" },
   { id: "verification", title: "Verify extraction", group: "Synthesize" },
   { id: "ask", title: "Ask", group: "Synthesize" },
+  { id: "write", title: "Write", group: "Synthesize" },
   { id: "approvals", title: "Approvals", group: "Project" },
   { id: "team", title: "Team", group: "Project" },
   { id: "activity", title: "Activity", group: "Project" },
@@ -93,6 +94,11 @@ export const GUIDES = {
     what: "Compare each extraction with its stored PDF and confirm every critical field.",
     why: "Human checks make sample sizes, measures and effects accountable before synthesis.",
     approval: "G4 opens only after every included paper's current extraction is verified.",
+  },
+  write: {
+    what: "Write a manuscript section. Every sentence records who wrote it: typed by you, pasted, or from an AI suggestion.",
+    why: "Authorship is kept for the writing record and the provenance report. Nothing is deleted: every save adds a version you can restore.",
+    approval: null,
   },
   ask: {
     what: "Ask a research question answered from saved context and sources.",

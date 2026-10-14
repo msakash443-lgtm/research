@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, HttpUrl, StringConstraints, field_validator, model_validator
 
@@ -67,6 +67,9 @@ class ContextItemRead(ContextItemCreate):
     used_by_agent: bool | None = None
     # Set by the list endpoint: whether the item is set to "never for this item" (ai_item_locks.py).
     ai_locked: bool | None = None
+    # Read-only links (X.31.2): the note this came from, and for a decision the item it concerns.
+    promoted_from_note_id: uuid.UUID | None = None
+    related_item_id: uuid.UUID | None = None
 
 
 class SourceCreate(BaseModel):
@@ -450,4 +453,38 @@ class NoteRevisionRead(BaseModel):
     quoted_text: str | None
     edited_by: str | None
     created_at: datetime
+
+
+class NoteFile(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    project_id: uuid.UUID
+
+
+class NotePromote(BaseModel):
+    """Promote a filed note to a research item (X.31.2). The text is the researcher's, not copied from the note."""
+
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["idea", "gap", "hypothesis", "claim", "memo", "decision"]
+    content: str = Field(min_length=1, max_length=20000)
+    rationale: str | None = Field(default=None, max_length=20000)
+    related_item_id: uuid.UUID | None = None
+
+    @field_validator("content")
+    @classmethod
+    def _strip_content(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("content cannot be blank")
+        return stripped
+
+
+class NoteSuggestionRead(BaseModel):
+    """A non-AI triage suggestion (`app/note_suggest.py`). `project` and `source` are things to file the note
+    under or cite; `stage` is the suggested project's current stage, shown as a chip."""
+
+    kind: Literal["project", "source", "stage"]
+    target_id: str
+    project_id: str | None = None
+    label: str
+    score: float
 

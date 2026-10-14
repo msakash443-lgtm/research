@@ -21,7 +21,7 @@
 | 5.1.1 | Cluster/de-dup ideas; extract constructs & contexts | M4.7 | — | — | `[ ]` |
 | 5.1.2 | Rapid landscape scan | M4.7 | — | — | `[ ]` |
 | 5.1.3 | Novelty heuristic **with visible comparators**; feasibility checklist | M4.7 | — | — | `[ ]` |
-| 5.1 in | Free-text idea/voice-note capture, scoping notes (design: `docs/researcher-workspace-design.md`) | X.31.1–X.31.2, X.31.17 | `POST/GET/PATCH /api/notes`, capture dialog | `test_notes.py`, `test_note_guard.py` | X.31.1 `[?]` (quick capture built); X.31.2+ `[ ]` |
+| 5.1 in | Free-text idea/voice-note capture, scoping notes (design: `docs/researcher-workspace-design.md`) | X.31.1–X.31.2, X.31.17 | `POST/GET/PATCH /api/notes`, capture dialog; triage: `POST /api/notes/{id}/file`, `…/promote`, `GET …/suggestions`, `GET /api/projects/{id}/context?kind=`; inbox and decision-log screen (`#/inbox`, `web/js/inbox.js`) | `test_notes.py`, `test_note_guard.py`, `test_notes_triage.py`, `test_note_suggest.py`, `web/js/test/inboxLogic.test.mjs` | X.31.1 `[?]` (quick capture built); X.31.2.a `[?]` (triage backend); X.31.2.1 `[?]` (inbox and decision-log screen built ahead of the wireframe walkthrough, rule 32 override); X.31.17 `[ ]` |
 | 5.1 out | One-page idea brief | M4.7 | — | — | `[ ]` |
 | 5.1 gate | G1 approve topic direction | M4.7, M0.5.2–M0.5.4 | — | — | `[ ]` |
 
@@ -123,7 +123,7 @@
 | 5.11.4 | Style help with diffs | M6.8; see also X.31.11 (AI side panel, accept/reject proposals, design doc) | — | — | `[ ]` |
 | 5.11.5 | Ref-manager sync; CSL | M1.11, M6.5 | `POST …/sources/import`, `GET …/sources/export`, `GET …/zotero`, `POST …/zotero/pull` (G2-gated), `POST …/zotero/push` (verified only) | `test_refmanager*.py`, `test_zotero.py` | M1.11 `[x]` (M1.11.1 `[x]`; M1.11.2, M1.11.3 `[x]` — P3 closures at user request 2026-10-10) |
 | 5.11.6 | **Abstract, keywords, highlights, cover letter**; statements (incl. per-manuscript AI-use statement) | M6.10 *(new)*, M6.5, M6.6; AI-use statement also covered by X.31.12 (`provenance_report.py`, design doc) | — | — | `[ ]` |
-| 5.11.7 | Similarity pre-check | M6.7; project-source similarity also covered by X.31.14, institutional integration point by X.31.15 (design doc) | — | — | `[ ]` |
+| 5.11.7 | Similarity pre-check | M6.7; project-source similarity also covered by X.31.14 (`[?]`: API `POST/GET /projects/{id}/similarity-checks`; "Similarity" tab in the write step; tests `test_similarity.py`, `test_similarity_api.py`, `similarityLogic.test.mjs`), institutional integration point by X.31.15 (design doc) | — | — | `[ ]` |
 | 5.11 gate | **G10 approve each section + AI-involvement level** | M6.1, M6.11 *(new)* | — | — | `[ ]` |
 | 5.11 QC | Zero unresolved citations / orphan claims | M6.2, M6.4 | — | — | `[ ]` |
 
@@ -190,8 +190,8 @@
 | Requirement | Tasks | Tests | Status |
 |---|---|---|---|
 | No fabrication (hard to do accidentally) | M1.10, M3.4, M3.11.2, M6.2–M6.4 | `test_llm_success_path.py` (no placeholder output) | `[ ]` |
-| AI-use disclosure from provenance log | M6.6; per-manuscript statement also covered by X.31.12 (design: `docs/researcher-workspace-design.md`) | — | `[ ]` |
-| Authorship / CRediT; AI never an author; authorship ledger (who typed/dictated/pasted/AI-accepted each span) | M6.6; authorship ledger covered by X.31.8–X.31.9, X.31.11 (append-only `authorship_events`, design doc) | — | `[ ]` |
+| AI-use disclosure from provenance log | M6.6; per-manuscript statement also covered by X.31.12 (design: `docs/researcher-workspace-design.md`) | `POST/GET /projects/{id}/provenance-reports`, `GET …/provenance-reports/{id}?format=md\|json` (X.31.12, `[~]`: report UI not built); tests `test_provenance_report.py`, `test_provenance_reports_api.py`, `test_ledger_guard.py` | — | `[~]` |
+| Authorship / CRediT; AI never an author; authorship ledger (who typed/dictated/pasted/AI-accepted each span) | M6.6; authorship ledger covered by X.31.8–X.31.9, X.31.11 (append-only `authorship_events`, design doc) | `POST …/documents/{id}/versions`, `GET …/versions`, `GET …/versions/{n}`, `POST …/versions/{n}/restore`, `GET …/ledger` (X.31.9) | `test_ledger.py`, `test_documents.py`, `test_ledger_guard.py` (X.31.8–X.31.9); X.31.11 not built | `[~]` |
 | Copyright: store full text only where licensed | M2.7.1, M1.3.4, M1.4.8 | `test_oa_fetch.py`, `test_arxiv_fulltext.py` | `[x]` (M1.4.8 independently reviewed 2026-10-10) |
 | Participant protection (consent, anonymisation, retention) | M4.5, M5.6, X.4 | — | `[ ]` |
 | Reporting-guideline checklists | X.11 | — | `[ ]` |
@@ -203,7 +203,7 @@
 | Reliability (idempotent, resumable, no loss) | M0.2.1, M0.6.2, M0.6.4 | `test_worker_reaper.py` | `[?]` / `[ ]` |
 | Security (roles, encryption, secrets) | M0.3.1–M0.3.5, X.4; existing sign-in (`/api/auth/*`) | `test_auth.py`, `test_project_access.py`, `test_role_matrix.py`, `test_project_members*.py`, `test_dashboard.py` (body limit) | `[?]` / `[ ]` |
 | Auditability (immutable, exportable) | M0.4.1–M0.4.5 | `test_audit_*.py` | `[?]` |
-| **Performance** (≥ 1,000 abstracts/h; 500 papers indexed < 1 h) | X.19 *(new)* | — | `[ ]` |
+| **Performance** (≥ 1,000 abstracts/h; 500 papers indexed < 1 h) | X.19 | `backend/tests/test_performance_benchmark.py` (app-side overhead only; model latency not measured) | `[?]` |
 | Scalability (multi-user, queue workers) | M0.3, M0.6 | — | `[ ]` |
 | Usability (keyboard screening, side-by-side, diffs) | M2.3.1, M3.6.1, M6.8, **X.14** (3 clickable wireframes in `docs/wireframes/`, walkthrough pending), X.32 | — | `[ ]` |
 | Portability (open export formats) | X.8, M1.11, M3.5.2, M6.5, X.34 (Obsidian vault, verified-only) | `test_obsidian_export.py` (X.34.1) | `[ ]` (X.34.1 `[?]`) |

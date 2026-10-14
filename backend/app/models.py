@@ -33,6 +33,11 @@ class User(Timestamped, Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
     display_name: Mapped[str | None] = mapped_column(String(200))
+    # Bumped by "sign out everywhere"; a browser session carries the epoch it was issued at (X.4.3).
+    session_epoch: Mapped[int] = mapped_column(default=0, server_default="0")
+    # Set when the person's account was pseudonymised (X.4.7.1): email/name blanked, identities removed, row and id
+    # kept so audit history stays attributable. An erased user can never sign in again.
+    erased_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     projects: Mapped[list["Project"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     external_identities: Mapped[list["ExternalIdentity"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
@@ -221,6 +226,10 @@ class ContextKind(str, enum.Enum):
     variable = "variable"
     decision = "decision"
     idea = "idea"
+    # Promotion targets from the inbox (X.31.2). Never sent to a research run (agent/context.py).
+    gap = "gap"
+    claim = "claim"
+    memo = "memo"
 
 
 class ResearchContextItem(Timestamped, Base):
@@ -231,6 +240,10 @@ class ResearchContextItem(Timestamped, Base):
     content: Mapped[str] = mapped_column(Text)
     rationale: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[str | None] = mapped_column(String(100))
+    # The note this item was promoted from (X.31.2). Read-only link: the note's text is never copied into `content`.
+    promoted_from_note_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("notes.id"), index=True)
+    # A decision points at the item it concerns (X.31.2). Same project only; enforced by the promote route.
+    related_item_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("research_context_items.id"), index=True)
     project: Mapped[Project] = relationship(back_populates="context_items")
 
 
@@ -694,6 +707,10 @@ class AiSuggestion(Base):
     prompt_version: Mapped[str] = mapped_column(String(100))
     producing_agent: Mapped[str] = mapped_column(String(60))
     guidance: Mapped[str | None] = mapped_column(Text)
+    # Workspace side panel (X.31.11): which action made it, and what it was given (a hash and a size, never the text).
+    action: Mapped[str | None] = mapped_column(String(40))
+    input_hash: Mapped[str | None] = mapped_column(String(64))
+    input_chars: Mapped[int | None]
     parent_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("ai_suggestions.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     events: Mapped[list["AiSuggestionEvent"]] = relationship(order_by="AiSuggestionEvent.seq")
@@ -728,6 +745,132 @@ class AiItemLock(Base):
     target_kind: Mapped[str] = mapped_column(String(40))
     target_id: Mapped[str] = mapped_column(String(100))
     locked_by: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Document(Timestamped, Base):
+    """One manuscript section (X.31.8). The text is never stored here: every save writes a new `DocumentVersion`,
+    and `current_version_id` only points at the latest one. One manuscript per project in V1 is the project's
+    documents ordered by `position`."""
+
+    __tablename__ = "documents"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    title: Mapped[str] = mapped_column(String(300))
+    position: Mapped[int]
+    ai_locked: Mapped[bool] = mapped_column(default=False, server_default=false())
+    current_version_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
+    created_by: Mapped[str] = mapped_column(String(100))
+    versions: Mapped[list["DocumentVersion"]] = relationship(back_populates="document", order_by="DocumentVersion.number")
+
+
+class AuthorshipKind(str, enum.Enum):
+    inserted = "inserted"
+    removed = "removed"
+    changed = "changed"
+    resolved = "resolved"
+    restored = "restored"
+
+
+class SpanOrigin(str, enum.Enum):
+    typed = "typed"
+    dictated = "dictated"
+    pasted = "pasted"
+    imported = "imported"
+    from_note = "from_note"
+    ai_edited = "ai_edited"
+    ai_suggested = "ai_suggested"
+
+
+class DocumentVersion(Base):
+    """One saved state of a document. Append-only (enforced by `ledger_guard`): saving writes the next number and
+    nothing already written is changed or removed, so every autosave is kept (Q21). `content_json` is the
+    ProseMirror document; `content_text` is its plain-text projection; `content_hash` is sha256 of the canonical JSON."""
+
+    __tablename__ = "document_versions"
+    __table_args__ = (
+        UniqueConstraint("document_id", "number", name="uq_document_version_number"),
+        UniqueConstraint("document_id", "client_save_id", name="uq_document_version_client_save"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id"), index=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    number: Mapped[int]
+    parent_number: Mapped[int | None]
+    content_json: Mapped[dict] = mapped_column(JSON)
+    content_text: Mapped[str] = mapped_column(Text)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    saved_by: Mapped[str] = mapped_column(String(100))
+    client_save_id: Mapped[str] = mapped_column(String(64))
+    client_session_id: Mapped[str | None] = mapped_column(String(64))
+    client_saved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    restored_from_number: Mapped[int | None]
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    document: Mapped[Document] = relationship(back_populates="versions")
+
+
+class AuthorshipEvent(Base):
+    """One change to one authorship span, recorded against the version that made it (X.31.8). Append-only
+    (enforced by `ledger_guard`). It never holds the text itself: that lives in the versions, which are also
+    append-only."""
+
+    __tablename__ = "authorship_events"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id"), index=True)
+    version_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("document_versions.id"), index=True)
+    span_id: Mapped[str] = mapped_column(String(36), index=True)
+    kind: Mapped[AuthorshipKind] = mapped_column(Enum(AuthorshipKind, name="authorship_kind"))
+    origin: Mapped[SpanOrigin] = mapped_column(Enum(SpanOrigin, name="span_origin"))
+    paste_status: Mapped[str | None] = mapped_column(String(12))
+    actor: Mapped[str] = mapped_column(String(100))
+    chars_before: Mapped[int]
+    chars_after: Mapped[int]
+    text_hash: Mapped[str] = mapped_column(String(64))
+    suggestion_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("ai_suggestions.id"), index=True)
+    model_id: Mapped[str | None] = mapped_column(String(255))
+    prompt_version: Mapped[str | None] = mapped_column(String(100))
+    note_id: Mapped[uuid.UUID | None]
+    detected_source_id: Mapped[uuid.UUID | None]
+    detected_document_id: Mapped[uuid.UUID | None]
+    cited_source_id: Mapped[uuid.UUID | None]
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SimilarityCheck(Base):
+    """One similarity check of a saved section version against the project's sources (X.31.14). Append-only
+    (enforced by `ledger_guard`): a result is never edited, and a re-check is a new row. `findings_json` holds
+    offsets, kinds, ids and scores only, never the text of the section or of a source."""
+
+    __tablename__ = "similarity_checks"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id"), index=True)
+    version_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("document_versions.id"), index=True)
+    provider: Mapped[str] = mapped_column(String(60))
+    status: Mapped[str] = mapped_column(String(12))
+    requested_by: Mapped[str] = mapped_column(String(100))
+    findings_json: Mapped[list] = mapped_column(JSON)
+    summary_json: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ProvenanceReport(Base):
+    """A frozen writing provenance report (X.31.12). Append-only (enforced by `ledger_guard`): a report is never
+    edited, and a regenerated report is a new row. Its Artifact (`kind="provenance_report"`) goes stale when a
+    covered section is saved again. `report_json` holds counts, ids and timestamps, never manuscript or source text."""
+
+    __tablename__ = "provenance_reports"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    scope: Mapped[str] = mapped_column(String(12))
+    document_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("documents.id"), index=True)
+    covered_versions: Mapped[list] = mapped_column(JSON)
+    report_json: Mapped[dict] = mapped_column(JSON)
+    statement_text: Mapped[str] = mapped_column(Text)
+    statement_template: Mapped[str] = mapped_column(String(60))
+    report_hash: Mapped[str] = mapped_column(String(64))
+    generated_by: Mapped[str] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -969,3 +1112,4 @@ from app import suggestion_guard  # noqa: E402,F401
 from app import project_schema_guard  # noqa: E402,F401
 from app import source_gate_guard  # noqa: E402,F401
 from app import claim_guard  # noqa: E402,F401
+from app import ledger_guard  # noqa: E402,F401

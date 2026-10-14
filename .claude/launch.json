@@ -16,6 +16,48 @@
       }
     },
     {
+      "name": "inbox-scratch",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "-c",
+        "import os, uvicorn; uvicorn.run('app.main:app', app_dir='backend', port=int(os.environ.get('PORT', '8011')))"
+      ],
+      "port": 8011,
+      "autoPort": true,
+      "env": {
+        "RUN_RESEARCH_INLINE": "true",
+        "DATABASE_URL": "sqlite:///C:/Users/REVATI/AppData/Local/Temp/claude/C--PROJECTS-RESEARCH-PROJECTS-research-main/9e591816-5c8e-4682-a704-72f34a6cf5bb/scratchpad/inbox_check.db"
+      }
+    },
+    {
+      "name": "workspace-scratch",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "-c",
+        "import os, uvicorn; uvicorn.run('app.main:app', app_dir='backend', port=int(os.environ.get('PORT', '8012')))"
+      ],
+      "port": 8012,
+      "autoPort": true,
+      "env": {
+        "RUN_RESEARCH_INLINE": "true",
+        "DATABASE_URL": "sqlite:///C:/Users/REVATI/AppData/Local/Temp/claude/C--PROJECTS-RESEARCH-PROJECTS-research-main/a86045df-9231-470a-b2a6-180cbda17741/scratchpad/ui_wai.db"
+      }
+    },
+    {
+      "name": "similarity-scratch",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "-c",
+        "import os, uvicorn; uvicorn.run('app.main:app', app_dir='backend', port=int(os.environ.get('PORT', '8013')))"
+      ],
+      "port": 8013,
+      "autoPort": true,
+      "env": {
+        "RUN_RESEARCH_INLINE": "true",
+        "DATABASE_URL": "sqlite:///C:/Users/REVATI/AppData/Local/Temp/claude/C--PROJECTS-RESEARCH-PROJECTS-research-main/85673a57-c730-4ccf-9342-d142d94ca329/scratchpad/sim_x31_14.db"
+      }
+    },
+    {
       "name": "wireframes",
       "runtimeExecutable": ".venv/Scripts/python.exe",
       "runtimeArgs": [
@@ -28,6 +70,20 @@
         "docs/wireframes"
       ],
       "port": 8765
+    },
+    {
+      "name": "provenance-scratch",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "-c",
+        "import os, uvicorn; uvicorn.run('app.main:app', app_dir='backend', port=int(os.environ.get('PORT', '8014')))"
+      ],
+      "port": 8014,
+      "autoPort": true,
+      "env": {
+        "RUN_RESEARCH_INLINE": "true",
+        "DATABASE_URL": "sqlite:///C:/Users/REVATI/AppData/Local/Temp/claude/C--PROJECTS-RESEARCH-PROJECTS-research-main/8a35eff3-015b-4fd5-887b-3598c3617e2e/scratchpad/prov_check.db"
+      }
     }
   ]
 }

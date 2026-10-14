@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
@@ -10,7 +10,7 @@ from app.ai_item_locks import CONTEXT_ITEM_KIND, locked_ids
 from app.database import get_db
 from app.gates import new_gates
 from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_access
-from app.models import Project, ProjectMember, ProjectRole, ResearchContextItem, User
+from app.models import ContextKind, Project, ProjectMember, ProjectRole, ResearchContextItem, User
 from app.schemas import ContextItemCreate, ContextItemRead, ProjectCreate, ProjectRead
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -46,7 +46,13 @@ def get_project(project: Project = Depends(project_access(READ_ROLES))):
 
 
 @router.get("/{project_id}/context", response_model=list[ContextItemRead])
-def list_context(project: Project = Depends(project_access(READ_ROLES)), db: Session = Depends(get_db)):
+def list_context(
+    kind: ContextKind | None = Query(default=None),
+    project: Project = Depends(project_access(READ_ROLES)),
+    db: Session = Depends(get_db),
+):
+    """All context items, oldest first. `?kind=decision` is the decision log (X.31.2): the same list, filtered.
+    The agent flags are computed over the whole list, so filtering never changes what a run is given."""
     # Oldest first, so questions read in the order they were written; id keeps same-second ties stable.
     items = db.scalars(
         select(ResearchContextItem)
@@ -58,6 +64,7 @@ def list_context(project: Project = Depends(project_access(READ_ROLES)), db: Ses
     return [
         ContextItemRead.model_validate(item).model_copy(update={"used_by_agent": item.id in sent, "ai_locked": str(item.id) in locked})
         for item in items
+        if kind is None or item.kind == kind
     ]
 
 

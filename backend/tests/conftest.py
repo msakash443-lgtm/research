@@ -1,3 +1,5 @@
+import atexit
+import contextlib
 import os
 
 # Set this before importing app modules. Tests must never reuse a developer's
@@ -12,12 +14,39 @@ from app.config import Settings
 
 Settings.model_config["env_file"] = None
 
+import anyio.from_thread
 import pytest
 from pydantic import SecretStr
+from starlette.testclient import TestClient
 
 from app.database import Base, engine
 from tests.llm_replies import chat_reply
 
+
+_SHARED_PORTAL = {}
+
+
+@contextlib.contextmanager
+def _shared_portal_factory(self):
+    """Reuse one event-loop thread for every bare `TestClient(app)` request.
+
+    Starlette starts a fresh blocking portal (a thread plus an event loop) for each request
+    unless the client is used as a context manager, which costs ~30 ms per call and dominated
+    the suite. Entering the context would also run the app lifespan per test, so instead one
+    portal is shared for the whole session.
+    """
+    if self.portal is not None:
+        yield self.portal
+        return
+    if "portal" not in _SHARED_PORTAL:
+        stack = contextlib.ExitStack()
+        _SHARED_PORTAL["portal"] = stack.enter_context(anyio.from_thread.start_blocking_portal(**self.async_backend))
+        _SHARED_PORTAL["stack"] = stack
+        atexit.register(stack.close)
+    yield _SHARED_PORTAL["portal"]
+
+
+TestClient._portal_factory = _shared_portal_factory
 
 _PRISTINE = {}
 

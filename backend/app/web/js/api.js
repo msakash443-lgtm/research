@@ -16,13 +16,17 @@ export async function request(path, options = {}) {
   } catch {}
   if (!response.ok) {
     const where = `${(options.method || "GET").toUpperCase()} ${path}`;
-    throw new Error(
+    const error = new Error(
       (typeof body.detail === "object" && body.detail?.message) ||
         (typeof body.detail === "string" && body.detail) ||
         (response.status === 400 && text.trim() === "Invalid host header"
           ? "The server rejected this address (host not allowed). Add it to ALLOWED_HOSTS."
           : `Something went wrong (HTTP ${response.status}, ${where}). Check the server log for details.`)
     );
+    // Callers that must tell a conflict (409) from a refusal (422) read these; others only use the message.
+    error.status = response.status;
+    error.detail = body.detail;
+    throw error;
   }
   return body;
 }

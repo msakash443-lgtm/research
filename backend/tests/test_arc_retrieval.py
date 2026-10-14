@@ -264,7 +264,7 @@ def test_production_requires_https_and_token_when_retrieval_enabled():
     production = dict(
         environment="production",
         session_secret="x" * 40,
-        database_url="postgresql+psycopg://user:pass@db/research",
+        database_url="postgresql+psycopg://user:pass@db/research?sslmode=require",
         auto_create_schema=False,
         public_origin="https://research.example",
         google_client_id="id",

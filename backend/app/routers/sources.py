@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import uuid
 
+from datetime import datetime
+
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -471,3 +473,84 @@ def export_references(
         content=text, media_type="text/plain; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="sources.{ext}"', "X-Unverified-Skipped": str(len(sources) - len(verified))},
     )
+
+
+class ExcerptCreate(BaseModel):
+    """A passage a person copied from a source. The text is immutable once saved (see `SourceExcerpt`)."""
+
+    content: str = Field(min_length=1, max_length=5000)
+    locator: str | None = Field(default=None, max_length=255)
+
+
+class ExcerptRead(BaseModel):
+    id: uuid.UUID
+    source_id: uuid.UUID
+    content: str
+    locator: str | None
+    content_hash: str
+    created_by: str | None
+    created_at: datetime
+
+
+def _excerpt_read(excerpt: SourceExcerpt) -> ExcerptRead:
+    return ExcerptRead(
+        id=excerpt.id,
+        source_id=excerpt.source_id,
+        content=excerpt.content,
+        locator=excerpt.locator,
+        content_hash=excerpt.content_hash,
+        created_by=excerpt.created_by,
+        created_at=excerpt.created_at,
+    )
+
+
+def _live_source(db: Session, project: Project, source_id: uuid.UUID) -> Source:
+    source = db.scalar(select(Source).where(Source.id == source_id, Source.project_id == project.id, Source.merged_into.is_(None)))
+    if source is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
+    return source
+
+
+@router.get("/{source_id}/excerpts", response_model=list[ExcerptRead])
+def list_excerpts(
+    source_id: uuid.UUID,
+    project: Project = Depends(project_access(READ_ROLES)),
+    db: Session = Depends(get_db),
+):
+    """Every saved passage for a source, with its locator (page or section). Passages saved in the same second may come back in either order."""
+    source = _live_source(db, project, source_id)
+    excerpts = db.scalars(select(SourceExcerpt).where(SourceExcerpt.source_id == source.id).order_by(SourceExcerpt.created_at, SourceExcerpt.id)).all()
+    return [_excerpt_read(excerpt) for excerpt in excerpts]
+
+
+@router.post("/{source_id}/excerpts", response_model=ExcerptRead, status_code=status.HTTP_201_CREATED)
+def add_excerpt(
+    source_id: uuid.UUID,
+    payload: ExcerptCreate,
+    project: Project = Depends(project_access(WRITE_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Save a passage from a source (a new row each time; existing passages are never edited)."""
+    source = _live_source(db, project, source_id)
+    content = payload.content.strip()
+    if not content:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="The passage is empty")
+    actor = audit.user_actor(user)
+    excerpt = SourceExcerpt(
+        source_id=source.id,
+        content=content,
+        locator=payload.locator.strip() if payload.locator and payload.locator.strip() else None,
+        content_hash=excerpt_hash(content),
+        created_by=actor,
+    )
+    db.add(excerpt)
+    db.flush()
+    audit.record(
+        db, actor=actor, action="source.excerpt_added", project_id=project.id,
+        payload={"source_id": str(source.id), "excerpt_id": str(excerpt.id), "content_hash": excerpt.content_hash},
+    )
+    project.touch()
+    db.commit()
+    db.refresh(excerpt)
+    return _excerpt_read(excerpt)

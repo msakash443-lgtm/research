@@ -38,6 +38,8 @@ from app.snowball import SnowballError, SnowballFailed, run_snowball
 from app.query_alerts import QUERY_ALERT, _aware, latest_search, record_alert_run
 from app.zotero import ZoteroError, build_zotero_client, sync_pull, sync_push
 from app.task_registry import ClaimedTask, PermanentTaskError, TaskOwnershipLost, register
+from app.similarity_task import run_similarity_check
+from app.workspace_ai_task import run_workspace_ai_action, scrub_action_payload
 
 logger = logging.getLogger(__name__)
 
@@ -46,10 +48,12 @@ SEARCH_RUN = "search_run"
 SOURCE_CHECK = "source_check"
 SCREENING_PRESCREEN = "screening_prescreen"
 THEMATIC_CLUSTERING = "thematic_clustering"
+WORKSPACE_AI_ACTION = "workspace_ai_action"
 FULLTEXT_FETCH = "fulltext_fetch"
 AI_EXTRACTION = "ai_extraction"
 SNOWBALL_RUN = "snowball_run"
 SEED_FALSE_EXCLUSION_CHECK = "seed_false_exclusion_check"
+SIMILARITY_CHECK = "similarity_check"
 
 
 def _research_run_abandoned(task: ClaimedTask) -> None:
@@ -503,3 +507,15 @@ def handle_query_alert(task: ClaimedTask) -> None:
         logger.info("Alert %s: search %s v%s, %s new", alert_id, alert.search_id, result.get("version"), result.get("new"))
     finally:
         db.close()
+
+
+@register(WORKSPACE_AI_ACTION, scrub_payload=scrub_action_payload)
+def handle_workspace_ai_action(task: ClaimedTask) -> None:
+    """One side-panel AI action on a section or note (X.31.11). No gate: it only proposes; a person accepts."""
+    run_workspace_ai_action(task.payload or {})
+
+
+@register(SIMILARITY_CHECK)
+def handle_similarity_check(task: ClaimedTask) -> None:
+    """One similarity check of a saved section version against the project's sources (X.31.14). No gate: nothing leaves the server."""
+    run_similarity_check(task.payload or {})

@@ -13,7 +13,7 @@ from app.database import Base, engine
 from app.source_gate_guard import ExtractionGateLocked
 from app.config import get_settings
 from app.middleware import ContentLengthLimitMiddleware
-from app.routers import ai_locks, ai_settings, audit, auth, bibliometrics, claims, clusters, connectors, coverage, criteria, evidence_matrix, exports, extraction_schemas, extractions, gates, guide, members, notes, prisma, profile, projects, replication, research_runs, screening, searches, alerts, seeds, snowball, sources, stage, suggestions, usage, zotero
+from app.routers import ai_locks, ai_settings, audit, provenance_reports, workspace_ai, auth, bibliometrics, claims, clusters, connectors, coverage, criteria, evidence_matrix, exports, extraction_schemas, extractions, gates, guide, integrity, members, notes, documents, prisma, profile, projects, replication, research_runs, scholar_metrics, screening, searches, alerts, seeds, snowball, sources, stage, suggestions, usage, zotero
 
 # Production settings (session secret, HTTPS, Postgres, ...) are validated in Settings.
 settings = get_settings()
@@ -53,6 +53,7 @@ app.add_middleware(
     secret_key=settings.session_secret.get_secret_value(),
     https_only=settings.environment == "production",
     same_site="lax",
+    max_age=settings.session_max_age_seconds,
 )
 if settings.cors_origins:
     app.add_middleware(
@@ -93,9 +94,14 @@ app.include_router(members.router, prefix="/api")
 app.include_router(sources.router, prefix="/api")
 app.include_router(research_runs.router, prefix="/api")
 app.include_router(notes.router, prefix="/api")
+app.include_router(documents.router, prefix="/api")
+app.include_router(integrity.router, prefix="/api")
+app.include_router(provenance_reports.router, prefix="/api")
 app.include_router(suggestions.router, prefix="/api")
+app.include_router(workspace_ai.router, prefix="/api")
 app.include_router(alerts.router, prefix="/api")
 app.include_router(zotero.router, prefix="/api")
+app.include_router(scholar_metrics.router, prefix="/api")
 
 
 @app.middleware("http")
@@ -105,6 +111,9 @@ async def security_headers(request, call_next):
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    # X.4.2: production is HTTPS-only (PUBLIC_ORIGIN is validated as https), so tell browsers to stay on HTTPS.
+    if settings.environment == "production":
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     # FastAPI's local Swagger page loads its own third-party assets. Production disables it entirely.
     if not request.url.path.startswith(("/docs", "/redoc", "/openapi.json")):
         response.headers.setdefault(

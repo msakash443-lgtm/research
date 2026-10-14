@@ -24,7 +24,7 @@ GUIDE_PATH = Path(__file__).resolve().parent / "guides" / "journey.toml"
 
 # Mirrors web/js/workflow.js STEPS: a guide entry may only send the scholar to a screen that exists.
 UI_STEPS = frozenset(
-    {"overview", "guide", "scope", "criteria", "search", "results", "sources", "screen", "ask", "approvals", "team", "activity"}
+    {"overview", "guide", "scope", "criteria", "search", "results", "sources", "screen", "ask", "write", "approvals", "team", "activity"}
 )
 GLOBAL_CONDITION_IDS = ("EC-0.2", "EC-0.3", "EC-0.4")
 

@@ -106,6 +106,6 @@ def test_source_guard_is_registered_when_only_models_are_imported_in_a_worker_pr
     backend = Path(__file__).resolve().parents[1]
     result = subprocess.run(
         [sys.executable, "-c", "from app.models import Source; print(len(list(Source.__mapper__.dispatch.before_insert)))"],
-        cwd=backend, capture_output=True, text=True, check=True,
+        cwd=backend, stdin=subprocess.DEVNULL, capture_output=True, text=True, check=True,
     )
     assert int(result.stdout.strip()) >= 1

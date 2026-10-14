@@ -58,9 +58,27 @@ MATRIX = [
     ("PUT", "/api/projects/{p}/ai-locks/source/{s}", WRITE, 200),  # never for this item
     ("DELETE", "/api/projects/{p}/ai-locks/source/{s}", WRITE, 200),
     ("POST", "/api/projects/{p}/searches/suggest-synonyms", WRITE, 200),
+    ("GET", "/api/projects/{p}/documents", ALL, 200),
+    ("POST", "/api/projects/{p}/documents", WRITE, 201),
+    ("PATCH", "/api/projects/{p}/documents/{doc}", WRITE, 200),
+    ("GET", "/api/projects/{p}/documents/{doc}", ALL, 200),
+    ("GET", "/api/projects/{p}/documents/{doc}/versions", ALL, 200),
+    ("GET", "/api/projects/{p}/documents/{doc}/versions/{v}", ALL, 200),
+    ("GET", "/api/projects/{p}/documents/{doc}/ledger", ALL, 200),
+    ("POST", "/api/projects/{p}/documents/{doc}/versions", WRITE, 201),
+    ("POST", "/api/projects/{p}/documents/{doc}/versions/{v}/restore", WRITE, 200),
+    ("POST", "/api/projects/{p}/similarity-checks", WRITE, 202),
+    ("GET", "/api/projects/{p}/similarity-checks", ALL, 200),
+    ("GET", "/api/projects/{p}/similarity-providers", ALL, 200),
+    ("POST", "/api/projects/{p}/provenance-reports", ALL, 201),
+    ("GET", "/api/projects/{p}/provenance-reports", ALL, 200),
+    ("GET", "/api/projects/{p}/provenance-reports/{rep}", ALL, 200),
+    ("GET", "/api/projects/{p}/manuscript/export", ALL, 200),
     ("POST", "/api/projects/{p}/sources", WRITE, 201),
     ("POST", "/api/projects/{p}/sources/{s}/verify", WRITE, 200),
     ("POST", "/api/projects/{p}/sources/merge", WRITE, 200),
+    ("GET", "/api/projects/{p}/sources/{s}/excerpts", ALL, 200),
+    ("POST", "/api/projects/{p}/sources/{s}/excerpts", WRITE, 201),
     ("POST", "/api/projects/{p}/sources/import", WRITE, 201),
     ("GET", "/api/projects/{p}/sources/export", ALL, 200),
     ("POST", "/api/projects/{p}/sources/{s}/check", WRITE, 202),
@@ -141,6 +159,7 @@ MATRIX = [
     ("GET", "/api/projects/{p}/evidence-matrix/export.xlsx", ALL, 200),
     ("GET", "/api/projects/{p}/evidence-matrix/{e}/fields/{field_key}/source-text", ALL, 200),
     ("GET", "/api/projects/{p}/bibliometrics/publication-trends", ALL, 200),
+    ("GET", "/api/projects/{p}/scholar-metrics", ALL, 200),
     ("GET", "/api/projects/{p}/export/replication", ALL, 200),
     ("GET", "/api/projects/{p}/clusters/{c}", ALL, 200),
     ("POST", "/api/projects/{p}/clusters", WRITE, 202),  # queues only
@@ -167,10 +186,16 @@ MATRIX = [
     # again" (409); asking again with a producer is covered in test_suggestions_api.py.
     ("POST", "/api/projects/{p}/suggestions/{g}/ask-again", WRITE, 409),
     ("POST", "/api/projects/{p}/suggestions/bulk", WRITE, 200),
+    # AI side panel (X.31.11): request queues a task (202); preview sends nothing (200). Behaviour is in test_workspace_ai_api.py.
+    ("POST", "/api/projects/{p}/ai/suggestions", WRITE, 202),
+    ("POST", "/api/projects/{p}/ai/suggestions/preview", WRITE, 200),
 ]
 
 BODIES = {
+    ("POST", "/api/projects/{p}/documents"): {"title": "Matrix section", "position": 9},
+    ("PATCH", "/api/projects/{p}/documents/{doc}"): {"title": "Matrix title"},
     ("PUT", "/api/projects/{p}/usage/budget"): {"override": 5000},
+    ("POST", "/api/projects/{p}/sources/{s}/excerpts"): {"content": "Matrix passage.", "locator": "p. 1"},
     ("PUT", "/api/projects/{p}/ai-settings"): {"ai_involvement": "suggestions_only"},
     ("PUT", "/api/projects/{p}/criteria"): {"framework": "custom", "criteria": [{"kind": "include", "text": "Peer-reviewed studies"}]},
     ("PUT", "/api/projects/{p}/profile"): {"discipline": "economics", "overrides": {"databases": ["openalex"]}},
@@ -229,6 +254,7 @@ def world(monkeypatch, fake_llm):
     monkeypatch.setattr(get_settings(), "embedding_model", "test-embedding")  # only POST /clusters checks it; nothing is embedded here
     tag = uuid.uuid4().hex[:8]
     owner, _ = _login(f"matrix-owner-{tag}@example.com")
+    owner_id = owner.get("/api/auth/me").json()["id"]
     project_id = owner.post("/api/projects", json={"title": "Matrix"}).json()["id"]
     source_id = owner.post(f"/api/projects/{project_id}/sources", json={"title": "Seed", "doi": "10.1234/seed"}).json()["id"]
     source_pdf = make_pdf([["Introduction", "We ask why"]])
@@ -344,9 +370,10 @@ def world(monkeypatch, fake_llm):
     with SessionLocal() as db:
         db.add(ProjectMember(project_id=uuid.UUID(project_id), user_id=uuid.UUID(removable_id), role=ProjectRole.reviewer))
         db.commit()
+    doc_id = _seed_document(project_id, owner_id)
     return {
         "clients": clients,
-        "ids": {"p": project_id, "s": source_id, "extract_s": extraction_source_id, "ai_s": ai_source["id"], "h": str(claim_id), "field_key": "research_question", "u": removable_id, "q": str(search_id), "d": str(seed_id), "e": str(extraction_id), "c": str(clustering_id), "l": str(cluster_id), "n": "lab_schema", "a": str(alert_id), "k": str(audit_id), "g": _fresh_suggestion(project_id, [])},
+        "ids": {"p": project_id, "s": source_id, "extract_s": extraction_source_id, "ai_s": ai_source["id"], "h": str(claim_id), "field_key": "research_question", "u": removable_id, "q": str(search_id), "d": str(seed_id), "e": str(extraction_id), "c": str(clustering_id), "l": str(cluster_id), "n": "lab_schema", "a": str(alert_id), "k": str(audit_id), "g": _fresh_suggestion(project_id, []), "doc": doc_id, "rep": _seed_report(project_id, owner_id, doc_id), "v": "1", "author": owner_id},
         "twin": twin_id,
         "invitee": f"matrix-invitee-{tag}@example.com",
     }
@@ -367,11 +394,56 @@ def _fresh_suggestion(project_id, history):
         return str(suggestion.id)
 
 
+def _seed_document(project_id, author_id):
+    """A manuscript section with one saved version (X.31.9), written straight to the database."""
+    from app.models import Document, DocumentVersion
+
+    content = {"type": "doc", "content": [{"type": "paragraph", "content": [{
+        "type": "text", "text": "Seed.",
+        "marks": [{"type": "prov", "attrs": {"sid": "seed", "origin": "typed", "by": author_id, "sug": None, "note": None, "paste": None, "src": None}}],
+    }]}]}
+    with SessionLocal() as db:
+        document = Document(project_id=uuid.UUID(project_id), title="Matrix section", position=1, created_by=f"user:{author_id}")
+        db.add(document)
+        db.flush()
+        version = DocumentVersion(document_id=document.id, project_id=uuid.UUID(project_id), number=1, content_json=content,
+                                  content_text="Seed.", content_hash="0" * 64, saved_by=author_id, client_save_id="seed")
+        db.add(version)
+        db.flush()
+        document.current_version_id = version.id
+        db.commit()
+        return str(document.id)
+
+
+def _seed_report(project_id, owner_id, document_id):
+    """A saved provenance report for the GET-by-id route (X.31.12)."""
+    from app import provenance_store
+    from app.models import Document, Project, User
+
+    with SessionLocal() as db:
+        project = db.get(Project, uuid.UUID(project_id))
+        user = db.get(User, uuid.UUID(owner_id))
+        document = db.get(Document, uuid.UUID(document_id))
+        row = provenance_store.generate(db, project, user=user, scope="section", documents=[document], document_id=document.id)
+        db.commit()
+        return str(row.id)
+
+
 def _call(world, principal, method, template):
     path = template.format(**world["ids"])
     if method == "GET" and template.endswith("/stage/conditions"):
         path += "?target=scoped"
+    if method == "GET" and template.endswith("/ledger"):
+        path += "?span_id=seed"
+    if method == "GET" and template.endswith("/similarity-checks"):
+        path += f"?document_id={world['ids']['doc']}"
     body = BODIES.get((method, template))
+    if (method, template) == ("POST", "/api/projects/{p}/similarity-checks"):
+        body = {"document_id": world["ids"]["doc"]}
+    if (method, template) in (("POST", "/api/projects/{p}/ai/suggestions"), ("POST", "/api/projects/{p}/ai/suggestions/preview")):
+        body = {"action": "challenge", "text": "A passage to check.", "document_id": world["ids"]["doc"]}
+    if (method, template) == ("POST", "/api/projects/{p}/provenance-reports"):
+        body = {"scope": "section", "document_id": world["ids"]["doc"]}
     if (method, template) == ("POST", "/api/projects/{p}/members"):
         body = {"email": world["invitee"], "role": "reviewer"}
     if (method, template) == ("POST", "/api/projects/{p}/sources/merge"):
@@ -391,6 +463,20 @@ def _call(world, principal, method, template):
                                          decision=decision, decided_by="human", decider=who))
             db.commit()
         return world["clients"][principal].post(path, json={"source_id": fresh["id"], "decision": "include"})
+    if (method, template) == ("POST", "/api/projects/{p}/documents/{doc}/versions"):
+        # Each call saves into its own section, authored by the caller, so a success can't 409 the next principal.
+        author = world["clients"][principal].get("/api/auth/me").json().get("id", "anonymous")
+        fresh_doc = _seed_document(world["ids"]["p"], world["ids"]["author"])
+        content = {"type": "doc", "content": [{"type": "paragraph", "content": [{
+            "type": "text", "text": "Matrix save.",
+            "marks": [{"type": "prov", "attrs": {"sid": f"m-{uuid.uuid4().hex}", "origin": "typed", "by": author, "sug": None, "note": None, "paste": None, "src": None}}],
+        }]}]}
+        path = path.replace(f"/documents/{world['ids']['doc']}/", f"/documents/{fresh_doc}/")
+        return world["clients"][principal].post(path, json={"base_number": 1, "client_save_id": uuid.uuid4().hex, "content_json": content})
+    if (method, template) == ("POST", "/api/projects/{p}/documents/{doc}/versions/{v}/restore"):
+        fresh_doc = _seed_document(world["ids"]["p"], world["ids"]["author"])
+        path = path.replace(f"/documents/{world['ids']['doc']}/", f"/documents/{fresh_doc}/")
+        return world["clients"][principal].post(path, json={"base_number": 1})
     if (method, template) == ("POST", "/api/projects/{p}/extractions"):
         body = {"source_id": world["ids"]["extract_s"], "fields": {"research_question": None}}
     if (method, template) == ("POST", "/api/projects/{p}/extractions/ai"):
@@ -486,7 +572,7 @@ def test_role_matrix(world, principal, method, template, allowed, success):
 def test_the_matrix_covers_every_project_scoped_route():
     """A new project route must be added to MATRIX, or this fails."""
     routed = {
-        (method, route.path.replace("{project_id}", "{p}").replace("{source_id}", "{s}").replace("{user_id}", "{u}").replace("{code}", "G1").replace("{search_id}", "{q}").replace("{seed_id}", "{d}").replace("{extraction_id}", "{e}").replace("{claim_id}", "{h}").replace("{field_key}", "{field_key}").replace("{clustering_id}", "{c}").replace("{cluster_id}", "{l}").replace("{schema_name}", "{n}").replace("{alert_id}", "{a}").replace("{audit_id}", "{k}").replace("{suggestion_id}", "{g}").replace("{target_kind}", "source").replace("{target_id}", "{s}"))
+        (method, route.path.replace("{project_id}", "{p}").replace("{source_id}", "{s}").replace("{user_id}", "{u}").replace("{code}", "G1").replace("{search_id}", "{q}").replace("{seed_id}", "{d}").replace("{extraction_id}", "{e}").replace("{claim_id}", "{h}").replace("{field_key}", "{field_key}").replace("{clustering_id}", "{c}").replace("{cluster_id}", "{l}").replace("{schema_name}", "{n}").replace("{alert_id}", "{a}").replace("{audit_id}", "{k}").replace("{suggestion_id}", "{g}").replace("{document_id}", "{doc}").replace("{number}", "{v}").replace("{target_kind}", "source").replace("{target_id}", "{s}").replace("{report_id}", "{rep}"))
         for route in app.routes
         if "{project_id}" in getattr(route, "path", "")
         for method in route.methods

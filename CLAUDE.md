@@ -7,6 +7,7 @@
 - New work you discover goes into `plan.md` as a new task; don't widen the current change.
 - Before marking a task `[x]`, run `pytest -q` from the repo root and confirm the baseline doesn't regress.
 - Append one line to the `plan.md` Work Log at the end of each session.
+- Before claiming new build work, review a `[?]` task someone else built (`plan.md` §1.9, rules 58–65; P0/P1 first). Add `reviewer: @you — review since: <date>` to its line, re-run its tests and the full `pytest -q`, record findings instead of editing the author's code, and set `[x]` only on evidence you obtained yourself. Never review your own work.
 - The scope reference is `docs/research-automation-spec.md`; `plan.md` §1.6 holds the research-integrity rules: gates are never auto-approved, AI failures fail loudly (no placeholder output), retrieved text is untrusted data, and ARC pipeline code is not imported (call its HTTP service only).
 
 ## Assistant Checklist (every AI coding assistant, every session)

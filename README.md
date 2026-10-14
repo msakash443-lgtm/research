@@ -17,11 +17,26 @@ An evidence-first research-agent workspace. It is designed for a researcher to k
 
 This is a safe V1 evidence-synthesis agent, not an unrestricted autonomous browser or code executor.
 
-- It does **not** scrape arbitrary URLs, run arbitrary Python/shell code, access Drive/Sheets, accept file uploads, or automatically treat search snippets as verified evidence.
+- It does **not** run arbitrary Python/shell code, access Drive/Sheets, accept file uploads, or automatically treat search results or snippets as verified evidence. Retrieved text is untrusted data until a person verifies it.
 - Add a source and a short excerpt/data note first; the agent uses only that saved evidence plus project context.
 - LLM synthesis is optional. With no `LLM_*` configuration, the UI still saves projects, sources, plans, and runs, but a run reports that synthesis needs configuration instead of fabricating an answer.
 
-That boundary is intentional: web retrieval, uploads, and calculation tools need additional SSRF, prompt-injection, sandbox, storage, and provenance controls before they should be enabled.
+### Opt-in features
+
+Retrieval is off by default. Each feature below stays off until the setting named in the table is set.
+
+| Feature | Turned on by | Notes |
+| --- | --- | --- |
+| ARC web and scholar retrieval | `ARC_RETRIEVAL_ENABLED=true`, `ARC_RETRIEVAL_BASE_URL`, `ARC_RETRIEVAL_TOKEN` | The app calls only the ARC HTTP service. Production requires an `https://` base URL and a token of at least 16 characters. |
+| Open scholarly connectors (`openalex`, `crossref`, `semantic_scholar`, `arxiv`, `unpaywall`, `pubmed`, `opencitations`) | Listed in `CONNECTORS_ENABLED` | Unknown names are refused at production start-up. `CONNECTOR_CONTACT_EMAIL` is optional. |
+| CORE | `core` in `CONNECTORS_ENABLED` and `CORE_API_KEY` | Production refuses to start without the key. |
+| Licensed indexes (`scopus`, `web_of_science`, `ieee_xplore`) | Listed in `CONNECTORS_ENABLED` and their API key | Each needs an institutional licence. Production refuses to start without the key. |
+| Scraping connectors (`google_scholar`) | `CONNECTORS_ALLOW_SCRAPING=true` as well as being listed | Listed in the catalogue only; no connector is built for it yet. |
+| Connector answer cache | `CONNECTOR_CACHE_TTL_SECONDS` above 0 | Off by default, so searches stay live. |
+
+Retrieval runs also have their own daily cap, `RESEARCH_RUN_RETRIEVAL_LIMIT_PER_DAY` (default 5), which is lower than the cap for runs without retrieval.
+
+File uploads and calculation tools are not part of this version. They need storage and sandbox controls first.
 
 ## Architecture
 

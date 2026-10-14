@@ -9,7 +9,8 @@ MAX_CONTEXT_ITEMS = 20
 # newest-N cap would drop exactly the items that define the project.
 CORE_CONTEXT_KINDS = frozenset({ContextKind.question, ContextKind.objective})
 # Saved for the researcher only; never part of a run's prompt or input_snapshot.
-AGENT_EXCLUDED_KINDS = frozenset({ContextKind.idea})
+# Inbox promotions (X.31.2) that are working notes rather than research statements stay out too.
+AGENT_EXCLUDED_KINDS = frozenset({ContextKind.idea, ContextKind.gap, ContextKind.claim, ContextKind.memo})
 
 
 def _created_order(item: ResearchContextItem):

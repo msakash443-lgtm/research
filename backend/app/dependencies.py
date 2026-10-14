@@ -10,7 +10,8 @@ from app.models import Project, ProjectMember, ProjectRole, User
 
 
 def session_user(request: Request, db: Session) -> User | None:
-    """The signed-in user, or None. A session pointing at a missing user is cleared."""
+    """The signed-in user, or None. A session pointing at a missing user, or issued before the user's
+    session epoch was last bumped ("sign out everywhere"), is cleared. Cookies with no epoch count as 0."""
     session_user_id = request.session.get("user_id")
     if not session_user_id:
         return None
@@ -18,8 +19,9 @@ def session_user(request: Request, db: Session) -> User | None:
         user = db.get(User, uuid.UUID(session_user_id))
     except (TypeError, ValueError):
         user = None
-    if user is None:
+    if user is None or user.erased_at is not None or request.session.get("session_epoch", 0) != user.session_epoch:
         request.session.clear()
+        return None
     return user
 
 
@@ -37,7 +39,7 @@ def current_user(
     development = get_settings().environment == "development"
     if development and x_user_id is not None:
         user = db.get(User, x_user_id)
-        if user is not None:
+        if user is not None and user.erased_at is None:
             return user
 
     if had_session:

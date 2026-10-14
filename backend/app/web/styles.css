@@ -376,3 +376,74 @@ dialog .helper { margin:0; }
 .suggestion-bulk { display:flex; flex-wrap:wrap; align-items:center; gap:10px 14px; padding:10px 12px; background:var(--warm); border-radius:8px; }
 .suggestion-bulk input { width:70px; }
 .suggestion-bulk label { display:flex; align-items:center; gap:6px; font-weight:500; margin:0; }
+
+/* Writing editor (X.31.4). Origin is shown by underline style as well as colour, never colour alone. */
+.write-head h2 { margin:0 0 4px; }
+.write-sections { display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; margin:10px 0 14px; }
+.write-picker { display:grid; gap:4px; font-size:.9rem; color:var(--muted); }
+.write-picker select, .write-add input { padding:8px 10px; border:1px solid var(--line); border-radius:7px; background:white; min-width:200px; color:var(--ink); }
+.write-add { display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap; }
+.write-layout { display:grid; grid-template-columns:minmax(0,2.4fr) minmax(220px,1fr); gap:14px; align-items:start; }
+.write-toolbar { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px; }
+.write-export-menu { position:relative; }
+.write-export-menu summary { cursor:pointer; list-style:none; border-radius:7px; padding:10px 15px; font-weight:650; }
+.write-export-menu summary::-webkit-details-marker { display:none; }
+.write-export-list { position:absolute; z-index:5; top:calc(100% + 4px); left:0; display:grid; min-width:210px; padding:6px; border:1px solid var(--line); border-radius:9px; background:white; box-shadow:var(--shadow); }
+.write-export-list a { padding:8px 10px; border-radius:6px; color:var(--ink); text-decoration:none; }
+.write-export-list a:hover, .write-export-list a:focus-visible { background:var(--warm); }
+.write-status { margin:0 0 8px; color:var(--muted); font-size:.9rem; }
+.write-status-error { color:#8a1c1c; }
+.write-banner { border:1px solid var(--line); background:var(--warm); border-radius:8px; padding:10px 12px; margin-bottom:10px; display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.write-editor { background:white; border:1px solid var(--line); border-radius:10px; padding:18px 22px; min-height:320px; }
+.write-prose { outline:none; min-height:280px; line-height:1.65; font-size:1.02rem; }
+.write-prose p { margin:.6em 0; }
+.prov-pasted { border-bottom:2px dashed #8a5a00; }
+.prov-ai_suggested, .prov-ai_edited { border-bottom:2px dotted var(--teal); }
+.write-panel { background:white; border:1px solid var(--line); border-radius:10px; padding:12px; }
+.write-tabs { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
+.write-tab[aria-selected="true"] { background:var(--navy); color:white; }
+.write-tab[aria-selected="false"] { background:var(--warm); color:var(--ink); }
+.write-panel-body ul, .write-panel-body ol { padding-left:18px; }
+.write-panel-body li { margin:6px 0; }
+.write-focus .write-panel, .write-focus .write-sections { display:none; }
+.write-flag { border-left:3px solid var(--line); padding-left:10px; }
+.unlinked-statement { text-decoration:underline dotted; text-decoration-color:var(--muted, #888); text-underline-offset:3px; }
+.write-passage-form { display:grid; gap:6px; margin-top:8px; }
+.write-passages { margin-top:6px; }
+.write-focus .write-layout { grid-template-columns:minmax(0,1fr); }
+.write-focus .write-editor { border:0; box-shadow:none; max-width:44rem; margin:0 auto; }
+@media (max-width:760px) { .write-layout { grid-template-columns:1fr; } .write-editor { padding:14px; } }
+
+/* Inbox and decision log (X.31.2.1) */
+.inbox-view { padding:8px 0 40px; display:grid; gap:18px; max-width:52rem; }
+.inbox-view h1 { margin:4px 0 0; color:var(--navy); }
+.inbox-tabs { display:flex; flex-wrap:wrap; gap:6px; margin-top:12px; }
+.inbox-tabs .tab-button { background:transparent; color:var(--navy); border:1px solid var(--line); border-radius:999px; padding:6px 13px; font-weight:650; text-decoration:none; }
+.inbox-tabs .tab-button[aria-current="page"] { background:var(--navy); color:#fff; border-color:var(--navy); }
+.inbox-list,.decision-list { display:grid; gap:12px; }
+.inbox-note { background:#fff; }
+.note-quote { margin:0; padding:6px 0 6px 12px; border-left:3px solid var(--teal); color:var(--muted); white-space:pre-wrap; overflow-wrap:anywhere; }
+.promoted-link { color:var(--teal); margin:0; overflow-wrap:anywhere; }
+.chip-row { display:flex; flex-wrap:wrap; gap:6px; }
+.chip { display:inline-flex; align-items:center; gap:4px; border:1px solid var(--line); border-radius:999px; padding:3px 4px 3px 11px; font-size:13px; background:var(--warm); color:var(--ink); }
+.chip-action { cursor:pointer; background:#e7f3f1; border-color:#b9ddd7; }
+.chip-action:focus-visible { outline:2px solid var(--teal); outline-offset:2px; }
+.chip-dismiss { background:transparent; color:var(--muted); border:0; padding:0 6px; min-width:24px; }
+.inbox-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.inbox-actions select,.promote-form select,.decision-project select { padding:6px 8px; border:1px solid var(--line); border-radius:7px; max-width:100%; }
+.promote-form { width:100%; display:grid; gap:10px; border-top:1px solid var(--line); padding-top:10px; }
+.promote-form label,.decision-project { display:grid; gap:4px; font-size:14px; }
+.promote-form textarea { min-height:4.5em; padding:8px; border:1px solid var(--line); border-radius:7px; }
+.decision-row { background:#fff; }
+.decision-content { margin:0; font-weight:650; color:var(--navy); overflow-wrap:anywhere; }
+@media (max-width:760px) { .inbox-view { padding:4px 0 32px; } }
+/* Writing record panel (X.31.12.2) */
+.write-report-actions { display:flex; flex-wrap:wrap; gap:8px; margin:10px 0 14px; }
+.write-report { border-top:1px solid var(--line); padding:12px 0; display:grid; gap:6px; }
+.write-report-head { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.write-report-stale { font-size:12px; font-weight:650; border:1px solid var(--line); border-radius:999px; padding:2px 8px; }
+.write-report-shares { list-style:none; margin:0; padding:0; display:grid; gap:4px; font-size:14px; }
+.write-report-shares li { display:flex; justify-content:space-between; gap:12px; }
+.write-report-pct { font-variant-numeric:tabular-nums; }
+.write-report-statement { background:#f6f8fb; border-radius:7px; padding:10px; overflow-wrap:anywhere; }
+.write-report-export { display:flex; gap:12px; font-size:14px; }

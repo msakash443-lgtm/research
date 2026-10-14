@@ -4,6 +4,8 @@ import { request, projectApi } from "./js/api.js";
 import { STAGES, STEPS, GROUPS, GUIDES, STEP_IDS, stepStatus, setStageChain } from "./js/workflow.js";
 import { renderMemory } from "./js/memory.js";
 import { aiLevel } from "./js/aiLevels.js";
+import { renderInbox } from "./js/inbox.js";
+import { parseInboxRoute } from "./js/inboxLogic.js";
 
 import overview from "./js/steps/overview.js";
 import guide from "./js/steps/guide.js";
@@ -16,11 +18,12 @@ import screen from "./js/steps/screen.js";
 import evidence from "./js/steps/evidence.js";
 import verification from "./js/steps/verification.js";
 import ask from "./js/steps/ask.js";
+import write from "./js/steps/write.js";
 import approvals from "./js/steps/approvals.js";
 import team from "./js/steps/team.js";
 import activity from "./js/steps/activity.js";
 
-const STEP_MODULES = { overview, guide, scope, criteria, search, results, sources, screen, evidence, verification, ask, approvals, team, activity };
+const STEP_MODULES = { overview, guide, scope, criteria, search, results, sources, screen, evidence, verification, ask, write, approvals, team, activity };
 
 const state = {
   user: null,
@@ -255,9 +258,38 @@ async function pollTick() {
 async function setStep(stepId, updateHash) {
   state.currentStep = STEP_IDS.has(stepId) ? stepId : "overview";
   if (updateHash) window.location.hash = `#/p/${state.activeProject.id}/${state.currentStep}`;
+  $("#inbox-view").hidden = true;
   renderShell();
   await renderStep(state.currentStep);
   setDrawer(null);
+}
+
+// `#/inbox`, `#/inbox/{filed|archived|decisions}` and `#/inbox/decisions/{projectId}` (X.31.2.1, X.31.2.4).
+// Not tied to a project, so the project rail is cleared.
+function parseInboxHash() {
+  return parseInboxRoute(window.location.hash);
+}
+
+async function showInbox(tab, projectId = null) {
+  window.clearTimeout(state.pollTimer);
+  state.activeProject = null;
+  state.role = null;
+  state.summary = {};
+  $("#empty-state").hidden = true;
+  $("#step-content").hidden = true;
+  $("#inbox-view").hidden = false;
+  $("#progress-block").hidden = true;
+  $("#step-rail").replaceChildren();
+  $("#later-stages").hidden = true;
+  $("#memory-sidebar").hidden = true;
+  $("#crumb").textContent = "Inbox";
+  $("#role-chip").hidden = true;
+  $("#ai-chip").hidden = true;
+  $("#idea-button").hidden = true;
+  $("#memory-toggle").hidden = true;
+  renderProjectList();
+  setDrawer(null);
+  await renderInbox($("#inbox-view"), tab, state.user.id, projectId);
 }
 
 function showEmpty() {
@@ -265,6 +297,7 @@ function showEmpty() {
   state.role = null;
   state.summary = {};
   window.clearTimeout(state.pollTimer);
+  $("#inbox-view").hidden = true;
   $("#empty-state").hidden = false;
   $("#step-content").hidden = true;
   $("#progress-block").hidden = true;
@@ -302,6 +335,11 @@ async function selectProject(id, stepId = "overview") {
 async function loadProjects() {
   state.projects = await request("/api/projects");
   renderProjectList();
+  const inbox = parseInboxHash();
+  if (inbox) {
+    await showInbox(inbox.tab, inbox.projectId);
+    return;
+  }
   const parsed = parseHash();
   if (parsed && state.projects.some((p) => p.id === parsed.projectId)) {
     await selectProject(parsed.projectId, parsed.stepId);
@@ -313,6 +351,11 @@ async function loadProjects() {
 }
 
 window.addEventListener("hashchange", () => {
+  const inbox = parseInboxHash();
+  if (inbox && state.user) {
+    showInbox(inbox.tab, inbox.projectId);
+    return;
+  }
   const parsed = parseHash();
   if (!parsed || !state.user) return;
   if (!state.activeProject || state.activeProject.id !== parsed.projectId) {

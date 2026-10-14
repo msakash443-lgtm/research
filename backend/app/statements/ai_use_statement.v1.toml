@@ -1,0 +1,14 @@
+# AI-use statement template, version 1 (X.31.12, Q19).
+#
+# This is one generic statement. To use a specific journal's or university's wording, replace the
+# text below and keep the placeholders: {ai_share_pct}, {models}, {actions}. Bump `version` when the
+# wording changes, so a report records which wording it used (`statement_template`).
+#
+# Every number in the statement comes from the provenance report (computed by code). No model writes it.
+
+id = "ai_use_statement"
+version = 2
+
+with_ai = """Parts of this manuscript were drafted or edited with an AI tool. According to the writing record kept by the research workspace, {ai_share_pct}% of the saved text was produced by AI assistance and accepted by the author. Models used: {models}. Kinds of assistance: {actions}. This record covers only text written or edited in the workspace; the author is responsible for the whole manuscript."""
+
+without_ai = """The writing record kept by the research workspace shows no AI-assisted text accepted into this manuscript. The record covers only text written or edited in the workspace. The author is responsible for all content."""

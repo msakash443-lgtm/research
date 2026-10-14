@@ -112,6 +112,9 @@ def create_suggestion(
     evidence: list[Any] | None = None,
     guidance: str | None = None,
     parent_id: uuid.UUID | None = None,
+    action: str | None = None,
+    input_hash: str | None = None,
+    input_chars: int | None = None,
 ) -> AiSuggestion:
     """Store one AI proposal. Raises `ForbiddenTarget` for a gate and `ValueError` for empty content or a bad confidence."""
     kind = suggestions.validate_target(target_kind)
@@ -131,6 +134,9 @@ def create_suggestion(
         producing_agent=producing_agent,
         guidance=guidance,
         parent_id=parent_id,
+        action=action,
+        input_hash=input_hash,
+        input_chars=input_chars,
     )
     db.add(suggestion)
     db.flush()

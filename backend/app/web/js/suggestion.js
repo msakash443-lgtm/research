@@ -33,7 +33,8 @@ function evidenceLine(item) {
   return JSON.stringify(item);
 }
 
-export async function suggestionPanel(ctx, { targetKind, targetId, onChange } = {}) {
+// `extraActions(suggestion)` may return extra buttons for a card (the writing screen adds Insert for accepted wording).
+export async function suggestionPanel(ctx, { targetKind, targetId, onChange, extraActions } = {}) {
   const panel = el("div", { className: "panel suggestion-panel" });
   let showDiscarded = false;
   let busy = false;
@@ -176,6 +177,8 @@ export async function suggestionPanel(ctx, { targetKind, targetId, onChange } = 
     if (ctx.canWrite && suggestion.state === "locked") {
       actions.append(button("Allow AI for this item again", () => act(lockPath, { method: "DELETE" }, "/ai-locks")));
     }
+
+    if (extraActions) actions.append(...extraActions(suggestion));
 
     details.hidden = true;
     node.append(actions, details);
