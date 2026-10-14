@@ -105,6 +105,7 @@ MATRIX = [
     ("GET", "/api/projects/{p}/claims", ALL, 200),
     ("POST", "/api/projects/{p}/claims", WRITE, 201),
     ("POST", "/api/projects/{p}/claims/{h}/verify", VERIFY, 409),
+    ("POST", "/api/projects/{p}/claims/{h}/evidence/{e}/confirm-support", VERIFY, 409),
     ("GET", "/api/projects/{p}/members", ALL, 200),
     ("POST", "/api/projects/{p}/members", MANAGE, 201),
     ("DELETE", "/api/projects/{p}/members/{u}", MANAGE, 204),
@@ -148,18 +149,44 @@ MATRIX = [
     ("POST", "/api/projects/{p}/extractions", WRITE, 201),
     ("PUT", "/api/projects/{p}/extractions/{e}", WRITE, 200),
     ("POST", "/api/projects/{p}/extractions/ai", WRITE, 202),
+    ("GET", "/api/projects/{p}/meta-analysis", ALL, 200),
+    ("POST", "/api/projects/{p}/meta-analysis", WRITE, 409),
+    ("POST", "/api/projects/{p}/meta-analysis/{plan_id}/run", WRITE, 404),
     ("GET", "/api/projects/{p}/extraction-schemas", ALL, 200),
     ("GET", "/api/projects/{p}/extraction-schemas/{n}", ALL, 200),
     ("POST", "/api/projects/{p}/extraction-schemas", WRITE, 201),
     ("PUT", "/api/projects/{p}/extraction-schemas/{n}", WRITE, 200),
     ("GET", "/api/projects/{p}/clusters", ALL, 200),
     ("GET", "/api/projects/{p}/coverage-matrix", ALL, 200),
+    ("GET", "/api/projects/{p}/constructs", ALL, 200),
+    ("POST", "/api/projects/{p}/constructs", WRITE, 201),
+    ("GET", "/api/projects/{p}/theories", ALL, 200),
+    ("POST", "/api/projects/{p}/theories", WRITE, 201),
+    ("GET", "/api/projects/{p}/gaps", ALL, 200),
+    ("POST", "/api/projects/{p}/gaps", WRITE, 201),
+    ("PATCH", "/api/projects/{p}/gaps/{gap_id}", WRITE, 200),
+    ("GET", "/api/projects/{p}/research-questions", ALL, 200),
+    ("POST", "/api/projects/{p}/research-questions", WRITE, 201),
+    ("PATCH", "/api/projects/{p}/research-questions/{rq}", WRITE, 200),
+    ("GET", "/api/projects/{p}/research-questions/{rq}/finer", ALL, 200),
+    ("GET", "/api/projects/{p}/hypotheses", ALL, 200),
+    ("POST", "/api/projects/{p}/hypotheses", WRITE, 201),
+    ("PATCH", "/api/projects/{p}/hypotheses/{hp}", WRITE, 200),
     ("GET", "/api/projects/{p}/evidence-matrix", ALL, 200),
+    ("GET", "/api/projects/{p}/evidence-matrix/contradictions", ALL, 200),
     ("GET", "/api/projects/{p}/evidence-matrix/export.csv", ALL, 200),
     ("GET", "/api/projects/{p}/evidence-matrix/export.xlsx", ALL, 200),
     ("GET", "/api/projects/{p}/evidence-matrix/{e}/fields/{field_key}/source-text", ALL, 200),
     ("GET", "/api/projects/{p}/bibliometrics/publication-trends", ALL, 200),
+<<<<<<< Updated upstream
     ("GET", "/api/projects/{p}/scholar-metrics", ALL, 200),
+=======
+    ("GET", "/api/projects/{p}/bibliometrics/inputs/{s}", ALL, 200),
+    ("PUT", "/api/projects/{p}/bibliometrics/inputs/{s}", WRITE, 200),
+    ("GET", "/api/projects/{p}/bibliometrics/networks", ALL, 200),
+    ("GET", "/api/projects/{p}/bibliometrics/export/vosviewer/co_citation.zip", ALL, 200),
+    ("GET", "/api/projects/{p}/bibliometrics/export/citespace.csv", ALL, 200),
+>>>>>>> Stashed changes
     ("GET", "/api/projects/{p}/export/replication", ALL, 200),
     ("GET", "/api/projects/{p}/clusters/{c}", ALL, 200),
     ("POST", "/api/projects/{p}/clusters", WRITE, 202),  # queues only
@@ -192,8 +219,12 @@ MATRIX = [
 ]
 
 BODIES = {
+<<<<<<< Updated upstream
     ("POST", "/api/projects/{p}/documents"): {"title": "Matrix section", "position": 9},
     ("PATCH", "/api/projects/{p}/documents/{doc}"): {"title": "Matrix title"},
+=======
+    ("PUT", "/api/projects/{p}/bibliometrics/inputs/{s}"): {"reference_ids": ["10.1234/ref"], "keywords": ["research"]},
+>>>>>>> Stashed changes
     ("PUT", "/api/projects/{p}/usage/budget"): {"override": 5000},
     ("POST", "/api/projects/{p}/sources/{s}/excerpts"): {"content": "Matrix passage.", "locator": "p. 1"},
     ("PUT", "/api/projects/{p}/ai-settings"): {"ai_involvement": "suggestions_only"},
@@ -202,6 +233,14 @@ BODIES = {
     ("POST", "/api/projects/{p}/stage/reenter"): {"stage": "scoped", "reason": "Rework the scope"},
     ("POST", "/api/projects/{p}/context"): {"kind": "question", "content": "Why?"},
     ("POST", "/api/projects/{p}/sources"): {"title": "A source"},
+    ("POST", "/api/projects/{p}/constructs"): {"name": "Trust", "definition": "Definition", "author": "Smith"},
+    ("POST", "/api/projects/{p}/theories"): {"name": "Social exchange", "description": "A lens."},
+    ("POST", "/api/projects/{p}/gaps"): {"type": "empirical", "statement": "A gap", "matrix_cell_ids": ["cell"]},
+    ("PATCH", "/api/projects/{p}/gaps/{gap_id}"): {"priority": 5, "selected": True},
+    ("POST", "/api/projects/{p}/research-questions"): {"text": "How does trust affect collaboration?", "type": "relational", "gap_ids": []},
+    ("PATCH", "/api/projects/{p}/research-questions/{rq}"): {"type": "exploratory"},
+    ("POST", "/api/projects/{p}/hypotheses"): {"research_question_id": "{rq}", "statement": "Trust predicts collaboration.", "direction": "positive", "theoretical_basis": "Theory", "empirical_support": "Evidence"},
+    ("PATCH", "/api/projects/{p}/hypotheses/{hp}"): {"direction": "non_directional"},
     ("POST", "/api/projects/{p}/searches/suggest-synonyms"): {"block": {"label": "work", "terms": ["remote work"]}},
     ("POST", "/api/projects/{p}/sources/import"): {"format": "bibtex", "text": "@article{k, title={Imported}}"},
     ("POST", "/api/projects/{p}/research-runs"): {"question": "A long enough question?"},
@@ -224,6 +263,7 @@ BODIES = {
     ("PUT", "/api/projects/{p}/screening/active-learning"): {"enabled": True},
     ("POST", "/api/projects/{p}/extractions/{e}/verify"): {"confirmed_critical_fields": ["measures", "sample", "key_findings"]},
     ("POST", "/api/projects/{p}/extractions/ai"): {"source_id": ""},
+    ("POST", "/api/projects/{p}/meta-analysis"): {"outcome": "Outcome", "primary_model": "fixed", "studies": [{"extraction_id": "00000000-0000-0000-0000-000000000001", "finding_index": 0}, {"extraction_id": "00000000-0000-0000-0000-000000000002", "finding_index": 0}]},
 }
 
 # Principals: the four roles (the creator is the owner), a second owner added via a member row,
@@ -336,6 +376,17 @@ def world(monkeypatch, fake_llm):
                      verified=False, created_by="matrix"))
         db.commit()
 
+    gap_response = owner.post(f"/api/projects/{project_id}/gaps", json={"type": "empirical", "statement": "Matrix gap", "supporting_paper_ids": [source_id, twin_id]})
+    gap_id = gap_response.json()["id"]
+    assert owner.patch(f"/api/projects/{project_id}/gaps/{gap_id}", json={"selected": True}).status_code == 200
+    question_id = owner.post(f"/api/projects/{project_id}/research-questions", json={
+        "text": "How does trust affect the matrix project?", "type": "relational", "gap_ids": [gap_id],
+    }).json()["id"]
+    hypothesis_id = owner.post(f"/api/projects/{project_id}/hypotheses", json={
+        "research_question_id": question_id, "statement": "Trust predicts matrix collaboration.", "direction": "positive",
+        "theoretical_basis": "Theory", "empirical_support": "Evidence",
+    }).json()["id"]
+
     ai_source = owner.post(f"/api/projects/{project_id}/sources", json={"title": "AI extraction target"}).json()
     with SessionLocal() as db:
         db.get(Source, uuid.UUID(ai_source["id"])).fulltext_path = fulltext_key(uuid.UUID(project_id), uuid.UUID(ai_source["id"]), "pdf")
@@ -373,7 +424,11 @@ def world(monkeypatch, fake_llm):
     doc_id = _seed_document(project_id, owner_id)
     return {
         "clients": clients,
+<<<<<<< Updated upstream
         "ids": {"p": project_id, "s": source_id, "extract_s": extraction_source_id, "ai_s": ai_source["id"], "h": str(claim_id), "field_key": "research_question", "u": removable_id, "q": str(search_id), "d": str(seed_id), "e": str(extraction_id), "c": str(clustering_id), "l": str(cluster_id), "n": "lab_schema", "a": str(alert_id), "k": str(audit_id), "g": _fresh_suggestion(project_id, []), "doc": doc_id, "rep": _seed_report(project_id, owner_id, doc_id), "v": "1", "author": owner_id},
+=======
+        "ids": {"p": project_id, "s": source_id, "extract_s": extraction_source_id, "ai_s": ai_source["id"], "h": str(claim_id), "gap_id": gap_id, "rq": question_id, "hp": hypothesis_id, "field_key": "research_question", "u": removable_id, "q": str(search_id), "d": str(seed_id), "e": str(extraction_id), "plan_id": str(uuid.uuid4()), "c": str(clustering_id), "l": str(cluster_id), "n": "lab_schema", "a": str(alert_id), "k": str(audit_id), "g": _fresh_suggestion(project_id, [])},
+>>>>>>> Stashed changes
         "twin": twin_id,
         "invitee": f"matrix-invitee-{tag}@example.com",
     }
@@ -446,6 +501,16 @@ def _call(world, principal, method, template):
         body = {"scope": "section", "document_id": world["ids"]["doc"]}
     if (method, template) == ("POST", "/api/projects/{p}/members"):
         body = {"email": world["invitee"], "role": "reviewer"}
+    if (method, template) == ("POST", "/api/projects/{p}/gaps"):
+        body = {"type": "empirical", "statement": f"A gap {uuid.uuid4()}", "supporting_paper_ids": [world["ids"]["s"], world["twin"]]}
+    if (method, template) == ("POST", "/api/projects/{p}/research-questions"):
+        body = {"text": f"How does trust affect collaboration {uuid.uuid4()}?", "type": "relational", "gap_ids": [world["ids"]["gap_id"]]}
+    if (method, template) == ("POST", "/api/projects/{p}/hypotheses"):
+        question = world["clients"]["owner"].post(
+            f"/api/projects/{world['ids']['p']}/research-questions",
+            json={"text": f"Hypothesis question {uuid.uuid4()}?", "type": "relational", "gap_ids": [world["ids"]["gap_id"]]},
+        ).json()
+        body = {"research_question_id": question["id"], "statement": f"Trust predicts collaboration {uuid.uuid4()}.", "direction": "positive", "theoretical_basis": "Theory", "empirical_support": "Evidence"}
     if (method, template) == ("POST", "/api/projects/{p}/sources/merge"):
         body = {"source_ids": [world["ids"]["s"], world["twin"]]}
     if (method, template) == ("PUT", "/api/projects/{p}/screening/dual-screen"):
@@ -572,7 +637,11 @@ def test_role_matrix(world, principal, method, template, allowed, success):
 def test_the_matrix_covers_every_project_scoped_route():
     """A new project route must be added to MATRIX, or this fails."""
     routed = {
+<<<<<<< Updated upstream
         (method, route.path.replace("{project_id}", "{p}").replace("{source_id}", "{s}").replace("{user_id}", "{u}").replace("{code}", "G1").replace("{search_id}", "{q}").replace("{seed_id}", "{d}").replace("{extraction_id}", "{e}").replace("{claim_id}", "{h}").replace("{field_key}", "{field_key}").replace("{clustering_id}", "{c}").replace("{cluster_id}", "{l}").replace("{schema_name}", "{n}").replace("{alert_id}", "{a}").replace("{audit_id}", "{k}").replace("{suggestion_id}", "{g}").replace("{document_id}", "{doc}").replace("{number}", "{v}").replace("{target_kind}", "source").replace("{target_id}", "{s}").replace("{report_id}", "{rep}"))
+=======
+            (method, route.path.replace("{project_id}", "{p}").replace("{source_id}", "{s}").replace("{user_id}", "{u}").replace("{code}", "G1").replace("{search_id}", "{q}").replace("{seed_id}", "{d}").replace("{extraction_id}", "{e}").replace("{evidence_id}", "{e}").replace("{plan_id}", "{plan_id}").replace("{claim_id}", "{h}").replace("{gap_id}", "{gap_id}").replace("{field_key}", "{field_key}").replace("{clustering_id}", "{c}").replace("{cluster_id}", "{l}").replace("{schema_name}", "{n}").replace("{alert_id}", "{a}").replace("{audit_id}", "{k}").replace("{suggestion_id}", "{g}").replace("{target_kind}", "source").replace("{target_id}", "{s}").replace("{kind}", "co_citation"))
+>>>>>>> Stashed changes
         for route in app.routes
         if "{project_id}" in getattr(route, "path", "")
         for method in route.methods

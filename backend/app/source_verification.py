@@ -36,6 +36,9 @@ AGENT_VERIFIER = "agent:citation-verifier"
 
 
 def verify_source(db: Session, *, project: Project, source: Source, connectors: Sequence[Connector], requested_by: str) -> VerificationResult:
+    # Claim verification and source revocation use the same source-row lock. This makes the
+    # check-then-write sequence serial: a claim cannot become verified after revocation commits.
+    source = db.scalar(select(Source).where(Source.id == source.id, Source.project_id == project.id).with_for_update()) or source
     reference = Reference(
         title=source.title,
         authors=tuple(str(a) for a in (source.authors or [])),

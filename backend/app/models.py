@@ -3,7 +3,7 @@ import hashlib
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import event, select, CheckConstraint, and_, or_, DateTime, Enum, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, false, func
+from sqlalchemy import event, select, CheckConstraint, ForeignKeyConstraint, and_, or_, DateTime, Enum, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, false, func
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -269,6 +269,8 @@ class Source(Timestamped, Base):
     abstract: Mapped[str | None] = mapped_column(Text)  # untrusted text when it came from a connector
     oa_url: Mapped[str | None] = mapped_column(String(2000))  # open-access location, if any
     source_ids: Mapped[dict | None] = mapped_column(JSON)  # external ids, e.g. {"openalex": "W123", "pmid": "1"}
+    bibliometric_reference_ids: Mapped[list | None] = mapped_column(JSON)  # explicitly supplied cited-work IDs
+    bibliometric_keywords: Mapped[list | None] = mapped_column(JSON)  # explicitly supplied author keywords
     fulltext_path: Mapped[str | None] = mapped_column(String(1000))  # storage key (never an absolute path); set by the system only (M0.10.2)
     # Last open-access full-text check (M2.7.1, `app/oa_fetch.py`): status, licence as reported, links, sha256. System-set only.
     fulltext_access: Mapped[dict | None] = mapped_column(JSON)
@@ -591,6 +593,7 @@ class Extraction(Timestamped, Base):
     fields_json: Mapped[dict] = mapped_column(JSON)
     evidence_spans: Mapped[dict] = mapped_column(JSON)
     confidence_json: Mapped[dict | None] = mapped_column(JSON)  # per-field confidence for AI extractions; NULL for human entries
+    agreement_json: Mapped[dict | None] = mapped_column(JSON)  # second sampled extraction and field agreement; NULL when unsampled
     verified_by_human: Mapped[bool] = mapped_column(default=False, server_default=false())
     verified_by: Mapped[str | None] = mapped_column(String(100))
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -598,6 +601,73 @@ class Extraction(Timestamped, Base):
     extractor: Mapped[str] = mapped_column(String(100))  # user id, or `agent:<name>`
     model_id: Mapped[str | None] = mapped_column(String(200))
     prompt_version: Mapped[str | None] = mapped_column(String(100))
+
+
+class MetaAnalysisPlan(Timestamped, Base):
+    """A scholar's selected comparable correlations, frozen by G8 before pooling."""
+
+    __tablename__ = "meta_analysis_plans"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    outcome: Mapped[str] = mapped_column(String(200))
+    primary_model: Mapped[str] = mapped_column(String(10))
+    studies_json: Mapped[list] = mapped_column(JSON)
+    created_by: Mapped[str] = mapped_column(String(100))
+    result_json: Mapped[dict | None] = mapped_column(JSON)
+
+
+class Construct(Timestamped, Base):
+    """A named construct with author-specific definition and measurement notes (M3.7)."""
+
+    __tablename__ = "constructs"
+    __table_args__ = (
+        UniqueConstraint("project_id", "name", "author", name="uq_construct_project_name_author"),
+        UniqueConstraint("id", "project_id", name="uq_construct_id_project"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    definition: Mapped[str] = mapped_column(Text)
+    measures: Mapped[list] = mapped_column(JSON, default=list)
+    author: Mapped[str] = mapped_column(String(200))
+    jingle_jangle_flags: Mapped[list] = mapped_column(JSON, default=list)
+    created_by: Mapped[str] = mapped_column(String(100))
+
+
+class Theory(Timestamped, Base):
+    """A theory/lens linked to a project's construct inventory (M3.7)."""
+
+    __tablename__ = "theories"
+    __table_args__ = (
+        UniqueConstraint("project_id", "name", name="uq_theory_project_name"),
+        UniqueConstraint("id", "project_id", name="uq_theory_id_project"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str] = mapped_column(Text)
+    created_by: Mapped[str] = mapped_column(String(100))
+    construct_links: Mapped[list["TheoryConstruct"]] = relationship(back_populates="theory", cascade="all, delete-orphan")
+
+    @property
+    def construct_ids(self) -> list[uuid.UUID]:
+        return [link.construct_id for link in self.construct_links]
+
+
+class TheoryConstruct(Base):
+    """A project-scoped theory-to-construct link; composite FKs prevent cross-project links."""
+
+    __tablename__ = "theory_constructs"
+    __table_args__ = (
+        UniqueConstraint("theory_id", "construct_id", name="uq_theory_construct"),
+        ForeignKeyConstraint(["theory_id", "project_id"], ["theories.id", "theories.project_id"]),
+        ForeignKeyConstraint(["construct_id", "project_id"], ["constructs.id", "constructs.project_id"]),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    theory_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    construct_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    theory: Mapped[Theory] = relationship(back_populates="construct_links")
 
 
 class Claim(Timestamped, Base):
@@ -618,13 +688,91 @@ class Claim(Timestamped, Base):
 
 class ClaimEvidence(Base):
     __tablename__ = "claim_evidence"
-    __table_args__ = (UniqueConstraint("claim_id", "source_id", name="uq_claim_evidence_source"),)
+    __table_args__ = (
+        UniqueConstraint("claim_id", "source_id", name="uq_claim_evidence_source"),
+        CheckConstraint(
+            "(support_confirmed_by IS NULL) = (support_confirmed_at IS NULL)",
+            name="ck_claim_evidence_support_confirmation_paired",
+        ),
+    )
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     claim_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("claims.id"), index=True)
     source_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sources.id"), index=True)
     excerpt_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("source_excerpts.id"), index=True)
     quote: Mapped[str] = mapped_column(Text)
+    quote_matches_source: Mapped[bool] = mapped_column(default=False, server_default=false())
+    support_confirmed_by: Mapped[str | None] = mapped_column(String(100))
+    support_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     claim: Mapped[Claim] = relationship(back_populates="evidence")
+
+
+class Gap(Timestamped, Base):
+    """A scholar-curated literature gap with auditable supporting evidence (M3.9)."""
+
+    __tablename__ = "gaps"
+    __table_args__ = (UniqueConstraint("project_id", "statement", name="uq_gap_project_statement"),)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    type: Mapped[str] = mapped_column(String(30))
+    statement: Mapped[str] = mapped_column(Text)
+    supporting_paper_ids: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    matrix_cell_ids: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    future_research: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    priority: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    selected: Mapped[bool] = mapped_column(default=False, server_default=false())
+    created_by: Mapped[str] = mapped_column(String(100))
+
+
+class ResearchQuestion(Timestamped, Base):
+    """A human-owned draft question, linked to the curated gaps it addresses (M4.1)."""
+
+    __tablename__ = "research_questions"
+    __table_args__ = (
+        UniqueConstraint("project_id", "text", name="uq_research_question_project_text"),
+        UniqueConstraint("id", "project_id", name="uq_research_question_id_project"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    text: Mapped[str] = mapped_column(Text)
+    type: Mapped[str] = mapped_column(String(30))
+    created_by: Mapped[str] = mapped_column(String(100))
+    gap_links: Mapped[list["ResearchQuestionGap"]] = relationship(back_populates="research_question", cascade="all, delete-orphan")
+    hypotheses: Mapped[list["Hypothesis"]] = relationship(back_populates="research_question", cascade="all, delete-orphan")
+
+
+class ResearchQuestionGap(Base):
+    """Project-scoped link that makes a question's gap provenance auditable."""
+
+    __tablename__ = "research_question_gaps"
+    __table_args__ = (
+        UniqueConstraint("research_question_id", "gap_id", name="uq_research_question_gap"),
+        ForeignKeyConstraint(["research_question_id", "project_id"], ["research_questions.id", "research_questions.project_id"]),
+        ForeignKeyConstraint(["gap_id"], ["gaps.id"]),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    research_question_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    gap_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("gaps.id"), index=True)
+    research_question: Mapped[ResearchQuestion] = relationship(back_populates="gap_links")
+
+
+class Hypothesis(Timestamped, Base):
+    """A human-owned hypothesis with explicitly recorded theoretical and empirical bases."""
+
+    __tablename__ = "hypotheses"
+    __table_args__ = (
+        UniqueConstraint("project_id", "statement", name="uq_hypothesis_project_statement"),
+        ForeignKeyConstraint(["research_question_id", "project_id"], ["research_questions.id", "research_questions.project_id"]),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    research_question_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    statement: Mapped[str] = mapped_column(Text)
+    direction: Mapped[str] = mapped_column(String(30))
+    theoretical_basis: Mapped[str] = mapped_column(Text)
+    empirical_support: Mapped[str] = mapped_column(Text)
+    created_by: Mapped[str] = mapped_column(String(100))
+    research_question: Mapped[ResearchQuestion] = relationship(back_populates="hypotheses")
 
 
 class NoteKind(str, enum.Enum):
@@ -1112,4 +1260,9 @@ from app import suggestion_guard  # noqa: E402,F401
 from app import project_schema_guard  # noqa: E402,F401
 from app import source_gate_guard  # noqa: E402,F401
 from app import claim_guard  # noqa: E402,F401
+<<<<<<< Updated upstream
 from app import ledger_guard  # noqa: E402,F401
+=======
+from app import theory_construct_guard  # noqa: E402,F401
+from app import research_question_guard  # noqa: E402,F401
+>>>>>>> Stashed changes

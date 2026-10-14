@@ -59,24 +59,24 @@
 | 5.4.3 | Verbatim span verification | M3.4.1–M3.4.2; groundwork M0.2.6 (immutable excerpts) | — | `test_excerpt_immutability.py` | M0.2.6 `[?]`, M3.4 `[ ]` |
 | 5.4.4 | Matrix view, every cell links to source; CSV/Excel | M3.5.1–M3.5.2, **X.14** | wireframe `docs/wireframes/evidence-table.html` (X.14, awaiting scholar walkthrough) | — | `[ ]` |
 | 5.4 gate | G4 verify critical fields, side-by-side PDF | M3.6.1–M3.6.2 | — | — | `[ ]` |
-| 5.4 QC | Double extraction on a sample | M3.3.3 | — | — | `[ ]` (10% stable hash-based sample selected; implementation not started) |
+| 5.4 QC | Double extraction on a sample | M3.3.3 | `ai_extraction.py`, `models.py`, `routers/extractions.py`, migration 0051 | `test_ai_extraction.py` | `[~]` (stable 10% sample, second evidence-checked pass and field agreement implemented; final verification pending) |
 
 ### §5.5 Synthesis, constructs and gaps
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
 |---|---|---|---|---|---|
-| 5.5.1 | Thematic clustering, editable labels | M3.8.1 | `app/thematic_clusters.py`, `routers/clusters.py` | `tests/test_thematic_clusters.py` | `[?]` (API only; UI waits on a wireframe) |
-| 5.5.2–3 | Construct inventory (jingle-jangle); theory map | M3.7.1 | — | — | `[ ]` |
-| 5.5.4 | Method/context matrices | M3.8.2 | `app/coverage_matrix.py`, `routers/coverage.py` | `tests/test_coverage_matrix.py` | `[?]` (API only; UI waits on a wireframe) |
-| 5.5.5 | Gap miner, ≥ 2 supporting papers | M3.9.1–M3.9.2 | — | — | `[ ]` |
-| 5.5.6 | Bibliometric views/exports | M3.12, M3.12.1 | `GET /api/projects/{id}/bibliometrics/publication-trends` | `test_bibliometrics.py`, `test_role_matrix.py` | M3.12.1 `[?]` (API-only first slice; full suite has unrelated failures) |
-| 5.5 gate | G5 curate gaps | M3.9.3 | — | — | `[ ]` |
-| 5.5 QC | Contradiction detection | M3.10.1 | — | — | `[ ]` |
+| 5.5.1 | Thematic clustering, editable labels | M3.8.1 | `app/thematic_clusters.py`, `routers/clusters.py` | `tests/test_thematic_clusters.py` | `[x]` (independently reviewed; API only; UI waits on a wireframe) |
+| 5.5.2–3 | Construct inventory (jingle-jangle); theory map | M3.7.1 | `GET/POST /api/projects/{id}/constructs`; `GET/POST /api/projects/{id}/theories` | `test_constructs.py`, `test_role_matrix.py` | `[x]` (independently reviewed; project-scoped theory/construct links are database-enforced) |
+| 5.5.4 | Method/context matrices | M3.8.2 | `app/coverage_matrix.py`, `routers/coverage.py` | `tests/test_coverage_matrix.py` | `[x]` (independently reviewed; API only; UI waits on a wireframe) |
+| 5.5.5 | Gap miner, ≥ 2 supporting papers | M3.9.1–M3.9.2 | `GET/POST/PATCH /api/projects/{id}/gaps` | `test_gaps.py`, `test_role_matrix.py` | `[x]` (independently approved; evidence and future-research provenance are project-scoped) |
+| 5.5.6 | Bibliometric views/exports | M3.12, M3.12.1 | `GET/PUT /api/projects/{id}/bibliometrics/inputs/{source_id}`; `GET …/networks`, `…/publication-trends`, `…/export/vosviewer/{kind}.zip`, `…/export/citespace.csv` | `test_bibliometric_networks.py`, `test_bibliometrics.py`, `test_role_matrix.py` | `[?]` (persisted project-scoped source inputs; independent re-review and a green full suite pending) |
+| 5.5 gate | G5 curate gaps | M3.9.3 | Existing gate API plus gap curation route | `test_gaps.py`, `test_role_matrix.py` | `[ ]` (human approval required; never auto-approved) |
+| 5.5 QC | Contradiction detection | M3.10.1 | `GET /api/projects/{id}/evidence-matrix/contradictions` | `test_contradictions.py`, `test_role_matrix.py` | `[x]` (independently reviewed; verified findings, explicit directional matches, and cell-level quote provenance) |
 | §4 inv. | Claim with no evidence can't be `verified` | M3.11.1–M3.11.3 | — | — | `[ ]` |
 
 ### §5.6 RQs, hypotheses, framework
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
 |---|---|---|---|---|---|
-| 5.6.1 | RQ/hypothesis drafting + FINER critique | M4.1 | — | — | `[ ]` |
+| 5.6.1 | Human-owned RQ/hypothesis drafts linked to selected gaps; transparent advisory FINER critique | M4.1 | `GET/POST/PATCH /api/projects/{id}/research-questions`; `GET …/research-questions/{id}/finer`; `GET/POST/PATCH /api/projects/{id}/hypotheses` | `test_research_questions.py`, `test_role_matrix.py` | `[~]` (implementation and focused/migration checks complete; full-suite result and independent review pending) |
 | 5.6.2–4 | Conceptual model, diagram, construct–measure check | M4.2 | — | — | `[ ]` |
 | 5.6 gate | G6 approve RQs, hypotheses, model | M4.8 *(new)* | — | — | `[ ]` |
 
@@ -222,7 +222,7 @@
 ### §13 Acceptance criteria (project definition of done)
 | # | Criterion | Tasks | Status |
 |---|---|---|---|
-| 13.1 | Idea → verified evidence table + ranked gaps, full search log, PRISMA | M3.13.1, X.16 | `[ ]` |
+| 13.1 | Idea → verified evidence table + ranked gaps, full search log, PRISMA | M3.13.1, X.16 | `[x]` (independently reviewed API acceptance test in `test_m3_exit.py`) |
 | 13.2 | Every citation resolves; unverifiable can't be exported | M1.10.3, M6.4 | `[ ]` (research-run answers are blocked and audited; export not built) |
 | 13.3 | Every number traceable to an analysis run | M6.3, M5.3 | `[ ]` |
 | 13.4 | Every AI artifact shows who/what/when/model + approval | M0.4, M0.8.1, **X.17**, X.38 | `[x]` data (M0.4, M0.8.1 closed), `[?]` UI (X.17 badge, awaiting review); research answers still have no approval step (X.38, open) |

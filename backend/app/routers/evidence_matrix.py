@@ -13,6 +13,7 @@ from app.config import get_settings
 from app.database import get_db
 from app.dependencies import READ_ROLES, project_access
 from app.evidence_matrix import build, csv_bytes, xlsx_bytes
+from app.contradictions import detect
 from app.extraction_schema import SchemaError
 from app.fulltext import FullTextError, extract_pdf_text
 from app.models import Extraction, Project, Source
@@ -34,6 +35,15 @@ def matrix(
     project: Project = Depends(project_access(READ_ROLES)), db: Session = Depends(get_db),
 ) -> dict:
     return _matrix(db, project, schema_name)
+
+
+@router.get("/contradictions")
+def contradictions(
+    schema_name: str = Query("default", max_length=80),
+    project: Project = Depends(project_access(READ_ROLES)), db: Session = Depends(get_db),
+) -> dict:
+    matrix_data = _matrix(db, project, schema_name)
+    return {"schema_version": matrix_data["schema_version"], "flags": detect(matrix_data)}
 
 
 @router.get("/export.csv")

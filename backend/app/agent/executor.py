@@ -24,6 +24,7 @@ from app.answer_guard import check_answer
 from app.untrusted_text import clean_untrusted, _strip_invisible
 from app.task_registry import TaskOwnershipLost
 from app.config import get_settings
+from app.citation_support import quote_matches_source
 from app.database import SessionLocal
 from app.artifacts import register_artifact
 from app.models import (
@@ -196,10 +197,13 @@ def _store_cited_claims(db: Session, run: ResearchRun, answer: str, sources: lis
             snapshot = sources[index - 1]
             excerpt_id = snapshot.get("excerpt_id")
             excerpt = db.get(SourceExcerpt, uuid.UUID(excerpt_id)) if excerpt_id else None
-            if excerpt is None or str(excerpt.source_id) != snapshot["id"] or not snapshot.get("verified"):
+            source = db.get(Source, uuid.UUID(snapshot["id"]))
+            if (excerpt is None or source is None or str(excerpt.source_id) != snapshot["id"]
+                    or not snapshot.get("verified") or not source.metadata_verified):
                 raise ValueError("A claim's source excerpt is missing or unverified")
             claim.evidence.append(ClaimEvidence(source_id=excerpt.source_id, excerpt_id=excerpt.id,
-                                                quote=excerpt.content))
+                                                quote=excerpt.content,
+                                                quote_matches_source=quote_matches_source(source, excerpt, excerpt.content)))
         db.add(claim)
         db.flush()
         created_ids.append(str(claim.id))

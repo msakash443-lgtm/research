@@ -16,6 +16,7 @@ function renderResearchRun(ctx, run) {
     card.append(plan);
   }
   if (run.answer) card.append(el("p", { className: "run-answer", text: run.answer }));
+  if (run.answer) card.append(el("div", { className: "source-locator", attrs: { "data-citation-run": run.id } }));
   if (run.insufficient_evidence) card.append(el("p", { className: "run-answer", text: `The model found the evidence insufficient: ${run.insufficient_reason || "no reason given"}` }));
   if (run.error_message) card.append(el("p", { className: "run-error", text: run.error_message }));
   card.append(
@@ -55,6 +56,42 @@ function runsList(root, ctx) {
     list.replaceChildren(...runs.map((run) => renderResearchRun(ctx, run)));
   }
   return list;
+}
+
+async function loadCitationSupport(root, ctx) {
+  if (!(ctx.summary.runs || []).some((run) => run.answer)) return;
+  const projectId = ctx.project.id;
+  try {
+    const claims = await request(projectApi(projectId, "/claims"));
+    if (ctx.project.id !== projectId || !root.isConnected) return;
+    for (const run of ctx.summary.runs || []) {
+      const container = [...root.querySelectorAll("[data-citation-run]")].find((node) => node.dataset.citationRun === run.id);
+      if (!container) continue;
+      const lines = claims.filter((claim) => claim.run_id === run.id).flatMap((claim) =>
+        claim.evidence.map((evidence) => ({ claim, evidence })));
+      container.replaceChildren(...lines.map(({ claim, evidence }) => {
+        const row = el("p");
+        row.append(el("span", { text: `Citation: “${evidence.quote}” · ${evidence.quote_matches_source ? "Quote found" : "Quote not found"} · ${evidence.support_confirmed_by ? "Support confirmed by a person" : "Support not checked"}` }));
+        if (!evidence.support_confirmed_by && ["owner", "co_author", "supervisor"].includes(ctx.role)) {
+          const button = el("button", { type: "button", text: "Confirm support" });
+          button.addEventListener("click", async () => {
+            button.disabled = true;
+            try {
+              await request(projectApi(projectId, `/claims/${claim.id}/evidence/${evidence.id}/confirm-support`), { method: "POST" });
+              await loadCitationSupport(root, ctx);
+            } catch (error) {
+              toast(error.message);
+              button.disabled = false;
+            }
+          });
+          row.append(" ", button);
+        }
+        return row;
+      }));
+    }
+  } catch (error) {
+    toast(error.message);
+  }
 }
 
 function render(root, ctx) {
@@ -115,10 +152,14 @@ function render(root, ctx) {
   panel.append(runsHeading);
   panel.append(runsList(root, ctx));
   root.replaceChildren(panel);
+  loadCitationSupport(root, ctx);
 }
 
 function update(root, ctx) {
-  if (root.querySelector("#research-runs")) runsList(root, ctx);
+  if (root.querySelector("#research-runs")) {
+    runsList(root, ctx);
+    loadCitationSupport(root, ctx);
+  }
 }
 
 export default { render, update };

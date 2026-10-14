@@ -230,6 +230,29 @@ def test_merging_clears_a_stale_automatic_verification(world, services):
     assert merged["metadata_verified"] is False and merged["verification_method"] is None and merged["verification"] is None
 
 
+def test_merging_any_claim_evidence_source_invalidates_verified_claim(world, services):
+    c, pid = world
+    kept = add(c, pid)
+    merged = add(c, pid)
+    with SessionLocal() as db:
+        excerpt = SourceExcerpt(source_id=uuid.UUID(merged), content="Merged evidence.", content_hash=excerpt_hash("Merged evidence."))
+        db.add(excerpt)
+        db.flush()
+        claim = Claim(project_id=uuid.UUID(pid), text="Merged evidence", verified=False, created_by="reviewer")
+        claim.evidence = [ClaimEvidence(source_id=uuid.UUID(merged), excerpt_id=excerpt.id, quote="Merged evidence.")]
+        db.add(claim)
+        db.commit()
+        claim.verified = True
+        db.commit()
+        claim_id = claim.id
+    response = c.post(f"/api/projects/{pid}/sources/merge", json={"source_ids": [kept, merged], "keep": kept})
+    assert response.status_code == 200, response.text
+    with SessionLocal() as db:
+        assert db.get(Claim, claim_id).verified is False
+    events = audit_of(c, pid, "claim.verification_revoked")
+    assert any(str(claim_id) in event["payload_json"]["claim_ids"] and event["payload_json"]["reason"] == "source_merge" for event in events)
+
+
 def test_requests_are_validated(world, services, monkeypatch):
     c, pid = world
     sid = add(c, pid)

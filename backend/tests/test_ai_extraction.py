@@ -6,7 +6,7 @@ import jsonschema
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from app.ai_extraction import AiExtractionError, _page_text, extraction_reply_schema, extract_with_llm
+from app.ai_extraction import AiExtractionError, _page_text, extraction_reply_schema, extract_with_llm, selected_for_double_extraction, compare_extractions
 from app.agent.llm import OpenAICompatibleLLM
 from app.config import get_settings
 from app.database import SessionLocal
@@ -30,6 +30,21 @@ def _reply(value, evidence, confidence=0.9):
     return {"choices": [{"message": {"content": json.dumps({
         "research_question": {"value": value, "evidence": evidence, "confidence": confidence},
     })}}]}
+
+
+def test_double_extraction_sampling_is_stable_and_sparse():
+    project_id = uuid.UUID("a4a31542-84af-49c4-91a3-e52bf038711b")
+    ids = [uuid.uuid5(project_id, str(index)) for index in range(1000)]
+    chosen = [item for item in ids if selected_for_double_extraction(project_id, "default@1", item)]
+    assert 60 <= len(chosen) <= 140
+    assert chosen == [item for item in ids if selected_for_double_extraction(project_id, "default@1", item)]
+    assert any(selected_for_double_extraction(project_id, "default@2", item) != selected_for_double_extraction(project_id, "default@1", item) for item in ids)
+
+
+def test_double_extraction_agreement_reports_disagreements_and_abstentions():
+    result = compare_extractions({"a": "same", "b": "first", "c": None},
+                                 {"a": "same", "b": "second", "c": None})
+    assert result == {"a": "agree", "b": "disagree", "c": "both_abstained"}
 
 
 def test_ai_extraction_uses_a_fenced_untrusted_text_prompt_and_keeps_field_confidence(fake_llm):
@@ -111,14 +126,20 @@ def test_ai_reply_schema_preserves_unconstrained_list_and_object_values():
     jsonschema.validate(reply, extraction_reply_schema(schema))
 
 
-def test_ai_extraction_runs_only_on_stored_pdf_and_persists_unverified_provenance(fake_llm, monkeypatch):
-    from app import task_handlers
+@pytest.mark.parametrize("second_pass", ["none", "valid", "invalid"])
+def test_ai_extraction_runs_only_on_stored_pdf_and_persists_unverified_provenance(fake_llm, monkeypatch, second_pass):
+    from app import ai_extraction, task_handlers
 
-    fake_llm.handler = lambda request: _reply(
-        "We study burnout among nurses.",
-        {"quote": "We study burnout among nurses.", "page": 1, "section": "Abstract"},
-        0.93,
-    )
+    double_extract = second_pass != "none"
+    monkeypatch.setattr(ai_extraction, "selected_for_double_extraction", lambda *args: double_extract)
+    replies = iter([
+        ("We study burnout among nurses.", "We study burnout among nurses."),
+        ("Burnout among nurses.", "Invented quote" if second_pass == "invalid" else "We study burnout among nurses."),
+    ])
+    def respond(request):
+        value, quote = next(replies)
+        return _reply(value, {"quote": quote, "page": 1, "section": "Abstract"}, 0.93)
+    fake_llm.handler = respond
     client = TestClient(app)
     user_id = client.post("/api/auth/development/login", json={"email": f"extract-{uuid.uuid4().hex}@example.com", "display_name": "Researcher"}).json()["id"]
     project_id = client.post("/api/projects", json={"title": "AI extraction"}).json()["id"]
@@ -152,6 +173,11 @@ def test_ai_extraction_runs_only_on_stored_pdf_and_persists_unverified_provenanc
         extraction = db.scalar(select(Extraction).where(Extraction.task_id == uuid.UUID(queued.json()["task_id"])))
         task = db.get(Task, uuid.UUID(queued.json()["task_id"]))
         events = db.scalars(select(AuditEvent).where(AuditEvent.action == "extraction.ai_created")).all()
+        if second_pass == "invalid":
+            assert task.status == TaskStatus.failed
+            assert extraction is None and events == []
+            assert len(fake_llm.requests) == 2
+            return
         assert task.status == TaskStatus.completed
         assert extraction is not None
         assert extraction.fields_json["research_question"] == "We study burnout among nurses."
@@ -159,6 +185,12 @@ def test_ai_extraction_runs_only_on_stored_pdf_and_persists_unverified_provenanc
         assert extraction.schema_version == "project:brief@1"
         assert extraction.model_id == "fake-model" and extraction.prompt_version == "evidence_extraction@1"
         assert extraction.extracted_by == "ai" and extraction.verified_by_human is False
+        assert (extraction.agreement_json is not None) is double_extract
+        if double_extract:
+            assert extraction.agreement_json["fields"] == {"research_question": "disagree"}
+            assert extraction.agreement_json["second_fields"]["research_question"] == "Burnout among nurses."
+            assert extraction.agreement_json["second_model_id"] == "fake-model"
+        assert len(fake_llm.requests) == (2 if double_extract else 1)
         assert len(events) == 1 and "We study burnout" not in str(events[0].payload_json)
 
     assert "Abstract fallback must not be used." not in fake_llm.requests[0].content.decode("utf-8")
@@ -166,3 +198,4 @@ def test_ai_extraction_runs_only_on_stored_pdf_and_persists_unverified_provenanc
     listed = client.get(f"/api/projects/{project_id}/extractions", params={"source_id": source_id})
     assert listed.status_code == 200
     assert listed.json()[0]["confidence_json"] == {"research_question": 0.93}
+    assert (listed.json()[0]["agreement_json"] is not None) is double_extract

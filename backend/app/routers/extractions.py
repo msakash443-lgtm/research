@@ -75,6 +75,7 @@ class ExtractionRead(BaseModel):
     fields_json: dict
     evidence_spans: dict  # quotes are text from the paper: show them as text only
     confidence_json: dict | None
+    agreement_json: dict | None
     verified_by_human: bool
     verified_by: str | None
     verified_at: datetime | None

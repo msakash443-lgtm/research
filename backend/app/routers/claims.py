@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session, selectinload
 from app import audit
 from app.database import get_db
 from app.dependencies import READ_ROLES, WRITE_ROLES, APPROVE_ROLES, current_user, project_access
-from app.models import Claim, ClaimEvidence, Extraction, Project, Source, SourceExcerpt, User
+from app.models import Claim, ClaimEvidence, Extraction, Project, Source, SourceExcerpt, User, utcnow
 
 
 router = APIRouter(prefix="/projects/{project_id}/claims", tags=["claims"])
@@ -38,6 +38,9 @@ class EvidenceRead(BaseModel):
     source_id: uuid.UUID
     excerpt_id: uuid.UUID
     quote: str
+    quote_matches_source: bool
+    support_confirmed_by: str | None
+    support_confirmed_at: datetime | None
 
 
 class ClaimRead(BaseModel):
@@ -64,8 +67,12 @@ def _claim_or_404(db: Session, project: Project, claim_id: uuid.UUID) -> Claim:
 
 
 @router.get("", response_model=list[ClaimRead])
-def list_claims(project: Project = Depends(project_access(READ_ROLES)), db: Session = Depends(get_db)):
-    return db.scalars(select(Claim).where(Claim.project_id == project.id)
+def list_claims(run_id: uuid.UUID | None = None,
+                project: Project = Depends(project_access(READ_ROLES)), db: Session = Depends(get_db)):
+    query = select(Claim).where(Claim.project_id == project.id)
+    if run_id is not None:
+        query = query.where(Claim.run_id == run_id)
+    return db.scalars(query
                       .order_by(Claim.created_at.desc()).options(selectinload(Claim.evidence))).all()
 
 
@@ -107,7 +114,7 @@ def verify_claim(claim_id: uuid.UUID, project: Project = Depends(project_access(
         raise HTTPException(status.HTTP_409_CONFLICT, "A claim needs evidence before verification")
     for link in claim.evidence:
         source = db.scalar(select(Source).where(Source.id == link.source_id,
-                                               Source.project_id == project.id, Source.merged_into.is_(None)))
+                                               Source.project_id == project.id, Source.merged_into.is_(None)).with_for_update())
         excerpt = db.scalar(select(SourceExcerpt).where(SourceExcerpt.id == link.excerpt_id,
                                                         SourceExcerpt.source_id == link.source_id))
         if source is None or not source.metadata_verified or excerpt is None or link.quote not in excerpt.content:
@@ -115,5 +122,34 @@ def verify_claim(claim_id: uuid.UUID, project: Project = Depends(project_access(
     claim.verified = True
     audit.record(db, actor=str(user.id), action="claim.verified", project_id=project.id,
                  payload={"claim_id": str(claim.id), "evidence_count": len(claim.evidence)})
+    db.commit()
+    return _claim_or_404(db, project, claim.id)
+
+
+@router.post("/{claim_id}/evidence/{evidence_id}/confirm-support", response_model=ClaimRead)
+def confirm_citation_support(claim_id: uuid.UUID, evidence_id: uuid.UUID,
+                             project: Project = Depends(project_access(WRITE_ROLES | APPROVE_ROLES)),
+                             user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """A person judges whether a cited quotation actually supports the run sentence."""
+    claim = _claim_or_404(db, project, claim_id)
+    if claim.run_id is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Only research-run citations use support confirmation")
+    link = db.scalar(select(ClaimEvidence).where(ClaimEvidence.id == evidence_id,
+                                                  ClaimEvidence.claim_id == claim.id).with_for_update())
+    if link is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Citation evidence not found")
+    if link.support_confirmed_by is not None:
+        return claim
+    source = db.scalar(select(Source).where(Source.id == link.source_id,
+                                           Source.project_id == project.id, Source.merged_into.is_(None)).with_for_update())
+    excerpt = db.scalar(select(SourceExcerpt).where(SourceExcerpt.id == link.excerpt_id,
+                                                    SourceExcerpt.source_id == link.source_id))
+    if source is None or not source.metadata_verified or excerpt is None or link.quote not in excerpt.content:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Citation source is no longer verified evidence")
+    link.support_confirmed_by = audit.user_actor(user)
+    link.support_confirmed_at = utcnow()
+    audit.record(db, actor=link.support_confirmed_by, action="citation.support_confirmed",
+                 project_id=project.id, payload={"run_id": str(claim.run_id), "claim_id": str(claim.id),
+                                                 "evidence_id": str(link.id), "source_id": str(link.source_id)})
     db.commit()
     return _claim_or_404(db, project, claim.id)

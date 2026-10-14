@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import secrets
+import uuid
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -25,6 +27,7 @@ MAX_PROMPT_TEXT_CHARS = 80_000
 MAX_TITLE_CHARS = 500
 MAX_FIELD_DESCRIPTION_CHARS = 1_000
 MAX_PAGE_ANCHOR_CHARS = 1_000
+DOUBLE_EXTRACTION_NAMESPACE = uuid.UUID("7530e807-6875-4c42-a727-590d2c8c15d9")
 
 
 class AiExtractionError(RuntimeError):
@@ -38,6 +41,21 @@ class AiExtractionResult:
     extracted_fields: tuple[str, ...]
     abstained_fields: tuple[str, ...]
     text_flags: tuple[str, ...]
+
+
+def selected_for_double_extraction(project_id: uuid.UUID, version: str, extraction_id: uuid.UUID) -> bool:
+    """Stable one-in-ten bucket per project, schema version, and extraction row."""
+    key = f"{project_id}:{version}:{extraction_id}".encode("utf-8")
+    return int.from_bytes(hashlib.sha256(key).digest()[:8], "big") % 10 == 0
+
+
+def compare_extractions(first: dict[str, Any], second: dict[str, Any]) -> dict[str, str]:
+    """Field agreement is literal value agreement; abstentions are reported separately."""
+    return {
+        key: "both_abstained" if first[key] is None and second[key] is None else
+             "agree" if first[key] == second[key] else "disagree"
+        for key in first
+    }
 
 
 def _value_schema(spec: ValueSpec, *, nullable: bool = False) -> dict[str, Any]:
@@ -206,6 +224,8 @@ def run_ai_extraction(
         raise AiExtractionError("Gate G4 is approved; reopen the extraction stage before creating another extraction.")
     try:
         schema = project_schemas.resolve(db, project.id, schema_name)
+        version = schema_version(schema)
+        extraction_id = uuid.uuid5(DOUBLE_EXTRACTION_NAMESPACE, str(task_id))
         pdf_bytes = store.get(source.fulltext_path)
         fulltext = extract_pdf_text(pdf_bytes, max_pages=max_pages)
         text, flags = _page_text(fulltext, MAX_PROMPT_TEXT_CHARS)
@@ -218,6 +238,26 @@ def run_ai_extraction(
                 "The model returned evidence that does not match the stored PDF: "
                 + "; ".join(span_problems)
             )
+        agreement = None
+        if selected_for_double_extraction(project.id, version, extraction_id):
+            second_fields, second_evidence, second_confidence, second_model_id, second_flags = extract_with_llm(
+                llm, schema=schema, title=source.title, text=text
+            )
+            second_problems = check_evidence_spans(fulltext, second_fields, second_evidence)
+            if second_problems:
+                raise AiExtractionError(
+                    "The second extraction contains evidence that does not match the stored PDF: "
+                    + "; ".join(second_problems)
+                )
+            agreement = {
+                "fields": compare_extractions(fields, second_fields),
+                "second_fields": second_fields,
+                "second_evidence": second_evidence,
+                "second_confidence": second_confidence,
+                "second_model_id": second_model_id,
+                "second_prompt_version": AI_EXTRACTION_PROMPT[0] + "@" + str(AI_EXTRACTION_PROMPT[1]),
+            }
+            flags = tuple(sorted({*flags, *second_flags}))
     except (SchemaError, FullTextError) as exc:
         raise AiExtractionError(str(exc)) from exc
     flags = tuple(sorted({*flags, *prompt_flags}))
@@ -226,8 +266,9 @@ def run_ai_extraction(
         raise AiExtractionError("Gate G4 was approved while extraction was running; no result was saved.")
     ensure_owned(db)
     row = Extraction(
+        id=extraction_id,
         task_id=task_id, project_id=project.id, source_id=source.id, schema_version=schema_version(schema),
-        fields_json=fields, evidence_spans=evidence, confidence_json=confidence, verified_by_human=False,
+        fields_json=fields, evidence_spans=evidence, confidence_json=confidence, agreement_json=agreement, verified_by_human=False,
         extracted_by="ai", extractor=AI_EXTRACTOR, model_id=model_id, prompt_version=AI_EXTRACTION_PROMPT[0] + "@" + str(AI_EXTRACTION_PROMPT[1]),
     )
     db.add(row)
@@ -237,7 +278,8 @@ def run_ai_extraction(
         payload={"task_id": str(task_id), "extraction_id": str(row.id), "source_id": str(source.id),
                  "schema_version": row.schema_version, "fields": sorted(k for k, v in fields.items() if v is not None),
                  "abstained_fields": sorted(k for k, v in fields.items() if v is None), "text_flags": list(flags),
-                 "requested_by": actor},
+                 "requested_by": actor, "double_extracted": agreement is not None,
+                 "disagreements": sum(result == "disagree" for result in agreement["fields"].values()) if agreement else 0},
         model_id=model_id, prompt_version=row.prompt_version,
     )
     ensure_owned(db)
