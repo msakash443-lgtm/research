@@ -54,7 +54,9 @@ jobs:
       # Two workers on separate connections, retry/backoff, lease expiry. The suite wipes this database.
       env:
         TEST_POSTGRES_URL: postgresql+psycopg://research_ai_test:research_ai_test@localhost:5432/research_ai_test
-      run: pytest -q backend/tests/test_task_queue_postgres.py
+      # `-n 0` overrides pytest.ini's `-n 8`: every test wipes and recreates the schema in this one database,
+      # so parallel workers race on CREATE TYPE (duplicate key on pg_type_typname_nsp_index).
+      run: pytest -q -n 0 backend/tests/test_task_queue_postgres.py
 
   build:
 
