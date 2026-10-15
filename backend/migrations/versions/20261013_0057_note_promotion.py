@@ -1,11 +1,11 @@
 """Inbox promotion (X.31.2): gap, claim and memo context kinds, and links back to notes.
 
-Revision ID: 20261013_0050
-Revises: 20261012_0042, 20261013_0048, 20261013_0049
+Revision ID: 20261013_0057
+Revises: 20261012_0042, 20261013_0055, 20261013_0056
 Create Date: 2026-10-13
 
 This also merges the three heads the migration graph already had: 20261012_0042 (on the 0041 branch), and
-20261013_0048 (ledger storage) and 20261013_0049 (session epoch), which were both written on top of 20261012_0047.
+20261013_0055 (ledger storage) and 20261013_0056 (session epoch), which were both written on top of 20261012_0047.
 It changes none of them, and it leaves `alembic upgrade head` with a single head again.
 
 Additive. `context_kind` gains `gap`, `claim`, `memo` (Postgres: ALTER TYPE in an autocommit block, as in
@@ -22,8 +22,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "20261013_0050"
-down_revision: Union[str, Sequence[str], None] = ("20261012_0042", "20261013_0048", "20261013_0049")
+revision: str = "20261013_0057"
+down_revision: Union[str, Sequence[str], None] = ("20261012_0042", "20261013_0055", "20261013_0056")
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

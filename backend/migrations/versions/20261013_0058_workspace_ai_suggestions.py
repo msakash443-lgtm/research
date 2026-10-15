@@ -1,7 +1,7 @@
 """Workspace AI side panel (X.31.11): the action, input hash and input size on a shared AI suggestion.
 
-Revision ID: 20261013_0051
-Revises: 20261013_0050
+Revision ID: 20261013_0058
+Revises: 20261013_0057
 Create Date: 2026-10-13
 
 Additive. The side panel reuses the shared `ai_suggestions` table (X.46.1) rather than a second table. Three
@@ -20,8 +20,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "20261013_0051"
-down_revision: Union[str, Sequence[str], None] = "20261013_0050"
+revision: str = "20261013_0058"
+down_revision: Union[str, Sequence[str], None] = "20261013_0057"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

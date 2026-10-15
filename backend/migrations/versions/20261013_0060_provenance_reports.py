@@ -1,12 +1,12 @@
-"""Similarity check results against project sources (X.31.14).
+"""Writing provenance reports (X.31.12).
 
-Revision ID: 20261013_0052
-Revises: 20261013_0051
+Revision ID: 20261013_0060
+Revises: 20261013_0059
 Create Date: 2026-10-13
 
-Additive: one new table, `similarity_checks`. Each row is one check of a saved section version; it holds
-offsets, kinds, ids and scores, never text. The table is append-only, enforced by an ORM guard
-(app/ledger_guard.py) plus database triggers installed here. Nothing existing changes.
+Additive: one new table, `provenance_reports`. Each row is one frozen report of the saved sections it covers. It holds
+counts, ids, timestamps and the statement, never manuscript or source text. The table is append-only, enforced by an
+ORM guard (app/ledger_guard.py) plus database triggers installed here. Nothing existing changes.
 """
 
 from typing import Sequence, Union
@@ -15,48 +15,47 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "20261013_0052"
-down_revision: Union[str, Sequence[str], None] = "20261013_0051"
+revision: str = "20261013_0060"
+down_revision: Union[str, Sequence[str], None] = "20261013_0059"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-SIMILARITY_MESSAGE = "similarity_checks is append-only: rows cannot be updated or deleted"
+PROVENANCE_MESSAGE = "provenance_reports is append-only: rows cannot be updated or deleted"
 
 
 def upgrade() -> None:
     op.create_table(
-        "similarity_checks",
+        "provenance_reports",
         sa.Column("id", sa.Uuid(), nullable=False),
         sa.Column("project_id", sa.Uuid(), nullable=False),
-        sa.Column("document_id", sa.Uuid(), nullable=False),
-        sa.Column("version_id", sa.Uuid(), nullable=False),
-        sa.Column("provider", sa.String(length=60), nullable=False),
-        sa.Column("status", sa.String(length=12), nullable=False),
-        sa.Column("requested_by", sa.String(length=100), nullable=False),
-        sa.Column("findings_json", sa.JSON(), nullable=False),
-        sa.Column("summary_json", sa.JSON(), nullable=False),
+        sa.Column("scope", sa.String(length=12), nullable=False),
+        sa.Column("document_id", sa.Uuid(), nullable=True),
+        sa.Column("covered_versions", sa.JSON(), nullable=False),
+        sa.Column("report_json", sa.JSON(), nullable=False),
+        sa.Column("statement_text", sa.Text(), nullable=False),
+        sa.Column("statement_template", sa.String(length=60), nullable=False),
+        sa.Column("report_hash", sa.String(length=64), nullable=False),
+        sa.Column("generated_by", sa.String(length=100), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.ForeignKeyConstraint(["document_id"], ["documents.id"]),
-        sa.ForeignKeyConstraint(["version_id"], ["document_versions.id"]),
+        sa.ForeignKeyConstraint(["project_id"], ["projects.id"]),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index("ix_similarity_checks_project_id", "similarity_checks", ["project_id"])
-    op.create_index("ix_similarity_checks_document_id", "similarity_checks", ["document_id"])
-    op.create_index("ix_similarity_checks_version_id", "similarity_checks", ["version_id"])
-    _install_append_only("similarity_checks", SIMILARITY_MESSAGE)
+    op.create_index("ix_provenance_reports_project_id", "provenance_reports", ["project_id"])
+    op.create_index("ix_provenance_reports_document_id", "provenance_reports", ["document_id"])
+    _install_append_only("provenance_reports", PROVENANCE_MESSAGE)
 
 
 def downgrade() -> None:
-    # Refuse to drop recorded checks while any exist: they are the record of what was checked.
+    # Refuse to drop recorded reports while any exist: they are what was given to supervisors and journals.
     bind = op.get_bind()
-    if bind.execute(sa.text("SELECT COUNT(*) FROM similarity_checks")).scalar():
-        raise RuntimeError("similarity_checks still has rows; refusing to drop the similarity record")
+    if bind.execute(sa.text("SELECT COUNT(*) FROM provenance_reports")).scalar():
+        raise RuntimeError("provenance_reports still has rows; refusing to drop the provenance record")
 
-    _remove_append_only("similarity_checks")
-    op.drop_index("ix_similarity_checks_version_id", table_name="similarity_checks")
-    op.drop_index("ix_similarity_checks_document_id", table_name="similarity_checks")
-    op.drop_index("ix_similarity_checks_project_id", table_name="similarity_checks")
-    op.drop_table("similarity_checks")
+    _remove_append_only("provenance_reports")
+    op.drop_index("ix_provenance_reports_document_id", table_name="provenance_reports")
+    op.drop_index("ix_provenance_reports_project_id", table_name="provenance_reports")
+    op.drop_table("provenance_reports")
 
 
 def _install_append_only(table: str, message: str) -> None:

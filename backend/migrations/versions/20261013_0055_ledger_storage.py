@@ -1,6 +1,6 @@
 """Authorship ledger storage: documents, versions and append-only authorship events (X.31.8).
 
-Revision ID: 20261013_0048
+Revision ID: 20261013_0055
 Revises: 20261012_0047
 Create Date: 2026-10-13
 
@@ -16,7 +16,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "20261013_0048"
+revision: str = "20261013_0055"
 down_revision: Union[str, Sequence[str], None] = "20261012_0047"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
