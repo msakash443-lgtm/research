@@ -132,6 +132,9 @@ class SourceRead(BaseModel):
     fulltext_access: dict | None = None
     quality_flags: list | None = None
     found_via: dict | None = None  # how an automated method found it, e.g. snowballing (M1.9.2); system-set
+    citation_count: int | None = None  # times cited per `citation_count_source` (M2.13); None = unknown, not 0
+    citation_count_source: str | None = None
+    citation_count_at: datetime | None = None
     evidence_excerpt: str | None = None
     excerpt_locator: str | None = None
     created_at: datetime

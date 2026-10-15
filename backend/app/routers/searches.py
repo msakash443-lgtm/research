@@ -10,12 +10,12 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import audit
+from app import audit, citation_rank
 from app.agent.llm import LLMConfigurationError, LLMResponseError
 from app.ai_controls import llm_for_project, require_ai_on
 from app.config import get_settings
@@ -152,6 +152,32 @@ def list_searches(project: Project = Depends(project_access(READ_ROLES)), db: Se
         for t in _open_tasks(db, project)
     ]
     return {"searches": list(searches.values()), "pending": pending}
+
+
+@router.get("/{search_id}/results")
+def list_search_results(
+    search_id: uuid.UUID,
+    version: int | None = Query(default=None, ge=1),
+    min_citations: int | None = Query(default=None, ge=0, le=1_000_000),
+    project: Project = Depends(project_access(READ_ROLES)),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """One run's results ranked by citation count (M2.13), latest run unless `version` is given.
+
+    Unknown counts (including every run saved before M2.13) stay in the list, flagged, after the counted ones.
+    """
+    query = select(SearchQuery).where(SearchQuery.project_id == project.id, SearchQuery.search_id == search_id)
+    query = query.where(SearchQuery.version == version) if version is not None else query.order_by(SearchQuery.version.desc()).limit(1)
+    row = db.scalar(query)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Search run not found")
+    threshold, threshold_from = citation_rank.resolve_threshold(db, project.id, min_citations)
+    shown, summary = citation_rank.rank(row.results or [], lambda e: e.get("cited_by_count"), threshold, threshold_from)
+    return {
+        "search_id": str(row.search_id), "version": row.version, "database": row.database, "run_at": row.run_at,
+        **summary,
+        "results": [{**entry, "cited_by_count": entry.get("cited_by_count"), "citation_count_unknown": unknown} for entry, unknown in shown],
+    }
 
 
 class SynonymRequest(BaseModel):

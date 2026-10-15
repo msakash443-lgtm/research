@@ -1,0 +1,2 @@
+# Normalise line endings so Windows and other systems don't produce whole-file diffs (plan.md rule 75).
+* text=auto eol=lf

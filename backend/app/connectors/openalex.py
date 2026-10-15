@@ -30,6 +30,7 @@ from app.connectors.base import (
     PaperRecord,
     SearchPage,
     SearchRequest,
+    citation_count,
 )
 from app.connectors.http import ConnectorHttpClient, HttpPolicy, NotFoundError
 from app.connectors.unpaywall import OaLocation
@@ -143,6 +144,7 @@ def to_record(work: dict[str, Any]) -> PaperRecord | None:
         oa_url=oa_url,
         source_ids=source_ids,
         quality_flags=tuple(flags),
+        cited_by_count=citation_count(work.get("cited_by_count")),
     )
 
 

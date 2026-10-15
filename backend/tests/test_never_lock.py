@@ -19,7 +19,11 @@ from app.models import GateStatus, Project, ProjectStage, Task, TaskStatus
 STAGES = list(ProjectStage)
 PREFIX = "/api/projects/{project_id}"
 # Read routes that need a query parameter to be valid at all (not a lock; the parameter is the route's own contract).
-REQUIRED_QUERY = {"/stage/conditions": "target=scoped"}
+REQUIRED_QUERY = {
+    "/stage/conditions": "target=scoped",
+    "/design/method-recommendation": "goal=explore",
+    "/design/sample-size": "test=correlation&r=0.3",
+}
 
 
 def _project_read_paths() -> list[str]:

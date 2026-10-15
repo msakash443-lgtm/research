@@ -41,6 +41,11 @@ def _http_url(value: str | None) -> str | None:
     return value
 
 
+def citation_count(value: Any) -> int | None:
+    """A service's times-cited figure, or None when it is missing or malformed (unknown is not 0)."""
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
 class PaperRecord(BaseModel):
     """One work, normalised across connectors (spec section 4 `Paper`, minus system-owned fields)."""
 
@@ -58,6 +63,8 @@ class PaperRecord(BaseModel):
     oa_url: str | None = None
     source_ids: dict[str, str] = Field(default_factory=dict)  # e.g. {"openalex": "W1", "pmid": "9"}
     quality_flags: tuple[str, ...] = ()  # e.g. ("preprint", "retracted")
+    # Times cited, as this service counts it (M2.13). None = the service gave no count; never read it as 0.
+    cited_by_count: int | None = Field(default=None, ge=0)
 
     @field_validator("doi")
     @classmethod

@@ -288,6 +288,11 @@ class Source(Timestamped, Base):
     # How an automated method found this source (M1.9.2), e.g. {"method": "snowball", "direction":
     # "backward", "round": 1, "via": {"title": ...}}. System-set only; NULL for everything else.
     found_via: Mapped[dict | None] = mapped_column(JSON)
+    # Times cited (M2.13), as the named connector counted it on `citation_count_at`. System-set only.
+    # NULL = unknown (no service gave a count), which is never treated as 0.
+    citation_count: Mapped[int | None] = mapped_column(Integer)
+    citation_count_source: Mapped[str | None] = mapped_column(String(50))
+    citation_count_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     project: Mapped[Project] = relationship(back_populates="sources")
     excerpts: Mapped[list["SourceExcerpt"]] = relationship(
         back_populates="source", cascade="all, delete-orphan", order_by="SourceExcerpt.created_at"
@@ -721,6 +726,24 @@ class Gap(Timestamped, Base):
     priority: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     selected: Mapped[bool] = mapped_column(default=False, server_default=false())
     created_by: Mapped[str] = mapped_column(String(100))
+
+
+class ResearchBrief(Timestamped, Base):
+    """The researcher's brief for a project (M2.12): topic, keyword groups, scope and a citation threshold.
+
+    One row per project. `keyword_groups` are concept blocks (`app.search_query.ConceptBlock`) that feed the
+    Boolean query builder. `min_citations` is the default threshold of the citation filter (M2.13, `app/citation_rank.py`).
+    """
+
+    __tablename__ = "research_briefs"
+    __table_args__ = (CheckConstraint("min_citations IS NULL OR min_citations >= 0", name="ck_research_brief_min_citations"),)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), unique=True)
+    topic: Mapped[str] = mapped_column(Text)
+    keyword_groups: Mapped[list] = mapped_column(JSON, default=list)
+    scope: Mapped[str | None] = mapped_column(Text)
+    min_citations: Mapped[int | None] = mapped_column(Integer)
+    updated_by: Mapped[str] = mapped_column(String(100))
 
 
 class ResearchQuestion(Timestamped, Base):

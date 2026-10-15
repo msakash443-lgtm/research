@@ -14,7 +14,7 @@ Rules this module keeps:
   complete.
 * A connector is used only if it is enabled in settings (default off, plan rule 18).
 * Records are not saved as `Source` rows here: they are unverified third-party data. Storing them
-  is M1.6.4. The row keeps only ids, DOI and a title key.
+  is M1.6.4. The row keeps only ids, DOI, a title key and the connector's citation count (M2.13).
 * Only the `search_run` task handler calls it, and that task type needs gate G2 (M1.8.1): nothing
   runs a bulk search until a person has approved the search strategy and criteria.
 
@@ -105,11 +105,14 @@ def _summarise(records: list[PaperRecord]) -> tuple[list[dict[str, Any]], dict[s
     results = []
     for group in groups:
         anchor = distinct[group[0]]
+        known = [c for i in group if (c := distinct[i].cited_by_count) is not None]
         results.append(
             {
                 "id": f"{anchor.connector}:{anchor.external_id}",
                 "doi": doi_key(anchor.doi),
                 "work_key": work_key(anchor),
+                # Highest count among the merged duplicates (M2.13); None = no record had one, not 0.
+                "cited_by_count": max(known) if known else None,
             }
         )
     counts = {

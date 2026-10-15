@@ -35,13 +35,14 @@ from app.connectors.base import (
     PaperRecord,
     SearchPage,
     SearchRequest,
+    citation_count,
 )
 from app.connectors.http import ConnectorHttpClient, HttpPolicy, NotFoundError
 from app.doi import normalize_doi
 
 BASE_URL = "https://api.semanticscholar.org/graph/v1"
 NAME = "semantic_scholar"
-FIELDS = "paperId,title,abstract,year,venue,authors,externalIds,openAccessPdf,url,publicationTypes"
+FIELDS = "paperId,title,abstract,year,venue,authors,externalIds,openAccessPdf,url,publicationTypes,citationCount"
 MAX_SEARCH_WINDOW = 1000  # offset + limit may not exceed this for relevance search
 MAX_BATCH = 500
 SUPPORTED_FILTERS = ("year_from", "year_to", "type", "is_oa")
@@ -131,6 +132,7 @@ def to_record(paper: Any) -> PaperRecord | None:
         oa_url=_http(pdf.get("url")),
         source_ids=source_ids,
         quality_flags=tuple(flags),
+        cited_by_count=citation_count(paper.get("citationCount")),
     )
 
 

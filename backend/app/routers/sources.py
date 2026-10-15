@@ -6,13 +6,13 @@ from datetime import datetime
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app import audit
+from app import audit, citation_rank
 from app.config import get_settings
 from app.connectors.access import is_enabled
 from app.connectors.arxiv import normalise_id
@@ -22,7 +22,9 @@ from app.database import get_db
 from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_access
 from app.connectors.factory import enabled_lookup_names, unpaywall_unavailable_reason
 from app.fulltext import FullTextError, extract_pdf_text
-from app.models import SOURCE_ORIGIN_RETRIEVED, Project, Source, SourceExcerpt, Task, TaskStatus, User, excerpt_hash, utcnow
+from app.artifacts import register_artifact
+from app.models import SOURCE_ORIGIN_RETRIEVED, Project, ProjectStage, ScreeningDecision, Source, SourceExcerpt, Task, TaskStatus, User, excerpt_hash, utcnow
+from app.screening import STAGES, screening_locked
 from app.object_storage import ObjectConflict, ObjectNotFound, fulltext_key, get_object_store
 from app.task_handlers import FULLTEXT_FETCH, SOURCE_CHECK
 from app.task_queue import enqueue_task
@@ -31,6 +33,8 @@ from app.schemas import SourceCreate, SourceMerge, SourceRead
 from app.source_merge import SourceMergeError, merge_sources
 
 PDF_SIGNATURE = b"%PDF-"
+SCREENING_KIND = "screening_decision"  # same artifact kind as routers/screening.py
+LOCKED_MESSAGE = "Gate G3 is approved for this screening. Reopen the project at the screening stage to add a paper."
 
 _OPEN = {TaskStatus.queued, TaskStatus.running, TaskStatus.blocked, TaskStatus.paused}
 _FULLTEXT_TASK_TYPES = (FULLTEXT_FETCH, ARXIV_FULLTEXT_FETCH)
@@ -62,6 +66,9 @@ def source_response(source: Source) -> SourceRead:
         fulltext_access=source.fulltext_access,
         quality_flags=source.quality_flags,
         found_via=source.found_via,
+        citation_count=source.citation_count,
+        citation_count_source=source.citation_count_source,
+        citation_count_at=source.citation_count_at,
         evidence_excerpt=excerpt.content if excerpt else None,
         excerpt_locator=excerpt.locator if excerpt else None,
         created_at=source.created_at,
@@ -84,6 +91,41 @@ def list_sources(project: Project = Depends(project_access(READ_ROLES)), db: Ses
         .order_by(Source.created_at.desc())
     ).all()
     return [source_response(source) for source in sources]
+
+
+class CitationRankedSource(SourceRead):
+    citation_count_unknown: bool  # no service gave a count; kept in the list, never treated as 0
+
+
+class SourcesByCitations(BaseModel):
+    min_citations: int | None
+    threshold_from: str | None  # "request", "brief" (M2.12) or None (no threshold)
+    total: int
+    shown: int
+    hidden_below_threshold: int
+    unknown_count: int
+    sources: list[CitationRankedSource]
+
+
+@router.get("/by-citations", response_model=SourcesByCitations)
+def list_sources_by_citations(
+    min_citations: int | None = Query(default=None, ge=0, le=1_000_000),
+    project: Project = Depends(project_access(READ_ROLES)),
+    db: Session = Depends(get_db),
+):
+    """Sources ranked by citation count (M2.13); unknown counts are kept, flagged, and listed last."""
+    sources = db.scalars(
+        select(Source)
+        .where(Source.project_id == project.id, Source.merged_into.is_(None))
+        .options(selectinload(Source.excerpts))
+        .order_by(Source.created_at.desc())
+    ).all()
+    threshold, threshold_from = citation_rank.resolve_threshold(db, project.id, min_citations)
+    shown, summary = citation_rank.rank(sources, lambda s: s.citation_count, threshold, threshold_from)
+    ranked = [
+        CitationRankedSource(**source_response(s).model_dump(), citation_count_unknown=unknown) for s, unknown in shown
+    ]
+    return SourcesByCitations(**summary, sources=ranked)
 
 
 @router.post("", response_model=SourceRead, status_code=status.HTTP_201_CREATED)
@@ -444,6 +486,61 @@ def import_references(
         project.touch()
     db.commit()
     return ReferenceImportResult(created=created, skipped=skipped)
+
+
+@router.post("/own", response_model=SourceRead, status_code=status.HTTP_201_CREATED)
+def add_own_paper(
+    payload: dict,
+    project: Project = Depends(project_access(WRITE_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """The researcher adds a paper they already have straight into the retained set (M2.14).
+
+    Body: one BibTeX entry as `{"bibtex": "..."}`, or the `SourceCreate` fields directly. The source is
+    stored unverified (`origin=manual`) and the caller's own `include` decision is recorded at both
+    screening stages with the note "added by researcher", so it is a normal, auditable, undoable human
+    decision (under dual-screen it still waits for a second reviewer). A DOI already in the project is
+    a 409. Refused once G3 is approved. Attach the PDF afterwards with `…/fulltext/upload`.
+    """
+    if screening_locked(db, project):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=LOCKED_MESSAGE)
+    if "bibtex" in payload:
+        if len(payload) != 1 or not isinstance(payload["bibtex"], str):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Give either one BibTeX entry or the paper's fields, not both")
+        parsed = parse_bibtex(payload["bibtex"])
+        if len(parsed.records) != 1 or parsed.skipped:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="The BibTeX text must hold exactly one entry with a title")
+        fields = parsed.records[0]
+    elif payload:
+        fields = payload
+    else:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Give either one BibTeX entry or the paper's fields")
+    try:
+        item = SourceCreate(**fields)
+    except (ValidationError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    if item.doi and db.scalar(select(Source.id).where(Source.project_id == project.id, Source.doi == item.doi, Source.merged_into.is_(None))):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This DOI is already in the project")
+    actor = audit.user_actor(user)
+    source = Source(project_id=project.id, created_by=actor, **item.model_dump(mode="json", exclude={"evidence_excerpt", "locator"}))
+    db.add(source)
+    db.flush()
+    for stage in STAGES:
+        row = ScreeningDecision(
+            project_id=project.id, source_id=source.id, stage=stage, seq=1, decision="include",
+            decided_by="human", decider=actor, note="added by researcher",
+        )
+        db.add(row)
+        db.flush()
+        register_artifact(db, project.id, SCREENING_KIND, str(row.id), ProjectStage.screened, actor=actor)
+    audit.record(
+        db, actor=actor, action="source.own_paper_added", project_id=project.id,
+        payload={"source_id": str(source.id), "has_doi": bool(item.doi)},
+    )
+    project.touch()
+    db.commit()
+    return source_response(_load_source(db, source.id))
 
 
 @router.get("/export")

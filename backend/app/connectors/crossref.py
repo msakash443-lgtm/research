@@ -31,6 +31,7 @@ from app.connectors.base import (
     PaperRecord,
     SearchPage,
     SearchRequest,
+    citation_count,
 )
 from app.connectors.http import ConnectorHttpClient, HttpPolicy, NotFoundError
 from app.doi import normalize_doi
@@ -126,6 +127,7 @@ def to_record(item: dict[str, Any]) -> PaperRecord | None:
         oa_url=None,  # Crossref has no reliable open-access location; Unpaywall (M1.4.5) does
         source_ids={NAME: doi},
         quality_flags=tuple(flags),
+        cited_by_count=citation_count(item.get("is-referenced-by-count")),
     )
 
 

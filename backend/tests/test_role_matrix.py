@@ -50,6 +50,7 @@ MATRIX = [
     ("GET", "/api/projects/{p}/context", ALL, 200),
     ("POST", "/api/projects/{p}/context", WRITE, 201),
     ("GET", "/api/projects/{p}/sources", ALL, 200),
+    ("GET", "/api/projects/{p}/sources/by-citations", ALL, 200),
     ("GET", "/api/projects/{p}/usage", ALL, 200),
     ("PUT", "/api/projects/{p}/usage/budget", MANAGE, 200),  # owner only: sets this project's own token-budget override
     ("GET", "/api/projects/{p}/ai-settings", ALL, 200),
@@ -80,6 +81,7 @@ MATRIX = [
     ("GET", "/api/projects/{p}/sources/{s}/excerpts", ALL, 200),
     ("POST", "/api/projects/{p}/sources/{s}/excerpts", WRITE, 201),
     ("POST", "/api/projects/{p}/sources/import", WRITE, 201),
+    ("POST", "/api/projects/{p}/sources/own", WRITE, 201),
     ("GET", "/api/projects/{p}/sources/export", ALL, 200),
     ("POST", "/api/projects/{p}/sources/{s}/check", WRITE, 202),
     ("POST", "/api/projects/{p}/sources/{s}/fulltext/fetch", WRITE, 202),  # queues only
@@ -87,6 +89,7 @@ MATRIX = [
     ("POST", "/api/projects/{p}/sources/{s}/fulltext/upload", WRITE, 201),  # raw PDF body; _call gives each principal a fresh source (write-once)
     ("GET", "/api/projects/{p}/sources/{s}/fulltext", ALL, 200),  # fixture stores full text on source {s} directly
     ("GET", "/api/projects/{p}/searches", ALL, 200),
+    ("GET", "/api/projects/{p}/searches/{q}/results", ALL, 200),
     ("GET", "/api/projects/{p}/seeds", ALL, 200),
     ("POST", "/api/projects/{p}/seeds", WRITE, 201),
     ("DELETE", "/api/projects/{p}/seeds/{d}", WRITE, 204),
@@ -158,6 +161,8 @@ MATRIX = [
     ("PUT", "/api/projects/{p}/extraction-schemas/{n}", WRITE, 200),
     ("GET", "/api/projects/{p}/clusters", ALL, 200),
     ("GET", "/api/projects/{p}/coverage-matrix", ALL, 200),
+    ("GET", "/api/projects/{p}/design/method-recommendation", ALL, 200),
+    ("GET", "/api/projects/{p}/design/sample-size", ALL, 200),
     ("GET", "/api/projects/{p}/constructs", ALL, 200),
     ("POST", "/api/projects/{p}/constructs", WRITE, 201),
     ("GET", "/api/projects/{p}/theories", ALL, 200),
@@ -169,6 +174,9 @@ MATRIX = [
     ("POST", "/api/projects/{p}/research-questions", WRITE, 201),
     ("PATCH", "/api/projects/{p}/research-questions/{rq}", WRITE, 200),
     ("GET", "/api/projects/{p}/research-questions/{rq}/finer", ALL, 200),
+    ("GET", "/api/projects/{p}/brief", ALL, 200),
+    ("PUT", "/api/projects/{p}/brief", WRITE, 200),
+    ("GET", "/api/projects/{p}/brief/query", ALL, 200),
     ("GET", "/api/projects/{p}/hypotheses", ALL, 200),
     ("POST", "/api/projects/{p}/hypotheses", WRITE, 201),
     ("PATCH", "/api/projects/{p}/hypotheses/{hp}", WRITE, 200),
@@ -231,12 +239,14 @@ BODIES = {
     ("POST", "/api/projects/{p}/theories"): {"name": "Social exchange", "description": "A lens."},
     ("POST", "/api/projects/{p}/gaps"): {"type": "empirical", "statement": "A gap", "matrix_cell_ids": ["cell"]},
     ("PATCH", "/api/projects/{p}/gaps/{gap_id}"): {"priority": 5, "selected": True},
+    ("PUT", "/api/projects/{p}/brief"): {"topic": "Remote collaboration", "keyword_groups": [{"terms": ["trust"]}], "min_citations": 3},
     ("POST", "/api/projects/{p}/research-questions"): {"text": "How does trust affect collaboration?", "type": "relational", "gap_ids": []},
     ("PATCH", "/api/projects/{p}/research-questions/{rq}"): {"type": "exploratory"},
     ("POST", "/api/projects/{p}/hypotheses"): {"research_question_id": "{rq}", "statement": "Trust predicts collaboration.", "direction": "positive", "theoretical_basis": "Theory", "empirical_support": "Evidence"},
     ("PATCH", "/api/projects/{p}/hypotheses/{hp}"): {"direction": "non_directional"},
     ("POST", "/api/projects/{p}/searches/suggest-synonyms"): {"block": {"label": "work", "terms": ["remote work"]}},
     ("POST", "/api/projects/{p}/sources/import"): {"format": "bibtex", "text": "@article{k, title={Imported}}"},
+    ("POST", "/api/projects/{p}/sources/own"): {"title": "Own paper"},
     ("POST", "/api/projects/{p}/research-runs"): {"question": "A long enough question?"},
     ("POST", "/api/projects/{p}/claims"): {"text": "A claim awaiting evidence"},
     ("POST", "/api/projects/{p}/seeds"): {"title": "Another seed paper", "doi": "10.1234/seedx"},
@@ -479,6 +489,10 @@ def _call(world, principal, method, template):
     path = template.format(**world["ids"])
     if method == "GET" and template.endswith("/stage/conditions"):
         path += "?target=scoped"
+    if method == "GET" and template.endswith("/design/method-recommendation"):
+        path += "?goal=explore"
+    if method == "GET" and template.endswith("/design/sample-size"):
+        path += "?test=correlation&r=0.3"
     if method == "GET" and template.endswith("/ledger"):
         path += "?span_id=seed"
     if method == "GET" and template.endswith("/similarity-checks"):

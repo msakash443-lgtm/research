@@ -14,6 +14,7 @@ venv/
 
 # Local object storage (M0.10.2)
 /data/
+/backend/data/objects/projects/*/
 
 # Scratch pytest dirs (M3 work)
 .pytest-m3-*/

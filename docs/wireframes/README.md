@@ -10,6 +10,7 @@ See also [`step-template-checklist.md`](step-template-checklist.md): a one-page 
 | `screening-queue.html` | Keyboard-first title/abstract screening, AI suggestion + rationale, bulk actions, AI-exclude audit sample, dual-screen conflict, G3 | M2.3 (also shows M2.4, M2.5, M2.8 UI) | §5.3, §8 G3, §10 Usability |
 | `evidence-table.html` | Papers × fields matrix, cell states, side-by-side quote on its page, confirm/correct/not-reported, CSV/Excel export, G4 | M3.5 (also M3.6.1, M3.6.2) | §5.4.3–5.4.4, §8 G4, §10 Usability |
 | `claim-evidence-panel.html` | Sentence → evidence panel, verified-only citation picker, section checks, export block, per-section G10 with AI-involvement level | M6.2 (also M6.4, M6.11) | §5.11.3, §5.11 gate/QC, §8 G10 |
+| `workspace-writing.html` | Researcher workspace: editor, Sources/AI/Record panel, paste resolver, similarity check, AI level, writing-record report (design doc S4–S6) | Walkthrough X.31.6 (screens S4–S6 are already built; S1–S3, S7 walkthrough was waived 2026-10-14) | design doc A5 |
 | `index.html` | Start page, walkthrough tasks | — | — |
 | `wireframe.css`, `wireframe.js` | Shared look (the app's colour tokens) and the question-pin toggle | — | — |
 
@@ -25,12 +26,13 @@ Also a choice the wireframe made that the scholar should confirm: a critical (�
 
 ## Findings (fill in during the walkthrough, then copy into the milestone report)
 
-Walkthrough date: ____ · Scholar: ____ · Note-taker: ____
+Walkthrough date (evidence table): 2026-10-15 · Scholar: the owner (also the developer) · Note-taker: Claude
 
 | Screen | Where do I approve? (found it? how long?) | Where do I see the source? | How do I go back? | Answers to the pinned questions | Changes asked for → new plan.md task |
 |---|---|---|---|---|---|
 | Screening queue | | | | Q1–Q7: | |
-| Evidence table | | | | Q1–Q7: | |
-| Claim–evidence panel | | | | Q1–Q6: | |
+| Evidence table | Yes, found "Ask for G4 approval" without help | Quote on its page is not enough alone: also wants a link to the original source | Back to table, Esc and browser Back all work; place kept | Q1: supervisor can check cells as well as approve. Q2: add a link to the original source. Q3: works. Q4: states are clear. Q5: toggle rows/columns. Q6: exports include quotes, page numbers and a status column per field. Q7: not too strict. Critical (★) "Not reported": a person must confirm it before G4 opens. | See plan.md X.63 (supervisor cell check, source link, orientation toggle, richer export, critical Not-reported confirmation). Outcome: **approved with changes** |
+| Claim–evidence panel | Not recorded separately | Not recorded separately | Not recorded separately | Q1–Q6: not answered one by one; the owner approved the screen as is, so the wireframe's stated assumptions stand. | None. Outcome: **approved as is** (2026-10-15) |
+| Workspace writing (S4–S6) | | | | W1: the UI can be changed later (owner, 2026-10-15; taken to mean the status amount stands for now). W2: keep as is (Sources tab default; one panel with Sources/AI/Record, which also settles claim-evidence Q6). W3: origin colours ON by default. W4: acceptable (highlight stays until answered, nothing blocks saving). W5: "suggestions only" (the level stays as designed; hint wording not commented on). W6: the report includes only the sections the researcher chooses (owner, 2026-10-15). | W3 → plan.md X.31.23; W6 → plan.md X.31.24. Outcome: **approved with changes** (2026-10-15) |
 
 Outcome per screen: **approved as is** / **approved with changes** (list them) / **redo the wireframe**. Rule 32 is met for a screen only when it is approved (with or without changes).
