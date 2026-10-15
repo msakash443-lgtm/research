@@ -58,7 +58,7 @@ def test_alembic_heads_cli_loads_every_migration():
     """
     result = subprocess.run(
         [sys.executable, "-I", "-m", "alembic", "-c", "alembic.ini", "heads"],
-        cwd=_REPO_ROOT, capture_output=True, text=True, timeout=120,
+        cwd=_REPO_ROOT, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120,
     )
     assert result.returncode == 0, result.stderr[-2000:]
     assert result.stdout.count("(head)") == 1, result.stdout

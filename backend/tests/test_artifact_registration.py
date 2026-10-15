@@ -138,3 +138,41 @@ def test_editing_a_stale_extraction_makes_its_artifact_current_again(world, monk
     assert world["owner"].put(f"/api/projects/{world['pid']}/extractions/{extraction_id}", json=EXTRACTION).status_code == 200
     assert _statuses(world["pid"], "extraction") == {ArtifactStatus.current}
     assert len(_artifacts(world["pid"], "extraction")) == 1
+
+
+VERIFY = {"confirmed_critical_fields": ["measures", "sample", "key_findings"]}  # the default schema's critical fields
+
+
+def _ai_extraction(world, source_id):
+    """An extraction stored the way the AI path stores it (`ai_extraction.py`): no artifact registered."""
+    from app.models import Extraction
+
+    extraction_id = uuid.uuid4()
+    with SessionLocal() as db:
+        db.add(Extraction(id=extraction_id, project_id=uuid.UUID(world["pid"]), source_id=uuid.UUID(source_id),
+                          schema_version="default@1", fields_json=EXTRACTION["fields"], evidence_spans=EXTRACTION["evidence"],
+                          extracted_by="ai", extractor="agent:test", model_id="test-model", prompt_version="test@1"))
+        db.commit()
+    return str(extraction_id)
+
+
+def test_a_verified_extraction_is_an_artifact_at_extracted_and_goes_stale_on_re_entry(world, monkeypatch):
+    """X.42.1: the verify step registers the extraction, so a verified one goes stale when scoped is re-entered."""
+    source_id = _source_with_pdf(world, monkeypatch)
+    extraction_id = _ai_extraction(world, source_id)
+    assert _artifacts(world["pid"], "extraction") == []
+    verified = world["owner"].post(f"/api/projects/{world['pid']}/extractions/{extraction_id}/verify", json=VERIFY)
+    assert verified.status_code == 200, verified.text
+    assert verified.json()["verified_by_human"] is True
+    assert [(r.ref_id, r.stage, r.status) for r in _artifacts(world["pid"], "extraction")] == [(extraction_id, S.extracted, ArtifactStatus.current)]
+    _reenter_to_scoped(world["pid"])
+    assert _statuses(world["pid"], "extraction") == {ArtifactStatus.stale}
+
+
+def test_verifying_a_stale_extraction_makes_its_artifact_current_again(world, monkeypatch):
+    source_id = _source_with_pdf(world, monkeypatch)
+    extraction_id = world["owner"].post(f"/api/projects/{world['pid']}/extractions", json={"source_id": source_id, **EXTRACTION}).json()["id"]
+    _reenter_to_scoped(world["pid"])
+    assert world["owner"].post(f"/api/projects/{world['pid']}/extractions/{extraction_id}/verify", json=VERIFY).status_code == 200
+    assert _statuses(world["pid"], "extraction") == {ArtifactStatus.current}
+    assert len(_artifacts(world["pid"], "extraction")) == 1

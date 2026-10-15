@@ -1,0 +1,61 @@
+# Research type: literature review (Q22 example, docs/step-by-step-journey-audit.md §3). No data of its own:
+# drops framework (G6), data_collected, plan_locked (G8) and analyzed (G9). Design & ethics (G7) moves right
+# after scoping and stays mandatory as a light "no human participants" confirmation (decision 5, X.43.8).
+name = "literature_review"
+version = 1
+label = "Literature review"
+description = "A review of published work with no primary data collection: search, screen, extract, synthesise and write."
+human_participants = false
+
+[[stages]]
+stage = "idea"
+
+[[stages]]
+stage = "scoped"
+gate = "G1"
+
+[[stages]]
+stage = "design_approved"
+gate = "G7"
+
+[[stages]]
+stage = "search_planned"
+gate = "G2"
+
+[[stages]]
+stage = "retrieved"
+
+[[stages]]
+stage = "screened"
+gate = "G3"
+
+[[stages]]
+stage = "extracted"
+gate = "G4"
+
+[[stages]]
+stage = "synthesized"
+
+[[stages]]
+stage = "gaps_selected"
+gate = "G5"
+
+[[stages]]
+stage = "drafted"
+gate = "G10"
+
+[[stages]]
+stage = "revised"
+
+[[stages]]
+stage = "submission_ready"
+gate = "G11"
+
+[[stages]]
+stage = "submitted"
+
+[[stages]]
+stage = "revision_loop"
+
+[[stages]]
+stage = "accepted"

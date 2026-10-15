@@ -123,7 +123,15 @@ def _digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-class LocalDiskStore:
+class _StatByReading:
+    """`stat()` for stores without a cheap metadata call: read the object and hash it."""
+
+    def stat(self, key: str) -> StoredObject:
+        data = self.get(key)  # type: ignore[attr-defined]  # supplied by the concrete store
+        return StoredObject(key=key, size=len(data), sha256=_digest(data))
+
+
+class LocalDiskStore(_StatByReading):
     """Objects as files under `root`. Writes are atomic (temp file + rename) and write-once."""
 
     def __init__(self, root: str | os.PathLike[str], max_bytes: int) -> None:
@@ -180,10 +188,6 @@ class LocalDiskStore:
     def exists(self, key: str) -> bool:
         return self._path(key).is_file()
 
-    def stat(self, key: str) -> StoredObject:
-        data = self.get(key)
-        return StoredObject(key=key, size=len(data), sha256=_digest(data))
-
 
 _UNSUPPORTED_CONDITIONAL_STATUSES = frozenset({400, 405, 501})
 
@@ -235,7 +239,7 @@ def _safe_body(response: httpx.Response) -> str:
         return ""
 
 
-class S3Store:
+class S3Store(_StatByReading):
     """Objects as keys in an S3-compatible bucket. Write-once like `LocalDiskStore`: same bytes again is
     a no-op, different bytes under an existing key raises `ObjectConflict`.
 
@@ -344,10 +348,6 @@ class S3Store:
         if response.status_code != 200:
             raise ObjectStorageError(f"S3 HEAD {key!r} failed: {response.status_code}")
         return True
-
-    def stat(self, key: str) -> StoredObject:
-        data = self.get(key)
-        return StoredObject(key=key, size=len(data), sha256=_digest(data))
 
 
 def get_object_store(settings: Settings) -> ObjectStore:

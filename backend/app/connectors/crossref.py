@@ -32,6 +32,8 @@ from app.connectors.base import (
     SearchPage,
     SearchRequest,
     citation_count,
+    clean_link,
+    clean_text,
 )
 from app.connectors.http import ConnectorHttpClient, HttpPolicy, NotFoundError
 from app.doi import normalize_doi
@@ -57,17 +59,8 @@ def doi_id(value: str) -> str:
     return doi
 
 
-def _str(value: Any, limit: int) -> str | None:
-    return value.strip()[:limit] if isinstance(value, str) and value.strip() else None
-
-
 def _first(value: Any, limit: int) -> str | None:
-    return _str(value[0], limit) if isinstance(value, list) and value else None
-
-
-def _http(value: Any) -> str | None:
-    text = _str(value, 2000)
-    return text if text and text.lower().startswith(("http://", "https://")) else None
+    return clean_text(value[0], limit) if isinstance(value, list) and value else None
 
 
 def _abstract(value: Any) -> str | None:
@@ -92,10 +85,10 @@ def _year(item: dict[str, Any]) -> int | None:
 def _author(entry: Any) -> str | None:
     if not isinstance(entry, dict):
         return None
-    name = _str(entry.get("name"), 200)
+    name = clean_text(entry.get("name"), 200)
     if name:
         return name
-    given, family = _str(entry.get("given"), 100), _str(entry.get("family"), 100)
+    given, family = clean_text(entry.get("given"), 100), clean_text(entry.get("family"), 100)
     return " ".join(part for part in (given, family) if part) or None
 
 
@@ -123,7 +116,7 @@ def to_record(item: dict[str, Any]) -> PaperRecord | None:
         year=_year(item),
         venue=_first(item.get("container-title"), 500),
         abstract=abstract,
-        url=_http(item.get("URL")),
+        url=clean_link(item.get("URL")),
         oa_url=None,  # Crossref has no reliable open-access location; Unpaywall (M1.4.5) does
         source_ids={NAME: doi},
         quality_flags=tuple(flags),

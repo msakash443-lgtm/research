@@ -13,7 +13,7 @@ from typing import Any
 
 from pydantic import SecretStr
 
-from app.connectors.base import ConnectorBase, ConnectorError, PaperRecord, SearchPage, SearchRequest
+from app.connectors.base import ConnectorBase, ConnectorError, PaperRecord, SearchPage, SearchRequest, citation_count, clean_abstract, clean_text
 from app.connectors.http import ConnectorHttpClient, HttpPolicy, NotFoundError
 from app.doi import normalize_doi
 
@@ -28,10 +28,15 @@ _PAGE = re.compile(r"^\d{1,3}$")
 _YEAR = re.compile(r"^\d{4}$")
 
 
-def _text(value: Any, limit: int) -> str | None:
+def _unwrap(value: Any) -> Any:
+    """WoS sometimes wraps a string as {"value": ...}, {"displayName": ...} or {"name": ...}."""
     if isinstance(value, dict):
-        value = value.get("value") or value.get("displayName") or value.get("name")
-    return " ".join(value.split())[:limit] or None if isinstance(value, str) and value.strip() else None
+        return value.get("value") or value.get("displayName") or value.get("name")
+    return value
+
+
+def _text(value: Any, limit: int) -> str | None:
+    return clean_text(_unwrap(value), limit)
 
 
 def _year(value: Any) -> int | None:
@@ -42,6 +47,17 @@ def _year(value: Any) -> int | None:
     except (TypeError, ValueError):
         return None
     return result if 1000 <= result <= 2200 else None
+
+
+def _count(citations: Any) -> int | None:
+    """Times cited in the Web of Science Core Collection (`db` "WOS"); other databases' counts are
+    not used, and no WOS entry means unknown, not 0."""
+    if not isinstance(citations, list):
+        return None
+    for entry in citations:
+        if isinstance(entry, dict) and entry.get("db") == "WOS":
+            return citation_count(entry.get("count"))
+    return None
 
 
 def to_record(hit: Any) -> PaperRecord | None:
@@ -72,7 +88,7 @@ def to_record(hit: Any) -> PaperRecord | None:
     except ValueError:
         doi = None
         flags.append("invalid_doi")
-    abstract = _text(hit.get("abstract"), 20000)
+    abstract = clean_abstract(_unwrap(hit.get("abstract")), 20000)
     if not abstract:
         flags.append("no_abstract")
     return PaperRecord(
@@ -87,6 +103,7 @@ def to_record(hit: Any) -> PaperRecord | None:
         url=f"https://www.webofscience.com/wos/woscc/full-record/{uid}",
         source_ids={NAME: uid},
         quality_flags=tuple(flags),
+        cited_by_count=_count(hit.get("citations")),
     )
 
 

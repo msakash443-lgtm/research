@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from app import audit, manuscript_export, similarity_providers
 from app.config import get_settings
 from app.database import get_db
+from app.lookups import project_document_or_404
 from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_access
 from app.models import Document, DocumentVersion, Project, SimilarityCheck, Source, User
 from app.refmanager import to_bibtex
@@ -63,13 +64,6 @@ class SimilarityCheckRead(BaseModel):
     created_at: datetime
 
 
-def _document(db: Session, project: Project, document_id: uuid.UUID) -> Document:
-    document = db.get(Document, document_id)
-    if document is None or document.project_id != project.id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
-    return document
-
-
 def _read(db: Session, row: SimilarityCheck) -> SimilarityCheckRead:
     source_ids = {uuid.UUID(f["source_id"]) for f in row.findings_json if f["source_id"]}
     titles = dict(db.execute(select(Source.id, Source.title).where(Source.id.in_(source_ids))).all()) if source_ids else {}
@@ -101,7 +95,7 @@ def create_check(
     if payload.provider != PROJECT_SOURCES:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"Unknown similarity provider {payload.provider!r}")
 
-    document = _document(db, project, payload.document_id)
+    document = project_document_or_404(db, project, payload.document_id)
     latest = latest_version(db, document.id)
     if latest is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="This section has no saved versions yet")
@@ -140,7 +134,7 @@ def list_checks(
     Results are kept, so an old check still shows what it found."""
     statement = select(SimilarityCheck).where(SimilarityCheck.project_id == project.id)
     if document_id is not None:
-        statement = statement.where(SimilarityCheck.document_id == _document(db, project, document_id).id)
+        statement = statement.where(SimilarityCheck.document_id == project_document_or_404(db, project, document_id).id)
     rows = db.scalars(statement.order_by(SimilarityCheck.created_at.desc(), SimilarityCheck.id)).all()
     return [_read(db, row) for row in rows]
 

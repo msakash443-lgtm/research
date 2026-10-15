@@ -18,7 +18,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Any
 
-from app.connectors.base import ConnectorBase, ConnectorError, FullText, NotSupportedError, PaperRecord, SearchPage, SearchRequest
+from app.connectors.base import ConnectorBase, ConnectorError, FullText, NotSupportedError, PaperRecord, SearchPage, SearchRequest, clean_abstract
 from app.connectors.http import ConnectorHttpClient, HttpPolicy
 from app.doi import normalize_doi
 
@@ -137,6 +137,7 @@ def parse_feed(xml: str) -> tuple[list[PaperRecord], int | None]:
             pass
         published = _text(entry.find("a:published", _NS), 10) or ""
         authors = tuple(n for n in (_text(a.find("a:name", _NS), 200) for a in entry.findall("a:author", _NS)[:200]) if n)
+        abstract = clean_abstract(entry.findtext("a:summary", namespaces=_NS), 20000)
         records.append(
             PaperRecord(
                 connector=NAME,
@@ -146,11 +147,11 @@ def parse_feed(xml: str) -> tuple[list[PaperRecord], int | None]:
                 authors=authors,
                 year=int(published[:4]) if published[:4].isdigit() and 1000 <= int(published[:4]) <= 2200 else None,
                 venue=_text(entry.find("arxiv:journal_ref", _NS), 500) or "arXiv",
-                abstract=_text(entry.find("a:summary", _NS), 20000),
+                abstract=abstract,
                 url=f"https://arxiv.org/abs/{ident}",
                 oa_url=f"https://arxiv.org/pdf/{ident}",
                 source_ids={NAME: ident},
-                quality_flags=("preprint",) + (() if _text(entry.find("a:summary", _NS), 5) else ("no_abstract",)),
+                quality_flags=("preprint",) + (() if abstract else ("no_abstract",)),
             )
         )
     return records, total

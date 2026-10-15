@@ -14,6 +14,7 @@ from app.ai_controls import require_ai_on
 from app.artifacts import register_artifact
 from app.config import get_settings
 from app.database import get_db
+from app.lookups import live_source_or_404
 from app.dependencies import APPROVE_ROLES, MANAGE_ROLES, READ_ROLES, WRITE_ROLES, current_user, project_access, project_role
 from app.models import AutoExcludeAudit, Project, ProjectStage, ScreeningDecision, SeedCheckRun, Source, Task, TaskStatus, User
 from app.task_handlers import SCREENING_PRESCREEN, SEED_FALSE_EXCLUSION_CHECK
@@ -379,13 +380,6 @@ def list_decisions(
     return rows[:limit]
 
 
-def _source_or_404(db: Session, project: Project, source_id: uuid.UUID) -> Source:
-    source = db.scalar(select(Source).where(Source.id == source_id, Source.project_id == project.id, Source.merged_into.is_(None)))
-    if source is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
-    return source
-
-
 def _append(db: Session, project: Project, source: Source, user: User, stage: str, decision: str, reason_code: str | None, note: str | None) -> ScreeningDecision:
     row = ScreeningDecision(
         project_id=project.id, source_id=source.id, stage=stage, seq=next_seq(db, source.id, stage), decision=decision,
@@ -423,7 +417,7 @@ def decide(
     """Record a person's decision. It replaces their earlier one (the earlier row stays in the history)."""
     if screening_locked(db, project):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=LOCKED_MESSAGE)
-    source = _source_or_404(db, project, payload.source_id)
+    source = live_source_or_404(db, project, payload.source_id)
     problem = check_reason(payload.decision, payload.reason_code, criterion_codes(db, project))
     if problem:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=problem)
@@ -454,7 +448,7 @@ def undo(
     """Take a person's decision back: the source returns to the queue. Appends a row; nothing is deleted."""
     if screening_locked(db, project):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=LOCKED_MESSAGE)
-    source = _source_or_404(db, project, payload.source_id)
+    source = live_source_or_404(db, project, payload.source_id)
     rows = rows_for_stage(db, project, payload.stage).get(source.id, [])
     if project.dual_screen_enabled:
         if audit.user_actor(user) not in human_decisions_by_decider(rows):
@@ -489,7 +483,7 @@ def adjudicate(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=LOCKED_MESSAGE)
     if not project.dual_screen_enabled:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Dual screening is off, so there are no reviewer conflicts to rule on.")
-    source = _source_or_404(db, project, payload.source_id)
+    source = live_source_or_404(db, project, payload.source_id)
     rows = rows_for_stage(db, project, payload.stage).get(source.id, [])
     if dual_screen_status(rows)[0] not in ("conflict", "adjudicated"):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only a source whose reviewers disagree can be ruled on.")

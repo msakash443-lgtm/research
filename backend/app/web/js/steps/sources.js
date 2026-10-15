@@ -1,11 +1,39 @@
 import { $, el, label, toast, formatDate, emptyCard, confirmAction } from "../dom.js";
 import { request, projectApi } from "../api.js";
 import { actorName, provenanceBadge } from "../provenance.js";
+import { renderFrame } from "./frame.js";
 
 // Selection survives re-renders within this step but resets on project switch (module state).
 let selected = new Set();
 let filter = "all"; // "all" | "unverified" | "verified"
 let currentProjectId = null;
+
+// A reopened earlier stage (M0.5.5) can make a completed search run stale ("search_run", app/search_runner.py
+// SEARCH_RUN_KIND, registered at ProjectStage.retrieved); this screen's sources came from that search.
+function staleBanner(ctx) {
+  const stale = (ctx.summary.staleArtifacts || []).filter((a) => a.kind === "search_run");
+  if (!stale.length) return null;
+  const box = el("div", { className: "next-step" });
+  box.append(el("h3", { text: "Needs redoing" }));
+  const list = el("ul", { className: "warning-list" });
+  stale.forEach((a) => list.append(el("li", { text: a.stale_reason || "an earlier stage was reopened; re-check this search." })));
+  box.append(list);
+  return box;
+}
+
+// EC-3.3 (search_planned -> retrieved, Information level) counts auto-retrieved sources not yet
+// verified. Information-level conditions never appear in the frame's own condition box (X.48.1), so
+// this screen shows it directly, same source as the unmet-condition list (`GET /stage`'s `next`).
+function verificationHint(ctx) {
+  const option = (ctx.summary.stage?.next || []).find((o) => o.stage === "retrieved");
+  const condition = option?.conditions?.find((c) => c.id === "EC-3.3");
+  if (!condition) return null;
+  const box = el("div", { className: "panel" });
+  const message = condition.message.charAt(0).toUpperCase() + condition.message.slice(1);
+  box.append(el("p", { className: "muted small", text: message }));
+  if (!condition.met && condition.fix) box.append(el("p", { className: "muted small", text: `Where: ${condition.fix}` }));
+  return box;
+}
 
 // Only verified sources may be cited in an answer (citation guard, plan M1.10.3), so every card
 // says whether its source is verified and offers the two ways to verify it (ported from M1.13.1).
@@ -260,7 +288,14 @@ function render(root, ctx) {
   title.append(toolbar);
   panel.append(title);
   panel.append(sourcesList(root, ctx));
-  root.replaceChildren(panel);
+
+  const sections = [];
+  const stale = staleBanner(ctx);
+  if (stale) sections.push(stale);
+  sections.push(panel);
+  const hint = verificationHint(ctx);
+  if (hint) sections.push(hint);
+  renderFrame(root, ctx, { stepId: "sources", work: sections, next: [], stepNext: "ask" });
 }
 
 function update(root, ctx) {

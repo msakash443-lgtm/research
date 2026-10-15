@@ -69,3 +69,5 @@
 20261014_0062 merge_m3_m4_and_ledger_heads
 20261015_0063 research_briefs
 20261015_0064 source_citation_counts
+20261015_0065 conceptual_paths
+20261015_0066 project_research_type

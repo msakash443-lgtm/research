@@ -82,3 +82,46 @@ def test_api_rejects_bad_input(owner_project):
     assert owner.get(base, params={"test": "correlation", "r": 0.3, "d": 0.5}).status_code == 422  # d unused
     assert owner.get(base, params={"test": "bogus"}).status_code == 422
     assert owner.get(f"/api/projects/{pid}/design/method-recommendation", params={"goal": "vibes"}).status_code == 422
+
+
+def test_anova_and_regression_match_gpower():
+    # Exact noncentral-F values published by G*Power (alpha .05, power .80).
+    assert dt.anova_oneway(0.25, 3) == 53  # 159 in total
+    assert dt.anova_oneway(0.40, 4) == 19  # 76 in total
+    assert dt.regression(0.15, 3) == 77
+    assert dt.regression(0.02, 5) == 647
+    assert dt.regression(0.35, 2) == 31
+
+
+def test_two_group_anova_agrees_with_the_exact_t_test():
+    # F(1, N-2) is t squared: f = d/2, so d = 0.5 needs 64 per group exactly, as in G*Power's t test.
+    assert dt.anova_oneway(0.25, 2) == 64
+    assert dt._f_power(1, 126, 0.0625 * 128, 0.05) >= 0.8 > dt._f_power(1, 124, 0.0625 * 126, 0.05)
+
+
+def test_f_test_sample_size_grows_with_power_and_shrinks_with_effect():
+    assert dt.regression(0.15, 3, power=0.9) > dt.regression(0.15, 3)
+    assert dt.regression(0.15, 3, alpha=0.01) > dt.regression(0.15, 3)
+    assert dt.anova_oneway(0.4, 3) < dt.anova_oneway(0.25, 3)
+
+
+@pytest.mark.parametrize("call", [
+    lambda: dt.anova_oneway(0, 3), lambda: dt.anova_oneway(0.25, 1), lambda: dt.anova_oneway(0.25, 3, alpha=0),
+    lambda: dt.regression(0, 3), lambda: dt.regression(0.15, 0), lambda: dt.regression(0.15, 3, power=1),
+    lambda: dt.regression(1e-9, 1), lambda: dt.sample_size("anova_oneway", {"f": 0.25}),
+])
+def test_bad_f_test_inputs_are_refused(call):
+    with pytest.raises(ValueError):
+        call()
+
+
+def test_api_anova_reports_per_group_and_total(owner_project):
+    owner, pid = owner_project
+    base = f"/api/projects/{pid}/design/sample-size"
+    body = owner.get(base, params={"test": "anova_oneway", "f": 0.25, "groups": 3, "attrition": 0.1}).json()
+    assert (body["n_analysable"], body["n_to_recruit"], body["unit"], body["total_to_recruit"]) == (53, 59, "per group", 177)
+    assert "Exact" in body["note"]
+    body = owner.get(base, params={"test": "regression", "f2": 0.15, "predictors": 3}).json()
+    assert (body["n_analysable"], body["unit"]) == (77, "in total")
+    assert owner.get(base, params={"test": "regression", "f2": 0.15, "predictors": 3, "sides": 2}).status_code == 422
+    assert owner.get(base, params={"test": "anova_oneway", "f": 0.25}).status_code == 422

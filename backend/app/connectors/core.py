@@ -23,7 +23,7 @@ from typing import Any
 
 from pydantic import SecretStr
 
-from app.connectors.base import ConnectorBase, ConnectorError, FullText, PaperRecord, SearchPage, SearchRequest
+from app.connectors.base import ConnectorBase, ConnectorError, FullText, PaperRecord, SearchPage, SearchRequest, clean_abstract, clean_link, clean_text
 from app.connectors.http import ConnectorHttpClient, HttpPolicy, NotFoundError
 from app.connectors.unpaywall import OaLocation
 from app.doi import normalize_doi
@@ -48,15 +48,6 @@ def work_id(value: str) -> str:
     return str(int(text))
 
 
-def _str(value: Any, limit: int) -> str | None:
-    return " ".join(value.split())[:limit] or None if isinstance(value, str) and value.strip() else None
-
-
-def _http(value: Any) -> str | None:
-    text = _str(value, 2000)
-    return text if text and text.lower().startswith(("http://", "https://")) else None
-
-
 def to_record(work: Any) -> PaperRecord | None:
     if not isinstance(work, dict):
         return None
@@ -64,7 +55,7 @@ def to_record(work: Any) -> PaperRecord | None:
         ident = work_id(str(work.get("id") or ""))
     except ConnectorError:
         return None
-    title = _str(work.get("title"), 500)
+    title = clean_text(work.get("title"), 500)
     if not title:
         return None
     flags: list[str] = []
@@ -74,16 +65,16 @@ def to_record(work: Any) -> PaperRecord | None:
         doi = None
         flags.append("invalid_doi")
     authors = tuple(
-        name for name in (_str(a.get("name"), 200) for a in (work.get("authors") or [])[:200] if isinstance(a, dict)) if name
+        name for name in (clean_text(a.get("name"), 200) for a in (work.get("authors") or [])[:200] if isinstance(a, dict)) if name
     )
     year = work.get("yearPublished")
     year = year if isinstance(year, int) and 1000 <= year <= 2200 else None
     journals = work.get("journals") or []
-    venue = _str(journals[0].get("title"), 500) if journals and isinstance(journals[0], dict) else None
-    abstract = _str(work.get("abstract"), 20000)
+    venue = clean_text(journals[0].get("title"), 500) if journals and isinstance(journals[0], dict) else None
+    abstract = clean_abstract(work.get("abstract"), 20000)
     if not abstract:
         flags.append("no_abstract")
-    links = {link.get("type"): _http(link.get("url")) for link in (work.get("links") or []) if isinstance(link, dict)}
+    links = {link.get("type"): clean_link(link.get("url")) for link in (work.get("links") or []) if isinstance(link, dict)}
     return PaperRecord(
         connector=NAME,
         external_id=ident,
@@ -91,10 +82,10 @@ def to_record(work: Any) -> PaperRecord | None:
         doi=doi,
         authors=authors,
         year=year,
-        venue=venue or _str(work.get("publisher"), 500),
+        venue=venue or clean_text(work.get("publisher"), 500),
         abstract=abstract,
         url=links.get("display") or f"https://core.ac.uk/works/{ident}",
-        oa_url=_http(work.get("downloadUrl")) or links.get("download"),
+        oa_url=clean_link(work.get("downloadUrl")) or links.get("download"),
         source_ids={NAME: ident},
         quality_flags=tuple(flags),
     )
@@ -189,7 +180,7 @@ class CoreConnector(ConnectorBase):
             return None
         if len(text) > MAX_FULLTEXT_CHARS:
             raise ConnectorError(f"CORE full text is over {MAX_FULLTEXT_CHARS:,} characters; refused rather than cut short")
-        source = _http(work.get("downloadUrl")) or f"https://core.ac.uk/works/{work_id(external_id)}"
+        source = clean_link(work.get("downloadUrl")) or f"https://core.ac.uk/works/{work_id(external_id)}"
         return FullText(source_url=source, text=text, license=None)
 
     def get_oa_location(self, doi: str) -> OaLocation | None:
@@ -212,6 +203,6 @@ class CoreConnector(ConnectorBase):
             if record is None or record.doi != bare or record.oa_url is None:
                 continue
             return OaLocation(
-                doi=bare, landing_page_url=record.url, pdf_url=record.oa_url, license=_str(work.get("license"), 100),
+                doi=bare, landing_page_url=record.url, pdf_url=record.oa_url, license=clean_text(work.get("license"), 100),
             )
         return None

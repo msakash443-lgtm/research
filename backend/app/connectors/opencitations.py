@@ -24,7 +24,7 @@ from urllib.parse import quote
 
 from pydantic import SecretStr
 
-from app.connectors.base import ConnectorBase, ConnectorError, FullText, NotSupportedError, PaperRecord, SearchPage, SearchRequest
+from app.connectors.base import ConnectorBase, ConnectorError, FullText, NotSupportedError, PaperRecord, SearchPage, SearchRequest, clean_text
 from app.connectors.http import ConnectorHttpClient, HttpPolicy, NotFoundError
 from app.doi import normalize_doi
 
@@ -77,10 +77,6 @@ def _identity(field: Any) -> str | None:
     return omid if _OMID.match(omid) else None
 
 
-def _clean(value: Any, limit: int) -> str | None:
-    return " ".join(value.split())[:limit] or None if isinstance(value, str) and value.strip() else None
-
-
 def _authors(field: Any) -> tuple[str, ...]:
     names = []
     for part in (field or "").split(";")[:200] if isinstance(field, str) else []:
@@ -97,7 +93,7 @@ def to_record(item: Any) -> PaperRecord | None:
     if not isinstance(item, dict):
         return None
     ident = _identity(item.get("id"))
-    title = _clean(item.get("title"), 500)
+    title = clean_text(item.get("title"), 500)
     if not ident or not title:
         return None
     ids = _ids(item.get("id"))
@@ -109,7 +105,7 @@ def to_record(item: Any) -> PaperRecord | None:
     date = item.get("pub_date") if isinstance(item.get("pub_date"), str) else ""
     year = int(date[:4]) if date[:4].isdigit() and 1000 <= int(date[:4]) <= 2200 else None
     doi = ident if not ident.startswith("omid:") else None
-    venue = _clean(_BRACKETS.sub("", item["venue"]), 500) if isinstance(item.get("venue"), str) else None
+    venue = clean_text(_BRACKETS.sub("", item["venue"]), 500) if isinstance(item.get("venue"), str) else None
     flags = ("no_abstract",)  # Meta has no abstracts
     return PaperRecord(
         connector=NAME, external_id=ident, title=title, doi=doi, authors=_authors(item.get("author")), year=year,

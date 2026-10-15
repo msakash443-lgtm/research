@@ -1,0 +1,75 @@
+# Research type: the full journey (spec Appendix C). Every existing project follows it; nothing about it may
+# differ from today's 19-stage order (X.43, decision 4).
+name = "full_journey"
+version = 1
+label = "Full research journey"
+description = "Every stage from idea to acceptance, including primary data collection and a locked analysis plan."
+human_participants = true
+
+[[stages]]
+stage = "idea"
+
+[[stages]]
+stage = "scoped"
+gate = "G1"
+
+[[stages]]
+stage = "search_planned"
+gate = "G2"
+
+[[stages]]
+stage = "retrieved"
+
+[[stages]]
+stage = "screened"
+gate = "G3"
+
+[[stages]]
+stage = "extracted"
+gate = "G4"
+
+[[stages]]
+stage = "synthesized"
+
+[[stages]]
+stage = "gaps_selected"
+gate = "G5"
+
+[[stages]]
+stage = "framework"
+gate = "G6"
+
+[[stages]]
+stage = "design_approved"
+gate = "G7"
+
+[[stages]]
+stage = "data_collected"
+
+[[stages]]
+stage = "plan_locked"
+gate = "G8"
+
+[[stages]]
+stage = "analyzed"
+gate = "G9"
+
+[[stages]]
+stage = "drafted"
+gate = "G10"
+
+[[stages]]
+stage = "revised"
+
+[[stages]]
+stage = "submission_ready"
+gate = "G11"
+
+[[stages]]
+stage = "submitted"
+
+[[stages]]
+stage = "revision_loop"
+
+[[stages]]
+stage = "accepted"

@@ -12,8 +12,11 @@ from fastapi.testclient import TestClient
 
 from app.connectors.base import PaperRecord, citation_count
 from app.connectors.crossref import to_record as crossref_record
+from app.connectors.ieee_xplore import to_record as ieee_record
 from app.connectors.openalex import to_record as openalex_record
+from app.connectors.scopus import to_record as scopus_record
 from app.connectors.semantic_scholar import FIELDS, to_record as s2_record
+from app.connectors.web_of_science import to_record as wos_record
 from app.database import SessionLocal
 from app.main import app
 from app.models import SearchQuery, Source, utcnow
@@ -37,6 +40,28 @@ def test_each_connector_maps_its_citation_count_and_missing_means_unknown():
     item = {"DOI": "10.1000/xyz", "title": ["A Crossref work"]}
     assert crossref_record({**item, "is-referenced-by-count": 3}).cited_by_count == 3
     assert crossref_record(item).cited_by_count is None
+
+
+def test_licensed_connectors_map_their_citation_count_and_missing_means_unknown():
+    entry = {"dc:title": "A Scopus record", "dc:identifier": "SCOPUS_ID:85000000001"}
+    assert scopus_record({**entry, "citedby-count": "12"}).cited_by_count == 12  # Scopus sends a string
+    assert scopus_record({**entry, "citedby-count": "0"}).cited_by_count == 0
+    assert scopus_record(entry).cited_by_count is None
+    for bad in ("", "-1", "1.5", "12a", 12.0, None):
+        assert scopus_record({**entry, "citedby-count": bad}).cited_by_count is None
+
+    hit = {"uid": "WOS:000000000000001", "title": "A WoS record"}
+    citations = [{"db": "BCI", "count": 40}, {"db": "WOS", "count": 9}]
+    assert wos_record({**hit, "citations": citations}).cited_by_count == 9  # Core Collection only
+    assert wos_record({**hit, "citations": [{"db": "BCI", "count": 40}]}).cited_by_count is None
+    assert wos_record({**hit, "citations": [{"db": "WOS", "count": "9"}]}).cited_by_count is None
+    assert wos_record({**hit, "citations": "9"}).cited_by_count is None
+    assert wos_record(hit).cited_by_count is None
+
+    article = {"article_number": "1234567", "title": "An IEEE article"}
+    assert ieee_record({**article, "citing_paper_count": 5}).cited_by_count == 5
+    assert ieee_record({**article, "citing_patent_count": 5}).cited_by_count is None  # patents are not papers
+    assert ieee_record(article).cited_by_count is None
 
 
 @pytest.mark.parametrize("bad", [-1, "12", 1.5, True, None, [3]])

@@ -14,7 +14,7 @@ from app.source_gate_guard import ExtractionGateLocked
 from app.config import get_settings
 from app.middleware import ContentLengthLimitMiddleware
 from app.routers import ai_locks, ai_settings, audit, provenance_reports, workspace_ai, auth, bibliometrics, claims, clusters, connectors, coverage, criteria, design_tools, evidence_matrix, exports, extraction_schemas, extractions, gates, guide, integrity, members, notes, documents, prisma, profile, projects, replication, research_runs, scholar_metrics, screening, searches, alerts, seeds, snowball, sources, stage, suggestions, usage, zotero
-from app.routers import brief, constructs, gaps, meta_analysis, research_questions
+from app.routers import brief, conceptual_model, constructs, gaps, meta_analysis, research_questions
 
 # Production settings (session secret, HTTPS, Postgres, ...) are validated in Settings.
 settings = get_settings()
@@ -87,6 +87,7 @@ app.include_router(clusters.router, prefix="/api")
 app.include_router(coverage.router, prefix="/api")
 app.include_router(design_tools.router, prefix="/api")
 app.include_router(constructs.router, prefix="/api")
+app.include_router(conceptual_model.router, prefix="/api")
 app.include_router(gaps.router, prefix="/api")
 app.include_router(research_questions.router, prefix="/api")
 app.include_router(brief.router, prefix="/api")

@@ -31,6 +31,8 @@ from app.connectors.base import (
     SearchPage,
     SearchRequest,
     citation_count,
+    clean_link,
+    clean_text,
 )
 from app.connectors.http import ConnectorHttpClient, HttpPolicy, NotFoundError
 from app.connectors.unpaywall import OaLocation
@@ -77,22 +79,13 @@ def _short_id(url: Any) -> str | None:
     return None
 
 
-def _str(value: Any, limit: int) -> str | None:
-    return value.strip()[:limit] if isinstance(value, str) and value.strip() else None
-
-
-def _http(value: Any) -> str | None:
-    text = _str(value, 2000)
-    return text if text and text.lower().startswith(("http://", "https://")) else None
-
-
 def to_record(work: dict[str, Any]) -> PaperRecord | None:
     """Normalise one OpenAlex work; None when it cannot be represented (no usable id/title)."""
     try:
         external_id = work_id(str(work.get("id", "")))
     except ConnectorError:
         return None
-    title = _str(work.get("display_name") or work.get("title"), 500)
+    title = clean_text(work.get("display_name") or work.get("title"), 500)
     if not title:
         return None
 
@@ -107,15 +100,15 @@ def to_record(work: dict[str, Any]) -> PaperRecord | None:
     authors = tuple(
         name
         for a in (work.get("authorships") or [])[:MAX_AUTHORS]
-        if isinstance(a, dict) and (name := _str((a.get("author") or {}).get("display_name"), 200))
+        if isinstance(a, dict) and (name := clean_text((a.get("author") or {}).get("display_name"), 200))
     )
     year = work.get("publication_year")
     year = year if isinstance(year, int) and 1000 <= year <= 2200 else None
     primary = work.get("primary_location") or {}
-    venue = _str((primary.get("source") or {}).get("display_name"), 500)
+    venue = clean_text((primary.get("source") or {}).get("display_name"), 500)
     abstract = _abstract(work.get("abstract_inverted_index"))
     oa = work.get("open_access") or {}
-    oa_url = _http(oa.get("oa_url")) or _http((work.get("best_oa_location") or {}).get("landing_page_url"))
+    oa_url = clean_link(oa.get("oa_url")) or clean_link((work.get("best_oa_location") or {}).get("landing_page_url"))
 
     source_ids = {NAME: external_id}
     ids = work.get("ids") or {}
@@ -140,7 +133,7 @@ def to_record(work: dict[str, Any]) -> PaperRecord | None:
         year=year,
         venue=venue,
         abstract=abstract,
-        url=_http(primary.get("landing_page_url")),
+        url=clean_link(primary.get("landing_page_url")),
         oa_url=oa_url,
         source_ids=source_ids,
         quality_flags=tuple(flags),
@@ -153,7 +146,7 @@ def to_oa_location(work: dict[str, Any], doi: str) -> OaLocation | None:
     best = work.get("best_oa_location")
     if not isinstance(best, dict):
         return None
-    landing, pdf = _http(best.get("landing_page_url")), _http(best.get("pdf_url"))
+    landing, pdf = clean_link(best.get("landing_page_url")), clean_link(best.get("pdf_url"))
     if not (landing or pdf):
         return None
     source = best.get("source")
@@ -161,9 +154,9 @@ def to_oa_location(work: dict[str, Any], doi: str) -> OaLocation | None:
         doi=doi,
         landing_page_url=landing,
         pdf_url=pdf,
-        license=_str(best.get("license"), 100),
-        version=_str(best.get("version"), 50),
-        host_type=_str(source.get("host_type"), 50) if isinstance(source, dict) else None,
+        license=clean_text(best.get("license"), 100),
+        version=clean_text(best.get("version"), 50),
+        host_type=clean_text(source.get("host_type"), 50) if isinstance(source, dict) else None,
     )
 
 

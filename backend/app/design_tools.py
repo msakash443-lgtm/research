@@ -6,6 +6,9 @@ answer, and every number comes from the formulas below (rule 24).
 Sample sizes use the usual large-sample normal approximations (with the small correction terms noted on each
 function). They are close to, but not identical with, exact noncentral-t results such as G*Power's; for a
 small study, confirm the final number in a dedicated tool. The response says so.
+
+The ANOVA and regression calculators (M4.3.1) are exact instead: they search for the smallest N whose
+noncentral-F power reaches the target, as G*Power does.
 """
 
 from __future__ import annotations
@@ -16,7 +19,7 @@ from typing import Any
 
 _NORMAL = NormalDist()
 
-TESTS = ("two_means", "one_mean", "two_proportions", "correlation", "survey_proportion")
+TESTS = ("two_means", "one_mean", "two_proportions", "correlation", "survey_proportion", "anova_oneway", "regression")
 
 NOTE = (
     "Large-sample normal approximation; small studies may need a few more participants than shown. "
@@ -107,6 +110,106 @@ def survey_proportion(
     return math.ceil(n0)
 
 
+# ---------------------------------------------------------------- exact noncentral F (M4.3.1)
+
+EXACT_NOTE = "Exact noncentral-F power (fixed-effects, equal group sizes); should match G*Power to the participant."
+
+
+def _beta_cf(a: float, b: float, x: float) -> float:
+    """Continued fraction for the regularised incomplete beta (modified Lentz)."""
+    tiny = 1e-300
+    c, d = 1.0, 1.0 - (a + b) * x / (a + 1)
+    d = 1.0 / (d if abs(d) > tiny else tiny)
+    h = d
+    for m in range(1, 1000):
+        for num in (m * (b - m) * x / ((a + 2 * m - 1) * (a + 2 * m)), -(a + m) * (a + b + m) * x / ((a + 2 * m) * (a + 2 * m + 1))):
+            d = 1.0 + num * d
+            d = 1.0 / (d if abs(d) > tiny else tiny)
+            c = 1.0 + num / c
+            c = c if abs(c) > tiny else tiny
+            h *= d * c
+        if abs(d * c - 1.0) < 1e-15:
+            return h
+    raise ArithmeticError("incomplete beta did not converge")
+
+
+def _beta_inc(a: float, b: float, x: float) -> float:
+    """Regularised incomplete beta I_x(a, b)."""
+    if x <= 0:
+        return 0.0
+    if x >= 1:
+        return 1.0
+    log_front = math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b) + a * math.log(x) + b * math.log1p(-x)
+    if x < (a + 1) / (a + b + 2):
+        return math.exp(log_front) * _beta_cf(a, b, x) / a
+    return 1.0 - math.exp(log_front) * _beta_cf(b, a, 1 - x) / b
+
+
+def _f_power(df1: int, df2: int, noncentrality: float, alpha: float) -> float:
+    """Power of an F test: P(F' > F_crit) for noncentral F(df1, df2, lambda).
+
+    Works on y = df1 F / (df1 F + df2), where the central F is Beta(df1/2, df2/2) and the noncentral one
+    is a Poisson(lambda/2) mixture of Beta(df1/2 + j, df2/2)."""
+    a, b = df1 / 2, df2 / 2
+    lo, hi = 0.0, 1.0
+    for _ in range(200):  # critical y by bisection: I_y(a, b) = 1 - alpha
+        mid = (lo + hi) / 2
+        lo, hi = (mid, hi) if _beta_inc(a, b, mid) < 1 - alpha else (lo, mid)
+    y_crit = (lo + hi) / 2
+    half = noncentrality / 2
+    start = int(half)  # sum outward from the Poisson mode so large lambda stays stable
+    below = 0.0
+    total_weight = 0.0
+    for direction in (range(start, -1, -1), range(start + 1, start + 100_000)):
+        for j in direction:
+            weight = math.exp(-half + j * math.log(half) - math.lgamma(j + 1)) if half > 0 else float(j == 0)
+            total_weight += weight
+            below += weight * _beta_inc(a + j, b, y_crit)
+            if weight < 1e-16 and j != start:
+                break
+    return 1.0 - below / total_weight
+
+
+def _smallest_n(power_at, n_min: int, power: float) -> int:
+    """Smallest n >= n_min with power_at(n) >= power (power rises with n)."""
+    hi = n_min
+    while power_at(hi) < power:
+        hi *= 2
+        if hi > 10_000_000:
+            raise ValueError("effect is too small: the sample size would exceed 10 million")
+    lo = max(n_min, hi // 2)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        lo, hi = (mid + 1, hi) if power_at(mid) < power else (lo, mid)
+    return lo
+
+
+def anova_oneway(f: float, groups: int, alpha: float = 0.05, power: float = 0.8) -> int:
+    """Participants per group for a one-way fixed-effects ANOVA with Cohen's f and k equal groups.
+
+    df1 = k - 1, df2 = N - k, lambda = f^2 N, N = k n."""
+    if f <= 0:
+        raise ValueError("f must be greater than 0")
+    if groups < 2:
+        raise ValueError("groups must be at least 2")
+    _check_unit("alpha", alpha)
+    _check_unit("power", power)
+    return _smallest_n(lambda n: _f_power(groups - 1, groups * n - groups, f**2 * groups * n, alpha), 2, power)
+
+
+def regression(f2: float, predictors: int, alpha: float = 0.05, power: float = 0.8) -> int:
+    """Total participants for the overall F test of R^2 = 0 in multiple regression, Cohen's f^2 and u predictors.
+
+    df1 = u, df2 = N - u - 1, lambda = f^2 N."""
+    if f2 <= 0:
+        raise ValueError("f2 must be greater than 0")
+    if predictors < 1:
+        raise ValueError("predictors must be at least 1")
+    _check_unit("alpha", alpha)
+    _check_unit("power", power)
+    return _smallest_n(lambda n: _f_power(predictors, n - predictors - 1, f2 * n, alpha), predictors + 2, power)
+
+
 def sample_size(test: str, params: dict[str, Any], attrition: float = 0.0) -> dict[str, Any]:
     """Run one calculator; returns the inputs used, the analysable n and the n to recruit after attrition."""
     if test not in TESTS:
@@ -117,6 +220,8 @@ def sample_size(test: str, params: dict[str, Any], attrition: float = 0.0) -> di
         "two_proportions": ("p1", "p2"),
         "correlation": ("r",),
         "survey_proportion": ("margin",),
+        "anova_oneway": ("f", "groups"),
+        "regression": ("f2", "predictors"),
     }[test]
     missing = [name for name in required if params.get(name) is None]
     if missing:
@@ -127,12 +232,14 @@ def sample_size(test: str, params: dict[str, Any], attrition: float = 0.0) -> di
         "two_proportions": two_proportions,
         "correlation": correlation,
         "survey_proportion": survey_proportion,
+        "anova_oneway": anova_oneway,
+        "regression": regression,
     }[test]
     used = {k: v for k, v in params.items() if v is not None}
     n = fn(**used)
-    groups = 2 if test in ("two_means", "two_proportions") else 1
+    groups = 2 if test in ("two_means", "two_proportions") else used["groups"] if test == "anova_oneway" else 1
     recruit = _inflate(n, attrition)
-    unit = "per group" if groups == 2 else "in total"
+    unit = "per group" if groups > 1 else "in total"
     return {
         "test": test,
         "inputs": used,
@@ -141,7 +248,7 @@ def sample_size(test: str, params: dict[str, Any], attrition: float = 0.0) -> di
         "n_to_recruit": recruit,
         "unit": unit,
         "total_to_recruit": recruit * groups,
-        "note": NOTE,
+        "note": EXACT_NOTE if test in ("anova_oneway", "regression") else NOTE,
     }
 
 

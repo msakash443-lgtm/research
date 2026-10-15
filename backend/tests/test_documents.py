@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 
 from app.database import SessionLocal
 from app.main import app
+from app import ledger
 from app.models import AuditEvent, AuthorshipEvent, Document, DocumentVersion, Source
 
 
@@ -313,3 +314,106 @@ def test_create_and_patch_validate_their_input():
     assert owner.post(f"/api/projects/{project_id}/documents", json={"title": "Ok", "position": 1, "content_json": {}}).status_code == 422
     assert owner.patch(f"/api/projects/{project_id}/documents/{document_id}", json={"current_version_id": "x"}).status_code == 422
     assert owner.patch(f"/api/projects/{project_id}/documents/{document_id}", json={}).status_code == 422
+
+
+def _note(client, body="Unpaid care keeps women out of paid work.\n\nIt also shapes who gets promoted.", quoted_text=None, project_id=None):
+    payload = {"client_id": f"c-{uuid.uuid4()}", "kind": "clip" if quoted_text else "typed", "body": body}
+    if quoted_text:
+        payload["quoted_text"] = quoted_text
+    note_id = client.post("/api/notes", json=payload).json()["id"]
+    if project_id is not None:
+        assert client.post(f"/api/notes/{note_id}/file", json={"project_id": project_id}).status_code == 200
+    return note_id
+
+
+def _from_note(client, project_id, document_id, note_id):
+    return client.post(f"/api/projects/{project_id}/documents/{document_id}/paragraph-from-note", json={"note_id": note_id})
+
+
+def test_paragraph_from_note_returns_a_from_note_fragment_and_saves_nothing():
+    owner, owner_id, project_id, document_id = _setup("from-note")
+    note_id = _note(owner, project_id=project_id)
+
+    response = _from_note(owner, project_id, document_id, note_id)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["note_id"] == note_id
+    paragraphs = body["content"]
+    assert [p["type"] for p in paragraphs] == ["paragraph", "paragraph"]
+    assert [p["content"][0]["text"] for p in paragraphs] == ["Unpaid care keeps women out of paid work.", "It also shapes who gets promoted."]
+    provs = [p["content"][0]["marks"] for p in paragraphs]
+    assert all(marks == [{"type": "prov", "attrs": {
+        "sid": body["span_id"], "origin": "from_note", "by": owner_id, "sug": None, "note": note_id, "paste": None, "src": None,
+    }}] for marks in provs)
+    assert ledger.validate_schema(_doc(*paragraphs)) == []
+    assert _version_count(document_id) == 0
+
+
+def test_a_paragraph_from_a_note_saves_with_a_from_note_ledger_event():
+    owner, _, project_id, document_id = _setup("from-note-save")
+    note_id = _note(owner, project_id=project_id)
+    fragment = _from_note(owner, project_id, document_id, note_id).json()
+
+    response = _save(owner, project_id, document_id, _doc(*fragment["content"]), base=0)
+
+    assert response.status_code == 201, response.text
+    with SessionLocal() as db:
+        events = db.scalars(select(AuthorshipEvent).where(AuthorshipEvent.document_id == uuid.UUID(document_id))).all()
+        assert [(e.span_id, e.origin.value, str(e.note_id)) for e in events] == [(fragment["span_id"], "from_note", note_id)]
+
+
+def test_each_call_gets_a_new_span_id():
+    owner, _, project_id, document_id = _setup("from-note-sid")
+    note_id = _note(owner, project_id=project_id)
+
+    first = _from_note(owner, project_id, document_id, note_id).json()["span_id"]
+    second = _from_note(owner, project_id, document_id, note_id).json()["span_id"]
+
+    assert first != second
+
+
+def test_a_note_from_another_user_is_refused_even_when_filed_to_this_project():
+    owner, _, project_id, document_id = _setup("from-note-other-user")
+    coauthor, _ = _login("doc-coauthor-from-note@example.com")
+    invited = owner.post(f"/api/projects/{project_id}/members", json={"email": "doc-coauthor-from-note@example.com", "role": "co_author"})
+    assert invited.status_code == 201, invited.text
+    their_note = _note(coauthor, project_id=project_id)
+
+    response = _from_note(owner, project_id, document_id, their_note)
+
+    assert response.status_code == 404
+
+
+def test_a_note_filed_to_another_project_or_not_filed_is_refused():
+    owner, _, project_id, document_id = _setup("from-note-other-project")
+    other_project = _project(owner, title="Other")
+    elsewhere = _note(owner, project_id=other_project)
+    unfiled = _note(owner)
+
+    assert _from_note(owner, project_id, document_id, elsewhere).status_code == 404
+    assert _from_note(owner, project_id, document_id, unfiled).status_code == 404
+    assert _from_note(owner, project_id, document_id, str(uuid.uuid4())).status_code == 404
+
+
+def test_a_section_from_another_project_is_refused():
+    owner, _, project_id, _ = _setup("from-note-cross-doc")
+    other_project = _project(owner, title="Other")
+    other_document = owner.post(f"/api/projects/{other_project}/documents", json={"title": "Theirs", "position": 1}).json()["id"]
+    note_id = _note(owner, project_id=project_id)
+
+    assert _from_note(owner, project_id, other_document, note_id).status_code == 404
+
+
+def test_quoted_text_is_never_put_in_the_paragraph():
+    owner, _, project_id, document_id = _setup("from-note-quote")
+    clip_only = _note(owner, body="", quoted_text="Someone else's sentence.", project_id=project_id)
+    clip_with_words = _note(owner, body="My reading of it.", quoted_text="Someone else's sentence.", project_id=project_id)
+
+    refused = _from_note(owner, project_id, document_id, clip_only)
+    kept = _from_note(owner, project_id, document_id, clip_with_words)
+
+    assert refused.status_code == 422
+    assert refused.json()["detail"]["code"] == "note_has_no_text"
+    assert kept.status_code == 200
+    assert [p["content"][0]["text"] for p in kept.json()["content"]] == ["My reading of it."]

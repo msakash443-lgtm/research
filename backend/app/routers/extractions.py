@@ -41,7 +41,7 @@ EXTRACTION_KIND = "extraction"  # artifact kind for one extraction (X.42)
 
 
 def _record_extraction(db: Session, project: Project, row: Extraction, actor: str) -> None:
-    """One artifact per extraction: a new one is registered; an edited one is current again (it was redone)."""
+    """One artifact per extraction: a new one is registered; an edited or verified one is current again (it was redone)."""
     artifact = db.scalar(select(Artifact).where(Artifact.project_id == project.id, Artifact.kind == EXTRACTION_KIND, Artifact.ref_id == str(row.id)))
     if artifact is None:
         register_artifact(db, project.id, EXTRACTION_KIND, str(row.id), ProjectStage.extracted, actor=actor)
@@ -246,6 +246,7 @@ def verify_extraction(
     audit.record(db, actor=row.verified_by, action="extraction.verified", project_id=project.id,
                  payload={"extraction_id": str(row.id), "source_id": str(source.id),
                           "critical_fields": sorted(required)})
+    _record_extraction(db, project, row, row.verified_by)  # X.42.1: a verified extraction goes stale on re-entry
     db.commit()
     db.refresh(row)
     return row

@@ -12,7 +12,7 @@ from typing import Any
 
 from pydantic import SecretStr
 
-from app.connectors.base import ConnectorBase, ConnectorError, PaperRecord, SearchPage, SearchRequest
+from app.connectors.base import ConnectorBase, ConnectorError, PaperRecord, SearchPage, SearchRequest, citation_count, clean_abstract, clean_text
 from app.connectors.http import ConnectorHttpClient, HttpPolicy
 from app.doi import normalize_doi
 
@@ -24,17 +24,14 @@ SUPPORTED_FILTERS = ("year_from", "year_to")
 _ID = re.compile(r"^(?:2-s2\.0-)?\d{1,20}$")
 _OFFSET = re.compile(r"^\d{1,4}$")
 _YEAR = re.compile(r"^\d{4}$")
-
-
-def _text(value: Any, limit: int) -> str | None:
-    return " ".join(value.split())[:limit] or None if isinstance(value, str) and value.strip() else None
+_COUNT = re.compile(r"^\d{1,9}$")
 
 
 def to_record(entry: Any) -> PaperRecord | None:
     if not isinstance(entry, dict):
         return None
-    title = _text(entry.get("dc:title"), 500)
-    raw_id = _text(entry.get("dc:identifier"), 255)
+    title = clean_text(entry.get("dc:title"), 500)
+    raw_id = clean_text(entry.get("dc:identifier"), 255)
     if raw_id and raw_id.startswith("SCOPUS_ID:"):
         raw_id = raw_id.removeprefix("SCOPUS_ID:")
     if not title or not raw_id or not _ID.fullmatch(raw_id):
@@ -46,10 +43,10 @@ def to_record(entry: Any) -> PaperRecord | None:
     except ValueError:
         doi = None
         flags.append("invalid_doi")
-    author = _text(entry.get("dc:creator"), 200)
-    date = _text(entry.get("prism:coverDate"), 10)
+    author = clean_text(entry.get("dc:creator"), 200)
+    date = clean_text(entry.get("prism:coverDate"), 10)
     year = int(date[:4]) if date and date[:4].isdigit() and 1000 <= int(date[:4]) <= 2200 else None
-    abstract = _text(entry.get("dc:description"), 20000)
+    abstract = clean_abstract(entry.get("dc:description"), 20000)
     if not abstract:
         flags.append("no_abstract")
     return PaperRecord(
@@ -59,12 +56,18 @@ def to_record(entry: Any) -> PaperRecord | None:
         doi=doi,
         authors=(author,) if author else (),
         year=year,
-        venue=_text(entry.get("prism:publicationName"), 500),
+        venue=clean_text(entry.get("prism:publicationName"), 500),
         abstract=abstract,
         url=f"https://www.scopus.com/record/display.uri?eid=2-s2.0-{ident}",
         source_ids={NAME: ident},
         quality_flags=tuple(flags),
+        cited_by_count=_count(entry.get("citedby-count")),
     )
+
+
+def _count(value: Any) -> int | None:
+    """Scopus sends `citedby-count` as a digit string; anything else is unknown, not 0."""
+    return int(value) if isinstance(value, str) and _COUNT.fullmatch(value) else citation_count(value)
 
 
 class ScopusConnector(ConnectorBase):

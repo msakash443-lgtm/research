@@ -19,6 +19,7 @@ from app.connectors.arxiv import normalise_id
 from app.connectors.base import ConnectorError
 from app.arxiv_fulltext import ARXIV_FULLTEXT_FETCH
 from app.database import get_db
+from app.lookups import live_source_or_404
 from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_access
 from app.connectors.factory import enabled_lookup_names, unpaywall_unavailable_reason
 from app.fulltext import FullTextError, extract_pdf_text
@@ -601,13 +602,6 @@ def _excerpt_read(excerpt: SourceExcerpt) -> ExcerptRead:
     )
 
 
-def _live_source(db: Session, project: Project, source_id: uuid.UUID) -> Source:
-    source = db.scalar(select(Source).where(Source.id == source_id, Source.project_id == project.id, Source.merged_into.is_(None)))
-    if source is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
-    return source
-
-
 @router.get("/{source_id}/excerpts", response_model=list[ExcerptRead])
 def list_excerpts(
     source_id: uuid.UUID,
@@ -615,7 +609,7 @@ def list_excerpts(
     db: Session = Depends(get_db),
 ):
     """Every saved passage for a source, with its locator (page or section). Passages saved in the same second may come back in either order."""
-    source = _live_source(db, project, source_id)
+    source = live_source_or_404(db, project, source_id)
     excerpts = db.scalars(select(SourceExcerpt).where(SourceExcerpt.source_id == source.id).order_by(SourceExcerpt.created_at, SourceExcerpt.id)).all()
     return [_excerpt_read(excerpt) for excerpt in excerpts]
 
@@ -629,7 +623,7 @@ def add_excerpt(
     db: Session = Depends(get_db),
 ):
     """Save a passage from a source (a new row each time; existing passages are never edited)."""
-    source = _live_source(db, project, source_id)
+    source = live_source_or_404(db, project, source_id)
     content = payload.content.strip()
     if not content:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="The passage is empty")

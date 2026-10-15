@@ -1,4 +1,5 @@
 fastapi==0.115.8
+anyio==4.9.0
 uvicorn[standard]==0.34.0
 sqlalchemy==2.0.38
 psycopg[binary]==3.2.5

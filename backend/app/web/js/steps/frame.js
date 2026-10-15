@@ -21,6 +21,19 @@ export function previousStep(stepId) {
   return index > 0 ? JOURNEY[index - 1] : null;
 }
 
+// Look up a journey screen by id, for a step-to-step "Next: <screen>" link (X.41.4) where the next
+// move is a specific screen, not a `GET /stage` stage-advance option (Sources has no stage of its own).
+function stepById(id) {
+  return JOURNEY.find((step) => step.id === id) || null;
+}
+
+function stepLinkCard(ctx, step) {
+  const box = el("div", { className: "next-option" });
+  box.append(el("p", { text: `Next: ${step.title}` }));
+  box.append(el("a", { className: "back-link", href: `#/p/${ctx.project.id}/${step.id}`, text: `Go to ${step.title}` }));
+  return box;
+}
+
 function unmetConditions(options) {
   const seen = new Set();
   const unmet = [];
@@ -56,7 +69,7 @@ function conditionBox(conditions) {
   return box;
 }
 
-export function renderFrame(root, ctx, { stepId, work, ai = null, next = [] }) {
+export function renderFrame(root, ctx, { stepId, work, ai = null, next = [], stepNext = null }) {
   const options = next
     .map((stage) => (ctx.summary.stage?.next || []).find((option) => option.stage === stage))
     .filter(Boolean);
@@ -73,9 +86,11 @@ export function renderFrame(root, ctx, { stepId, work, ai = null, next = [] }) {
   if (previous) {
     footer.append(el("a", { className: "back-link", href: `#/p/${ctx.project.id}/${previous.id}`, text: `Previous step: ${previous.title}` }));
   }
-  if (options.length) {
+  const forward = stepNext ? stepById(stepNext) : null;
+  if (options.length || forward) {
     const nextWrap = el("div", { className: "step-next" });
     options.forEach((option) => nextWrap.append(advanceCard(ctx, option)));
+    if (forward) nextWrap.append(stepLinkCard(ctx, forward));
     footer.append(nextWrap);
   }
   if (footer.childElementCount) nodes.push(footer);

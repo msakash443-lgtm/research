@@ -13,7 +13,7 @@ from typing import Any
 
 from pydantic import SecretStr
 
-from app.connectors.base import ConnectorBase, ConnectorError, PaperRecord, SearchPage, SearchRequest
+from app.connectors.base import ConnectorBase, ConnectorError, PaperRecord, SearchPage, SearchRequest, citation_count, clean_abstract, clean_text
 from app.connectors.http import ConnectorHttpClient, HttpPolicy
 from app.doi import normalize_doi
 
@@ -25,10 +25,6 @@ SUPPORTED_FILTERS = ("year_from", "year_to")
 _ID = re.compile(r"^\d{1,20}$")
 _OFFSET = re.compile(r"^\d{1,5}$")
 _YEAR = re.compile(r"^\d{4}$")
-
-
-def _text(value: Any, limit: int) -> str | None:
-    return " ".join(value.split())[:limit] or None if isinstance(value, str) and value.strip() else None
 
 
 def _year(value: Any) -> int | None:
@@ -46,8 +42,8 @@ def _year(value: Any) -> int | None:
 def to_record(article: Any) -> PaperRecord | None:
     if not isinstance(article, dict):
         return None
-    ident = _text(article.get("article_number"), 255)
-    title = _text(article.get("title"), 500)
+    ident = clean_text(article.get("article_number"), 255)
+    title = clean_text(article.get("title"), 500)
     if not ident or not _ID.fullmatch(ident) or not title:
         return None
     authors_data = article.get("authors") or []
@@ -58,7 +54,7 @@ def to_record(article: Any) -> PaperRecord | None:
     authors = tuple(
         name
         for name in (
-            _text(author.get("full_name") or author.get("name"), 200)
+            clean_text(author.get("full_name") or author.get("name"), 200)
             for author in authors_data[:200]
             if isinstance(author, dict)
         )
@@ -71,7 +67,7 @@ def to_record(article: Any) -> PaperRecord | None:
     except ValueError:
         doi = None
         flags.append("invalid_doi")
-    abstract = _text(article.get("abstract"), 20000)
+    abstract = clean_abstract(article.get("abstract"), 20000)
     if not abstract:
         flags.append("no_abstract")
     return PaperRecord(
@@ -81,11 +77,12 @@ def to_record(article: Any) -> PaperRecord | None:
         doi=doi,
         authors=authors,
         year=_year(article.get("publication_year")),
-        venue=_text(article.get("publication_title"), 500),
+        venue=clean_text(article.get("publication_title"), 500),
         abstract=abstract,
-        url=_text(article.get("html_url") or article.get("pdf_url"), 2000),
+        url=clean_text(article.get("html_url") or article.get("pdf_url"), 2000),
         source_ids={NAME: ident},
         quality_flags=tuple(flags),
+        cited_by_count=citation_count(article.get("citing_paper_count")),
     )
 
 

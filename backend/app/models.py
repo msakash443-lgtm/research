@@ -100,6 +100,13 @@ class ProjectStage(str, enum.Enum):
     accepted = "accepted"
 
 
+def _stage_plan_of_research_type(context) -> dict:
+    """A new project's `stage_plan_json`: a snapshot of the research type its row names (X.43.2)."""
+    from app.research_types import load_research_type  # imported here: app.research_types imports this module
+
+    return load_research_type(context.get_current_parameters()["research_type"]).model_dump(mode="json")
+
+
 class Project(Timestamped, Base):
     __tablename__ = "projects"
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -143,6 +150,12 @@ class Project(Timestamped, Base):
     ai_model_route: Mapped[AiModelRoute] = mapped_column(
         Enum(AiModelRoute, name="ai_model_route"), default=AiModelRoute.standard, server_default=AiModelRoute.standard.value
     )
+    # Research type (X.43, Q22): a type in app/research_types/ saying which stages this project passes through.
+    # `stage_plan_json` is a snapshot of that type taken when it was set, so editing a type file never changes an
+    # existing project's stages. Migration 0066 backfilled existing projects to full_journey v1 (today's 19 stages)
+    # and keeps that snapshot as the column's server default; the ORM always writes the column itself.
+    research_type: Mapped[str] = mapped_column(String(60), default="full_journey", server_default="full_journey")
+    stage_plan_json: Mapped[dict] = mapped_column(JSON, default=_stage_plan_of_research_type)
     owner: Mapped[User] = relationship(back_populates="projects")
     context_items: Mapped[list["ResearchContextItem"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     sources: Mapped[list["Source"]] = relationship(back_populates="project", cascade="all, delete-orphan")
@@ -673,6 +686,33 @@ class TheoryConstruct(Base):
     theory_id: Mapped[uuid.UUID] = mapped_column(index=True)
     construct_id: Mapped[uuid.UUID] = mapped_column(index=True)
     theory: Mapped[Theory] = relationship(back_populates="construct_links")
+
+
+class ConceptualPath(Timestamped, Base):
+    """A scholar-drawn path in the conceptual model (M4.2), backed by at least one project source.
+
+    `kind` is direct, mediation or moderation; `via_construct_id` is the mediator or moderator and is
+    NULL only for a direct path. Composite FKs keep every construct inside the path's project."""
+
+    __tablename__ = "conceptual_paths"
+    __table_args__ = (
+        UniqueConstraint("project_id", "from_construct_id", "to_construct_id", "kind", "via_construct_id", name="uq_conceptual_path"),
+        CheckConstraint("kind IN ('direct', 'mediation', 'moderation')", name="ck_conceptual_path_kind"),
+        CheckConstraint("(kind = 'direct') = (via_construct_id IS NULL)", name="ck_conceptual_path_via"),
+        CheckConstraint("from_construct_id <> to_construct_id", name="ck_conceptual_path_not_self"),
+        ForeignKeyConstraint(["from_construct_id", "project_id"], ["constructs.id", "constructs.project_id"]),
+        ForeignKeyConstraint(["to_construct_id", "project_id"], ["constructs.id", "constructs.project_id"]),
+        ForeignKeyConstraint(["via_construct_id", "project_id"], ["constructs.id", "constructs.project_id"]),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    from_construct_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    to_construct_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    kind: Mapped[str] = mapped_column(String(20))
+    via_construct_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
+    source_ids: Mapped[list] = mapped_column(JSON, default=list)
+    rationale: Mapped[str] = mapped_column(Text)
+    created_by: Mapped[str] = mapped_column(String(100))
 
 
 class Claim(Timestamped, Base):

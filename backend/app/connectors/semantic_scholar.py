@@ -36,6 +36,9 @@ from app.connectors.base import (
     SearchPage,
     SearchRequest,
     citation_count,
+    clean_abstract,
+    clean_link,
+    clean_text,
 )
 from app.connectors.http import ConnectorHttpClient, HttpPolicy, NotFoundError
 from app.doi import normalize_doi
@@ -71,15 +74,6 @@ def _path_ref(ref: str) -> str:
     return quote(ref, safe="/()-._:;")
 
 
-def _str(value: Any, limit: int) -> str | None:
-    return value.strip()[:limit] if isinstance(value, str) and value.strip() else None
-
-
-def _http(value: Any) -> str | None:
-    text = _str(value, 2000)
-    return text if text and text.lower().startswith(("http://", "https://")) else None
-
-
 def to_record(paper: Any) -> PaperRecord | None:
     """Normalise one S2 paper; None when it has no id or title (S2 returns such stubs)."""
     if not isinstance(paper, dict):
@@ -87,7 +81,7 @@ def to_record(paper: Any) -> PaperRecord | None:
     pid = paper.get("paperId")
     if not isinstance(pid, str) or not _PAPER_ID.match(pid.lower()):
         return None
-    title = _str(paper.get("title"), 500)
+    title = clean_text(paper.get("title"), 500)
     if not title:
         return None
     pid = pid.lower()
@@ -106,8 +100,8 @@ def to_record(paper: Any) -> PaperRecord | None:
         if value not in (None, ""):
             source_ids[label] = str(value)[:100]
 
-    abstract = _str(paper.get("abstract"), 20000)
-    venue = _str(paper.get("venue"), 500)
+    abstract = clean_abstract(paper.get("abstract"), 20000)
+    venue = clean_text(paper.get("venue"), 500)
     if (venue or "").lower() == "arxiv.org":
         flags.append("preprint")
     if not abstract:
@@ -117,7 +111,7 @@ def to_record(paper: Any) -> PaperRecord | None:
     authors = tuple(
         name
         for a in (paper.get("authors") or [])[:200]
-        if isinstance(a, dict) and (name := _str(a.get("name"), 200))
+        if isinstance(a, dict) and (name := clean_text(a.get("name"), 200))
     )
     return PaperRecord(
         connector=NAME,
@@ -128,8 +122,8 @@ def to_record(paper: Any) -> PaperRecord | None:
         year=year if isinstance(year, int) and 1000 <= year <= 2200 else None,
         venue=venue,
         abstract=abstract,
-        url=_http(paper.get("url")),
-        oa_url=_http(pdf.get("url")),
+        url=clean_link(paper.get("url")),
+        oa_url=clean_link(pdf.get("url")),
         source_ids=source_ids,
         quality_flags=tuple(flags),
         cited_by_count=citation_count(paper.get("citationCount")),

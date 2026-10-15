@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app import audit, ledger, provenance_store, suggestions
 from app.database import get_db
+from app.lookups import project_document_or_404
 from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_access
 from app.models import (
     AiSuggestion,
@@ -27,6 +28,7 @@ from app.models import (
     AuthorshipKind,
     Document,
     DocumentVersion,
+    Note,
     Project,
     Source,
     SourceExcerpt,
@@ -145,6 +147,17 @@ class SaveResult(BaseModel):
     detected: list[DetectedSource]
 
 
+class FromNoteIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    note_id: uuid.UUID
+
+
+class FromNoteFragment(BaseModel):
+    note_id: uuid.UUID
+    span_id: str
+    content: list[dict[str, Any]]
+
+
 class LedgerEventRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID
@@ -162,13 +175,6 @@ class LedgerEventRead(BaseModel):
     detected_source_id: uuid.UUID | None
     detected_document_id: uuid.UUID | None
     created_at: datetime
-
-
-def _document(db: Session, project: Project, document_id: uuid.UUID) -> Document:
-    document = db.get(Document, document_id)
-    if document is None or document.project_id != project.id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
-    return document
 
 
 def _latest(db: Session, document: Document) -> DocumentVersion | None:
@@ -350,7 +356,7 @@ def update_document(
     db: Session = Depends(get_db),
 ):
     """Change a section's title, position or AI lock. The text is untouched: only saves change it."""
-    document = _document(db, project, document_id)
+    document = project_document_or_404(db, project, document_id)
     changes = payload.model_dump(exclude_unset=True)
     for field_name, value in changes.items():
         setattr(document, field_name, value)
@@ -364,7 +370,7 @@ def update_document(
 
 @router.get("/{document_id}", response_model=VersionRead)
 def current_version(document_id: uuid.UUID, project: Project = Depends(project_access(READ_ROLES)), db: Session = Depends(get_db)):
-    document = _document(db, project, document_id)
+    document = project_document_or_404(db, project, document_id)
     latest = _latest(db, document)
     if latest is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="This section has no saved versions yet")
@@ -380,7 +386,7 @@ def save_version(
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    document = _document(db, project, document_id)
+    document = project_document_or_404(db, project, document_id)
     replayed = db.scalar(select(DocumentVersion).where(
         DocumentVersion.document_id == document.id, DocumentVersion.client_save_id == payload.client_save_id
     ))
@@ -402,13 +408,13 @@ def save_version(
 
 @router.get("/{document_id}/versions", response_model=list[VersionSummary])
 def list_versions(document_id: uuid.UUID, project: Project = Depends(project_access(READ_ROLES)), db: Session = Depends(get_db)):
-    document = _document(db, project, document_id)
+    document = project_document_or_404(db, project, document_id)
     return db.scalars(select(DocumentVersion).where(DocumentVersion.document_id == document.id).order_by(DocumentVersion.number)).all()
 
 
 @router.get("/{document_id}/versions/{number}", response_model=VersionRead)
 def read_version(document_id: uuid.UUID, number: int, project: Project = Depends(project_access(READ_ROLES)), db: Session = Depends(get_db)):
-    document = _document(db, project, document_id)
+    document = project_document_or_404(db, project, document_id)
     version = db.scalar(select(DocumentVersion).where(DocumentVersion.document_id == document.id, DocumentVersion.number == number))
     if version is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Version not found")
@@ -425,7 +431,7 @@ def restore_version(
     db: Session = Depends(get_db),
 ):
     """Copy an older version into a new latest version. Nothing is deleted; the copy's spans are `restored`."""
-    document = _document(db, project, document_id)
+    document = project_document_or_404(db, project, document_id)
     target = db.scalar(select(DocumentVersion).where(DocumentVersion.document_id == document.id, DocumentVersion.number == number))
     if target is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Version not found")
@@ -440,6 +446,35 @@ def restore_version(
     return SaveResult(version=VersionRead.model_validate(version), detected=detected)
 
 
+@router.post("/{document_id}/paragraph-from-note", response_model=FromNoteFragment)
+def paragraph_from_note(
+    document_id: uuid.UUID,
+    payload: FromNoteIn,
+    project: Project = Depends(project_access(WRITE_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Paragraphs for the editor to insert, one per line of the note's own words, all in one `from_note` span.
+    Only the caller's own note filed to this project; anyone else's, or one elsewhere, looks absent. The quoted
+    text of a clip is someone else's words and is never included. Nothing is saved: the next save records it."""
+    project_document_or_404(db, project, document_id)
+    note = db.get(Note, payload.note_id)
+    if note is None or note.owner_id != user.id or note.project_id != project.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Note not found")
+    lines = [line.strip() for line in note.body.splitlines() if line.strip()]
+    if not lines:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "note_has_no_text", "message": "This note has none of your own words to turn into a paragraph"},
+        )
+    span_id = str(uuid.uuid4())
+    prov = {"sid": span_id, "origin": SpanOrigin.from_note.value, "by": audit.user_actor(user),
+            "sug": None, "note": str(note.id), "paste": None, "src": None}
+    content = [{"type": "paragraph", "content": [{"type": "text", "text": line, "marks": [{"type": "prov", "attrs": prov}]}]}
+               for line in lines]
+    return FromNoteFragment(note_id=note.id, span_id=span_id, content=content)
+
+
 @router.get("/{document_id}/ledger", response_model=list[LedgerEventRead])
 def span_ledger(
     document_id: uuid.UUID,
@@ -448,7 +483,7 @@ def span_ledger(
     db: Session = Depends(get_db),
 ):
     """Every event for one span, oldest version first. Events hold no text: the text lives in the versions."""
-    document = _document(db, project, document_id)
+    document = project_document_or_404(db, project, document_id)
     return db.scalars(
         select(AuthorshipEvent)
         .join(DocumentVersion, DocumentVersion.id == AuthorshipEvent.version_id)

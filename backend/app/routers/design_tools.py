@@ -37,6 +37,10 @@ def sample_size(
     confidence: float | None = Query(None),
     p: float | None = Query(None),
     population: int | None = Query(None),
+    f: float | None = Query(None),
+    groups: int | None = Query(None),
+    f2: float | None = Query(None),
+    predictors: int | None = Query(None),
     alpha: float | None = Query(None),
     power: float | None = Query(None),
     sides: int | None = Query(None),
@@ -45,7 +49,8 @@ def sample_size(
 ) -> dict[str, Any]:
     values = {
         "d": d, "p1": p1, "p2": p2, "r": r, "margin": margin, "confidence": confidence,
-        "p": p, "population": population, "alpha": alpha, "power": power, "sides": sides,
+        "p": p, "population": population,
+        "f": f, "groups": groups, "f2": f2, "predictors": predictors, "alpha": alpha, "power": power, "sides": sides,
     }
     allowed = {
         "two_means": {"d", "alpha", "power", "sides"},
@@ -53,6 +58,8 @@ def sample_size(
         "two_proportions": {"p1", "p2", "alpha", "power", "sides"},
         "correlation": {"r", "alpha", "power", "sides"},
         "survey_proportion": {"margin", "confidence", "p", "population"},
+        "anova_oneway": {"f", "groups", "alpha", "power"},
+        "regression": {"f2", "predictors", "alpha", "power"},
     }
     if test not in allowed:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"test must be one of: {', '.join(design_tools.TESTS)}")

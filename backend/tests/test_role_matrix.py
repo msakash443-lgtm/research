@@ -68,6 +68,7 @@ MATRIX = [
     ("GET", "/api/projects/{p}/documents/{doc}/ledger", ALL, 200),
     ("POST", "/api/projects/{p}/documents/{doc}/versions", WRITE, 201),
     ("POST", "/api/projects/{p}/documents/{doc}/versions/{v}/restore", WRITE, 200),
+    ("POST", "/api/projects/{p}/documents/{doc}/paragraph-from-note", WRITE, 200),
     ("POST", "/api/projects/{p}/similarity-checks", WRITE, 202),
     ("GET", "/api/projects/{p}/similarity-checks", ALL, 200),
     ("GET", "/api/projects/{p}/similarity-providers", ALL, 200),
@@ -167,6 +168,9 @@ MATRIX = [
     ("POST", "/api/projects/{p}/constructs", WRITE, 201),
     ("GET", "/api/projects/{p}/theories", ALL, 200),
     ("POST", "/api/projects/{p}/theories", WRITE, 201),
+    ("GET", "/api/projects/{p}/conceptual-model", ALL, 200),
+    ("POST", "/api/projects/{p}/conceptual-model/paths", WRITE, 201),
+    ("DELETE", "/api/projects/{p}/conceptual-model/paths/{cp}", WRITE, 204),
     ("GET", "/api/projects/{p}/gaps", ALL, 200),
     ("POST", "/api/projects/{p}/gaps", WRITE, 201),
     ("PATCH", "/api/projects/{p}/gaps/{gap_id}", WRITE, 200),
@@ -429,7 +433,7 @@ def world(monkeypatch, fake_llm):
     return {
         "clients": clients,
         "ids": {"p": project_id, "s": source_id, "extract_s": extraction_source_id, "ai_s": ai_source["id"], "h": str(claim_id), "field_key": "research_question", "u": removable_id, "q": str(search_id), "d": str(seed_id), "e": str(extraction_id), "c": str(clustering_id), "l": str(cluster_id), "n": "lab_schema", "a": str(alert_id), "k": str(audit_id), "g": _fresh_suggestion(project_id, []), "doc": doc_id, "rep": _seed_report(project_id, owner_id, doc_id), "v": "1", "author": owner_id},
-        "ids": {"p": project_id, "s": source_id, "extract_s": extraction_source_id, "ai_s": ai_source["id"], "h": str(claim_id), "gap_id": gap_id, "rq": question_id, "hp": hypothesis_id, "field_key": "research_question", "u": removable_id, "q": str(search_id), "d": str(seed_id), "e": str(extraction_id), "plan_id": str(uuid.uuid4()), "c": str(clustering_id), "l": str(cluster_id), "n": "lab_schema", "a": str(alert_id), "k": str(audit_id), "g": _fresh_suggestion(project_id, []), "doc": doc_id, "rep": _seed_report(project_id, owner_id, doc_id), "v": "1", "author": owner_id},
+        "ids": {"p": project_id, "s": source_id, "extract_s": extraction_source_id, "ai_s": ai_source["id"], "h": str(claim_id), "gap_id": gap_id, "rq": question_id, "hp": hypothesis_id, "field_key": "research_question", "u": removable_id, "q": str(search_id), "d": str(seed_id), "e": str(extraction_id), "plan_id": str(uuid.uuid4()), "cp": str(uuid.uuid4()), "c": str(clustering_id), "l": str(cluster_id), "n": "lab_schema", "a": str(alert_id), "k": str(audit_id), "g": _fresh_suggestion(project_id, []), "doc": doc_id, "rep": _seed_report(project_id, owner_id, doc_id), "v": "1", "author": owner_id},
         "twin": twin_id,
         "invitee": f"matrix-invitee-{tag}@example.com",
     }
@@ -516,6 +520,15 @@ def _call(world, principal, method, template):
             json={"text": f"Hypothesis question {uuid.uuid4()}?", "type": "relational", "gap_ids": [world["ids"]["gap_id"]]},
         ).json()
         body = {"research_question_id": question["id"], "statement": f"Trust predicts collaboration {uuid.uuid4()}.", "direction": "positive", "theoretical_basis": "Theory", "empirical_support": "Evidence"}
+    if template.startswith("/api/projects/{p}/conceptual-model/paths"):
+        # Fresh constructs per call, so a success can't 409 the next principal; DELETE removes a path the owner just drew.
+        owner, pid = world["clients"]["owner"], world["ids"]["p"]
+        ends = [owner.post(f"/api/projects/{pid}/constructs", json={"name": f"Matrix {uuid.uuid4()}", "definition": "D", "author": "A"}).json()["id"]
+                for _ in range(2)]
+        body = {"from_construct_id": ends[0], "to_construct_id": ends[1], "kind": "direct", "source_ids": [world["ids"]["s"]], "rationale": "Matrix."}
+        if method == "DELETE":
+            drawn = owner.post(f"/api/projects/{pid}/conceptual-model/paths", json=body).json()["id"]
+            return world["clients"][principal].delete(f"/api/projects/{pid}/conceptual-model/paths/{drawn}")
     if (method, template) == ("POST", "/api/projects/{p}/sources/merge"):
         body = {"source_ids": [world["ids"]["s"], world["twin"]]}
     if (method, template) == ("PUT", "/api/projects/{p}/screening/dual-screen"):
@@ -543,6 +556,18 @@ def _call(world, principal, method, template):
         }]}]}
         path = path.replace(f"/documents/{world['ids']['doc']}/", f"/documents/{fresh_doc}/")
         return world["clients"][principal].post(path, json={"base_number": 1, "client_save_id": uuid.uuid4().hex, "content_json": content})
+    if (method, template) == ("POST", "/api/projects/{p}/documents/{doc}/paragraph-from-note"):
+        # Only the caller's own note filed to the project qualifies, so each principal gets one of its own.
+        from app.models import Note, NoteKind, NoteStatus
+
+        caller = world["clients"][principal].get("/api/auth/me").json().get("id") or world["ids"]["author"]
+        with SessionLocal() as db:
+            note = Note(owner_id=uuid.UUID(caller), project_id=uuid.UUID(world["ids"]["p"]), client_id=uuid.uuid4().hex,
+                        kind=NoteKind.typed, body="Matrix note.", status=NoteStatus.filed, captured_at=utcnow())
+            db.add(note)
+            db.commit()
+            note_id = str(note.id)
+        return world["clients"][principal].post(path, json={"note_id": note_id})
     if (method, template) == ("POST", "/api/projects/{p}/documents/{doc}/versions/{v}/restore"):
         fresh_doc = _seed_document(world["ids"]["p"], world["ids"]["author"])
         path = path.replace(f"/documents/{world['ids']['doc']}/", f"/documents/{fresh_doc}/")
@@ -642,7 +667,7 @@ def test_role_matrix(world, principal, method, template, allowed, success):
 def test_the_matrix_covers_every_project_scoped_route():
     """A new project route must be added to MATRIX, or this fails."""
     routed = {
-            (method, route.path.replace("{project_id}", "{p}").replace("{source_id}", "{s}").replace("{user_id}", "{u}").replace("{code}", "G1").replace("{search_id}", "{q}").replace("{seed_id}", "{d}").replace("{extraction_id}", "{e}").replace("{evidence_id}", "{e}").replace("{plan_id}", "{plan_id}").replace("{claim_id}", "{h}").replace("{gap_id}", "{gap_id}").replace("{question_id}", "{rq}").replace("{hypothesis_id}", "{hp}").replace("{field_key}", "{field_key}").replace("{clustering_id}", "{c}").replace("{cluster_id}", "{l}").replace("{schema_name}", "{n}").replace("{alert_id}", "{a}").replace("{audit_id}", "{k}").replace("{suggestion_id}", "{g}").replace("{document_id}", "{doc}").replace("{number}", "{v}").replace("{target_kind}", "source").replace("{target_id}", "{s}").replace("{kind}", "co_citation").replace("{report_id}", "{rep}"))
+            (method, route.path.replace("{project_id}", "{p}").replace("{source_id}", "{s}").replace("{user_id}", "{u}").replace("{code}", "G1").replace("{search_id}", "{q}").replace("{seed_id}", "{d}").replace("{extraction_id}", "{e}").replace("{evidence_id}", "{e}").replace("{plan_id}", "{plan_id}").replace("{claim_id}", "{h}").replace("{gap_id}", "{gap_id}").replace("{question_id}", "{rq}").replace("{hypothesis_id}", "{hp}").replace("{field_key}", "{field_key}").replace("{clustering_id}", "{c}").replace("{cluster_id}", "{l}").replace("{schema_name}", "{n}").replace("{alert_id}", "{a}").replace("{audit_id}", "{k}").replace("{suggestion_id}", "{g}").replace("{document_id}", "{doc}").replace("{number}", "{v}").replace("{target_kind}", "source").replace("{target_id}", "{s}").replace("{kind}", "co_citation").replace("{report_id}", "{rep}").replace("{path_id}", "{cp}"))
         for route in app.routes
         if "{project_id}" in getattr(route, "path", "")
         for method in route.methods
