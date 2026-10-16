@@ -1,11 +1,13 @@
 import { $, el, label, toast, formatDate, emptyCard } from "../dom.js";
 import { request, projectApi } from "../api.js";
 import { actorName, provenanceBadge } from "../provenance.js";
+import { suggestionPanel } from "../suggestion.js";
+import { renderFrame } from "./frame.js";
 
 const AGENT_RESEARCH_RUN = "agent:research-run"; // app/audit.py AGENT_RESEARCH_RUN
 
 function renderResearchRun(ctx, run) {
-  const card = el("article", { className: `run-card status-${run.status}` });
+  const card = el("article", { className: `run-card status-${run.status}`, attrs: { "data-research-run": run.id } });
   const header = el("div", { className: "run-heading" });
   header.append(el("span", { className: "run-status", text: label(run.status) }), el("time", { text: formatDate(run.created_at) }));
   card.append(header, el("h3", { text: run.question }));
@@ -15,7 +17,10 @@ function renderResearchRun(ctx, run) {
     run.research_plan.forEach((step) => plan.append(el("li", { text: step })));
     card.append(plan);
   }
-  if (run.answer) card.append(el("p", { className: "run-answer", text: run.answer }));
+  if (run.answer) {
+    card.append(el("p", { className: "exploratory-label", text: "Exploratory: check the sources yourself" }));
+    card.append(el("p", { className: "run-answer", text: run.answer }));
+  }
   if (run.answer) card.append(el("div", { className: "source-locator", attrs: { "data-citation-run": run.id } }));
   if (run.insufficient_evidence) card.append(el("p", { className: "run-answer", text: `The model found the evidence insufficient: ${run.insufficient_reason || "no reason given"}` }));
   if (run.error_message) card.append(el("p", { className: "run-error", text: run.error_message }));
@@ -36,6 +41,20 @@ function renderResearchRun(ctx, run) {
   ].filter(Boolean);
   if (timing.length) card.append(el("p", { className: "source-locator", text: timing.join(" · ") }));
   return card;
+}
+
+async function loadSuggestionPanels(root, ctx) {
+  for (const run of ctx.summary.runs || []) {
+    if (!run.answer) continue;
+    const card = [...root.querySelectorAll("[data-research-run]")].find((node) => node.dataset.researchRun === run.id);
+    if (!card || !card.isConnected) continue;
+    const panel = await suggestionPanel(ctx, {
+      targetKind: "research_run",
+      targetId: run.id,
+      onChange: () => ctx.refresh(),
+    });
+    if (card.isConnected) card.append(panel);
+  }
 }
 
 // Research answers have no approval step of their own yet, so the badge says so plainly rather than
@@ -151,14 +170,16 @@ function render(root, ctx) {
   runsHeading.append(el("div", { children: [el("p", { className: "eyebrow", text: "RUN HISTORY" }), el("h3", { text: "Research runs" })] }));
   panel.append(runsHeading);
   panel.append(runsList(root, ctx));
-  root.replaceChildren(panel);
+  renderFrame(root, ctx, { stepId: "ask", work: [panel] });
   loadCitationSupport(root, ctx);
+  loadSuggestionPanels(root, ctx);
 }
 
 function update(root, ctx) {
   if (root.querySelector("#research-runs")) {
     runsList(root, ctx);
     loadCitationSupport(root, ctx);
+    loadSuggestionPanels(root, ctx);
   }
 }
 

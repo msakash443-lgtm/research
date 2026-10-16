@@ -83,7 +83,12 @@ function render(root, ctx) {
     root.replaceChildren(emptyCard("No results yet", "Run a search on the Search step, then come back here to check the results."));
     return;
   }
-  renderFrame(root, ctx, { stepId: "results", work: [prismaBox(ctx), knownItemsBox(ctx)], next: ["retrieved"] });
+  renderFrame(root, ctx, {
+    stepId: "results",
+    work: [prismaBox(ctx), knownItemsBox(ctx)],
+    next: ["retrieved"],
+    stepNext: { id: "sources", title: "Sources" },
+  });
 }
 
 export default { render };

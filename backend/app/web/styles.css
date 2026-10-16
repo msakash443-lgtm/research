@@ -180,6 +180,10 @@ input:focus,textarea:focus,select:focus { outline:2px solid #b9dfd8; border-colo
 .step-footer { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:start; gap:16px; padding-top:4px; }
 .step-next { display:grid; gap:12px; margin-left:auto; }
 .back-link { font-weight:650; }
+.stale-warning { border:1px solid #c8892b; background:#fff4dc; color:#6a4310; border-radius:10px; padding:12px 14px; font-weight:650; }
+.exploratory-label { color:var(--muted); font-weight:650; font-size:13px; }
+.step-next-link { white-space:nowrap; }
+.revisit-button { margin-left:auto; }
 .journey-stage.done { background:#e7f3f0; }
 .journey-stage.current { border-color:var(--navy); border-width:2px; }
 .journey-stage.upcoming { color:var(--ink); }

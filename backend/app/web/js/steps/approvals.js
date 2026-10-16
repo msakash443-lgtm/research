@@ -89,7 +89,7 @@ function staleWarning(ctx, rerunPath) {
   return box;
 }
 
-function openReenterDialog(ctx) {
+export function openReenterDialog(ctx) {
   const dialog = $("#reenter-dialog");
   const form = $("#reenter-form");
   form.reset();
