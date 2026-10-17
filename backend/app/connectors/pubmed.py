@@ -29,7 +29,7 @@ from typing import Any
 
 from pydantic import SecretStr
 
-from app.connectors.base import ConnectorBase, ConnectorError, FullText, NotSupportedError, PaperRecord, SearchPage, SearchRequest
+from app.connectors.base import ConnectorBase, ConnectorError, FullText, NotSupportedError, PaperRecord, SearchPage, SearchRequest, clean_abstract
 from app.connectors.http import ConnectorHttpClient, HttpPolicy, NotFoundError
 from app.doi import normalize_doi
 
@@ -97,7 +97,7 @@ def _abstract(article: ET.Element) -> str | None:
         if text:
             label = node.get("Label")
             parts.append(f"{label}: {text}" if label else text)
-    return _clean(" ".join(parts), 20000)
+    return clean_abstract("\n\n".join(parts), 20000)
 
 
 def to_record(node: ET.Element) -> PaperRecord | None:

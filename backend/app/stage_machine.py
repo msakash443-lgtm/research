@@ -63,21 +63,22 @@ class StageOption:
     ready: bool  # True when the project could move there right now
 
 
-def allowed_next(stage: ProjectStage) -> list[ProjectStage]:
-    """The stages a project can move forward to from `stage`."""
+def allowed_next(project: Project) -> list[ProjectStage]:
+    """The stages a project can move forward to from its current stage."""
+    stage = project.stage
     if stage == ProjectStage.accepted:
         return []
     if stage == ProjectStage.submitted:
-        return [ProjectStage.revision_loop, ProjectStage.accepted]
+        return [candidate for candidate in (ProjectStage.revision_loop, ProjectStage.accepted) if candidate in stage_order.chain(project)]
     if stage == ProjectStage.revision_loop:
-        return [ProjectStage.accepted]  # to resubmit, go back with a re-entry and move forward again
-    return stage_order.next_stages(None, stage)
+        return [ProjectStage.accepted] if ProjectStage.accepted in stage_order.chain(project) else []
+    return stage_order.next_stages(project, stage)
 
 
 def next_options(db: Session, project: Project) -> list[StageOption]:
     gates = {g.code: g for g in ensure_gates(db, project)}
     options = []
-    for target in allowed_next(project.stage):
+    for target in allowed_next(project):
         code = gate_for_stage(target)
         gate_status = gates[code].status if code else None
         gate_ok = code is None or gate_status == GateStatus.approved
@@ -106,7 +107,7 @@ def advance_stage(
 ) -> Advance:
     """Move the project one stage forward. The caller commits."""
     current = project.stage
-    choices = allowed_next(current)
+    choices = allowed_next(project)
     if not choices:
         raise StageError(f"'{current.value}' is the final stage")
     if target is None:

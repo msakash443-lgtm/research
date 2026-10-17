@@ -158,7 +158,7 @@ A quiet writing space inside the research app. You can jot down an idea from any
    Selection: "Remote work may widen the gap…"
    • typed by Priya · 4 Oct 10:31
    • "widen the gap": AI-edited (model X, workspace_clearer_sentence@1, 10:42), 2 words changed by Priya 10:44
-   [Show colours by origin ☐]  ← off by default (calm); on shows typed/pasted/AI tints
+│   [Show colours by origin ☑]  ← on by default; switch off for a calmer view
  Focus mode (Ctrl/Cmd+Shift+F): rail + panel hidden, centred text column, only "saved ✓" visible.
  Phone: single column; the panel opens as a bottom sheet from a "Sources / AI / Record" button.
 ```

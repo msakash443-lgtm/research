@@ -26,7 +26,7 @@ from app.fulltext import FullTextError, extract_pdf_text
 from app.artifacts import register_artifact
 from app.models import SOURCE_ORIGIN_RETRIEVED, Project, ProjectStage, ScreeningDecision, Source, SourceExcerpt, Task, TaskStatus, User, excerpt_hash, utcnow
 from app.screening import STAGES, screening_locked
-from app.object_storage import ObjectConflict, ObjectNotFound, fulltext_key, get_object_store
+from app.object_storage import ObjectConflict, ObjectNotFound, ObjectStorageError, fulltext_key, get_object_store
 from app.task_handlers import FULLTEXT_FETCH, SOURCE_CHECK
 from app.task_queue import enqueue_task
 from app.refmanager import parse_bibtex, parse_ris, to_bibtex, to_ris
@@ -379,6 +379,43 @@ async def upload_fulltext(
     audit.record(
         db, actor=actor, action="source.fulltext_uploaded", project_id=project.id,
         payload={"source_id": str(source_id), "sha256": stored.sha256, "size": stored.size},
+    )
+    db.commit()
+    return source_response(_load_source(db, source.id))
+
+@router.post("/{source_id}/fulltext/withdraw", response_model=SourceRead)
+def withdraw_fulltext(
+    source_id: uuid.UUID,
+    project: Project = Depends(project_access(WRITE_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Delete stored full text and record the licence withdrawal without deleting the source."""
+    source = db.scalar(select(Source).where(Source.id == source_id, Source.project_id == project.id, Source.merged_into.is_(None)))
+    if source is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
+    if not source.fulltext_path:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This source has no stored full text")
+    key = source.fulltext_path
+    previous_access = dict(source.fulltext_access or {})
+    try:
+        get_object_store(get_settings()).delete(key)
+    except ObjectStorageError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Stored full text could not be deleted") from exc
+    actor = audit.user_actor(user)
+    source.fulltext_path = None
+    source.fulltext_access = {
+        "status": "withdrawn",
+        "withdrawn_at": utcnow().isoformat(),
+        "withdrawn_by": actor,
+        "previous": previous_access,
+    }
+    audit.record(
+        db,
+        actor=actor,
+        action="source.fulltext_withdrawn",
+        project_id=project.id,
+        payload={"source_id": str(source_id)},
     )
     db.commit()
     return source_response(_load_source(db, source.id))

@@ -14,6 +14,7 @@ from app.gates import (
     required_roles,
 )
 from app.models import Gate, GateCode, GateStatus, Project, ProjectRole, User, utcnow
+from app.stage_order import StageNotInChain, require_stage
 from app.schemas import GateDecision, GateRead, GateReopen
 
 router = APIRouter(prefix="/projects/{project_id}/gates", tags=["gates"])
@@ -27,12 +28,12 @@ def _reopen_problem(project: Project, gates: list[Gate], gate: Gate) -> str | No
     if gate.status != GateStatus.approved:
         return f"Gate {gate.code.value} is not approved; there is nothing to reopen"
     stage = GATE_STAGES[gate.code]
-    if stage_index(project.stage) >= stage_index(stage):
+    if stage_index(project.stage, project) >= stage_index(stage, project):
         return (
             f"The project has already reached '{stage.value}', which gate {gate.code.value} completes; "
             "go back with a re-entry instead (owner)"
         )
-    later = approved_later_gates(gates, gate.code)
+    later = approved_later_gates(gates, gate.code, project)
     if later:
         return f"Reopen the later approved gate(s) first: {', '.join(c.value for c in later)}"
     return None
@@ -40,7 +41,7 @@ def _reopen_problem(project: Project, gates: list[Gate], gate: Gate) -> str | No
 
 def _gate_read(gate: Gate, role: ProjectRole | None, project: Project, gates: list[Gate]) -> GateRead:
     roles = required_roles(gate.code)
-    waiting_for = pending_earlier_gates(gates, gate.code)
+    waiting_for = pending_earlier_gates(gates, gate.code, project)
     return GateRead(
         code=gate.code,
         status=gate.status,
@@ -75,6 +76,14 @@ def decide_gate(
     and never by the worker, executor or any agent code (a test enforces that no agent
     module imports this). Nothing approves a gate on timeout or on a human's behalf.
     """
+    try:
+        require_stage(project, GATE_STAGES[code])
+    except StageNotInChain:
+        audit.record(
+            db, actor=audit.user_actor(user), action="stage.not_in_chain", project_id=project.id,
+            payload={"stage": GATE_STAGES[code].value, "gate": code.value},
+        )
+        raise
     role = project_role(db, project, user)
     if role not in required_roles(code):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Gate {code.value} cannot be decided by your role")
@@ -87,7 +96,7 @@ def decide_gate(
         db.refresh(gate, with_for_update=True)
     if gate.status == GateStatus.approved:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Gate {code.value} is already approved")
-    waiting_for = pending_earlier_gates(gates, code)
+    waiting_for = pending_earlier_gates(gates, code, project)
     if waiting_for:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

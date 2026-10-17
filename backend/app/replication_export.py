@@ -61,6 +61,7 @@ NOT_EXPORTED = {
     "users": "accounts and emails are personal data; members are exported as user id + role",
     "external_identities": "sign-in identities (personal data)",
     "note_revisions": "history of per-user notes (see notes)",
+    "note_attachments": "binary attachments of per-user notes (private object storage)",
     "connector_breaker_state": "operational circuit-breaker state (M1.3.8), not scoped to any project",
 }
 

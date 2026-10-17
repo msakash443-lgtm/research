@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from app import audit
 from app.agent.llm import LLMConfigurationError, LLMResponseError
 from app.ai_controls import AIOffError, llm_for_project
-from app.ai_item_locks import is_locked
+from app.ai_item_locks import is_locked, locked_ids
 from app.config import get_settings
 from app.database import SessionLocal
 from app.models import Document, Note, Project, Source, SourceExcerpt as ExcerptRow
@@ -93,7 +93,7 @@ def check_request(
 
 
 def project_excerpts(db: Session, project: Project) -> list[SourceExcerpt]:
-    """One excerpt per source, for the first `MAX_SOURCES` sources that have one. Verification is carried along."""
+    """One excerpt per unlocked source, for the first `MAX_SOURCES` sources that have one."""
     sources = db.scalars(
         select(Source).where(Source.project_id == project.id, Source.merged_into.is_(None)).order_by(Source.created_at, Source.id)
     ).all()
@@ -101,6 +101,8 @@ def project_excerpts(db: Session, project: Project) -> list[SourceExcerpt]:
     for source in sources:
         if len(found) >= MAX_SOURCES:
             break
+        if is_locked(db, project.id, "source", source.id):
+            continue
         excerpt = db.scalars(
             select(ExcerptRow).where(ExcerptRow.source_id == source.id).order_by(ExcerptRow.created_at, ExcerptRow.id)
         ).first()

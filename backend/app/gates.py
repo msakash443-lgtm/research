@@ -13,9 +13,8 @@ from sqlalchemy.orm import Session
 
 from app import audit
 from app.models import Gate, GateCode, GateStatus, Project, ProjectRole, ProjectStage, Task, TaskStatus
-from app.stage_order import gate_order
+from app.stage_order import chain as stage_chain, gate_order
 from app.task_registry import REQUIRED_GATES
-
 OWNER_OR_SUPERVISOR = frozenset({ProjectRole.owner, ProjectRole.supervisor})
 OWNER_ONLY = frozenset({ProjectRole.owner})
 
@@ -44,21 +43,18 @@ def new_gates() -> list[Gate]:
 
 
 def ensure_gates(db: Session, project: Project) -> list[Gate]:
-    """The project's gates in workflow order, creating any that are missing.
-
-    Projects made outside `create_project` (databases built by create_all, direct inserts)
-    have no gate rows yet. The caller commits.
-    """
+    """The project's active gates in workflow order, creating any that are missing."""
+    active_codes = gate_order(GATE_STAGES, project)
     existing = {g.code: g for g in db.scalars(select(Gate).where(Gate.project_id == project.id))}
-    missing = [code for code in GateCode if code not in existing]
+    missing = [code for code in active_codes if code not in existing]
     if missing:
         try:
-            with db.begin_nested():  # savepoint: a concurrent request may insert the same gates
+            with db.begin_nested():
                 db.add_all(Gate(project_id=project.id, code=code) for code in missing)
         except IntegrityError:
-            pass  # the other request won; read its rows below
+            pass
         existing = {g.code: g for g in db.scalars(select(Gate).where(Gate.project_id == project.id))}
-    return [existing[code] for code in GateCode]
+    return [existing[code] for code in active_codes]
 
 
 def gate_is_approved(db: Session, project_id, code: GateCode) -> bool:
@@ -70,16 +66,18 @@ def gate_is_approved(db: Session, project_id, code: GateCode) -> bool:
 
 
 
-def pending_earlier_gates(gates: list[Gate], code: GateCode) -> list[GateCode]:
-    """Earlier gates not yet approved. A gate can be decided only when this is empty (gates go in order)."""
+def pending_earlier_gates(gates: list[Gate], code: GateCode, project: Project | None = None) -> list[GateCode]:
+    """Earlier active gates not yet approved."""
     status = {g.code: g.status for g in gates}
-    return [c for c in GATE_ORDER[: GATE_ORDER.index(code)] if status.get(c) != GateStatus.approved]
+    order = gate_order(GATE_STAGES, project)
+    return [c for c in order[: order.index(code)] if status.get(c) != GateStatus.approved]
 
 
-def approved_later_gates(gates: list[Gate], code: GateCode) -> list[GateCode]:
-    """Later gates already approved. Reopening `code` waits until these are reopened (no cascade)."""
+def approved_later_gates(gates: list[Gate], code: GateCode, project: Project | None = None) -> list[GateCode]:
+    """Later active gates already approved."""
     status = {g.code: g.status for g in gates}
-    return [c for c in GATE_ORDER[GATE_ORDER.index(code) + 1 :] if status.get(c) == GateStatus.approved]
+    order = gate_order(GATE_STAGES, project)
+    return [c for c in order[order.index(code) + 1 :] if status.get(c) == GateStatus.approved]
 
 
 def reblock_tasks_for_gate(db: Session, project_id, code: GateCode, actor: str) -> int:

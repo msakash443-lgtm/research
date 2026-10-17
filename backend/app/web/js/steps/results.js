@@ -87,7 +87,7 @@ function render(root, ctx) {
     stepId: "results",
     work: [prismaBox(ctx), knownItemsBox(ctx)],
     next: ["retrieved"],
-    stepNext: { id: "sources", title: "Sources" },
+    stepNext: "sources",
   });
 }
 

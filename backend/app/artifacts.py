@@ -27,7 +27,7 @@ from app import audit
 from app.gates import GATE_STAGES, ensure_gates
 from app.models import Artifact, ArtifactEdge, ArtifactStatus, GateCode, GateStatus, Project, ProjectStage, utcnow
 
-from app.stage_order import chain as stage_chain
+from app.stage_order import StageNotInChain, chain as stage_chain, require_stage
 
 
 class ArtifactError(ValueError):
@@ -38,13 +38,12 @@ class StageError(ArtifactError):
     """The requested stage change isn't allowed."""
 
 
-def stage_index(stage: ProjectStage) -> int:
-    return stage_chain().index(stage)
+def stage_index(stage: ProjectStage, project: Project | None = None) -> int:
+    return stage_chain(project).index(stage)
 
 
 def gate_for_stage(stage: ProjectStage) -> GateCode | None:
     return next((code for code, gated in GATE_STAGES.items() if gated == stage), None)
-
 
 # ---- registering ------------------------------------------------------------------------------
 
@@ -89,7 +88,16 @@ def register_artifact(
     actor: str,
     depends_on: tuple[Artifact, ...] = (),
 ) -> Artifact:
-    """Record that a result exists. Idempotent per (project, kind, ref_id). The caller commits."""
+    project = db.get(Project, project_id)
+    if project is not None:
+        try:
+            require_stage(project, stage)
+        except StageNotInChain:
+            audit.record(
+                db, actor=actor, action="stage.not_in_chain", project_id=project_id,
+                payload={"stage": stage.value, "kind": kind, "ref_id": str(ref_id) if ref_id is not None else ""},
+            )
+            raise
     ref = str(ref_id) if ref_id is not None else ""
     artifact = db.scalar(select(Artifact).where(Artifact.project_id == project_id, Artifact.kind == kind, Artifact.ref_id == ref))
     if artifact is None:
@@ -134,15 +142,15 @@ def reenter_stage(db: Session, project: Project, target: ProjectStage, *, actor:
     (decided with the owner 2026-10-12; before, the target kept its gate and artifacts).
     """
     current = project.stage
-    if stage_index(target) > stage_index(current):
+    if stage_index(target, project) > stage_index(current, project):
         raise StageError(f"Re-entry must go to the current stage or an earlier one; the project is at '{current.value}'")
-    cutoff = stage_index(target)
+    cutoff = stage_index(target, project)
     result = Reentry(current, target, reason)
     note = f"Re-entered '{target.value}' from '{current.value}': {reason}"
 
     artifacts = db.scalars(select(Artifact).where(Artifact.project_id == project.id)).all()
     by_id = {a.id: a for a in artifacts}
-    later = {a.id for a in artifacts if stage_index(a.stage) >= cutoff}
+    later = {a.id for a in artifacts if stage_index(a.stage, project) >= cutoff}
     for artifact_id in later:
         artifact = by_id[artifact_id]
         if artifact.status == ArtifactStatus.current:
@@ -157,7 +165,7 @@ def reenter_stage(db: Session, project: Project, target: ProjectStage, *, actor:
 
     # The approvals belonging to stages we are going back over are void: a person must decide again.
     for gate in ensure_gates(db, project):
-        if stage_index(GATE_STAGES[gate.code]) >= cutoff and gate.status != GateStatus.pending:
+        if stage_index(GATE_STAGES[gate.code], project) >= cutoff and gate.status != GateStatus.pending:
             audit.record(
                 db, actor=actor, action="gate.reset", project_id=project.id,
                 payload={"gate": gate.code.value, "previous_status": gate.status.value, "previous_decided_by": gate.decided_by,
@@ -169,7 +177,7 @@ def reenter_stage(db: Session, project: Project, target: ProjectStage, *, actor:
             gate.note = None
             result.gates_reset.append(gate.code)
 
-    result.stages_to_redo = [(s, gate_for_stage(s)) for s in stage_chain(project) if cutoff <= stage_index(s) <= stage_index(current)]
+    result.stages_to_redo = [(s, gate_for_stage(s)) for s in stage_chain(project) if cutoff <= stage_index(s, project) <= stage_index(current, project)]
     project.stage = target
     project.touch()
     audit.record(
@@ -196,9 +204,9 @@ def unreplaced_stale(db: Session, project: Project, up_to: ProjectStage) -> list
     stage, was registered no earlier than it went stale (Decisions log 2026-10-07). Regenerating the same
     record (`refresh_artifact`) makes it current, so it is not listed at all.
     """
-    limit = stage_index(up_to)
+    limit = stage_index(up_to, project)
     artifacts = db.scalars(select(Artifact).where(Artifact.project_id == project.id)).all()
-    relevant = [a for a in artifacts if stage_index(a.stage) <= limit]
+    relevant = [a for a in artifacts if stage_index(a.stage, project) <= limit]
     current = [a for a in relevant if a.status == ArtifactStatus.current]
     blocking = []
     for artifact in relevant:
@@ -213,7 +221,7 @@ def unreplaced_stale(db: Session, project: Project, up_to: ProjectStage) -> list
         )
         if not replaced:
             blocking.append(artifact)
-    return sorted(blocking, key=lambda a: (stage_index(a.stage), a.kind, a.ref_id))
+    return sorted(blocking, key=lambda a: (stage_index(a.stage, project), a.kind, a.ref_id))
 
 
 def rerun_path(db: Session, project: Project) -> list[dict]:

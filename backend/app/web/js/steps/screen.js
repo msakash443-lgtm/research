@@ -151,7 +151,7 @@ async function render(root, ctx) {
   }
   const criteria = ctx.summary.criteria?.criteria || [];
   const exclusions = criteria.filter((c) => c.kind === "exclude");
-  const state = { items: queue.items, counts: queue.counts, pending: queue.pending, index: 0, showAi: true, undoStack: [], busy: false, selected: new Set() };
+  const state = { items: queue.items, counts: queue.counts, pending: queue.pending, index: 0, showAi: true, undoStack: [], busy: false, selected: new Set(), hiddenAi: new Set() };
   const canDecide = ctx.canWrite && !queue.locked;
 
   const header = el("p", { className: "screen-counts" });
@@ -233,7 +233,7 @@ async function render(root, ctx) {
     );
     done.forEach((id) => {
       state.selected.delete(id);
-      state.undoStack.push(id);
+      state.undoStack.push({ sourceId: id });
       const at = state.items.findIndex((i) => i.source_id === id);
       if (at >= 0) state.items.splice(at, 1);
       state.pending = Math.max(0, state.pending - 1);
@@ -315,6 +315,11 @@ async function render(root, ctx) {
       ai.append(el("h3", { text: "AI suggestion, not a decision" }), el("p", { className: "muted small", text: "—" }));
     } else if (!state.showAi) {
       ai.append(el("h3", { text: "AI suggestion, not a decision" }), el("p", { className: "muted small", text: "Hidden. Press A to show it." }));
+    } else if (state.hiddenAi.has(item.source_id) || ["discarded", "locked"].includes(s?.state)) {
+      ai.append(
+        el("h3", { text: "AI suggestion, not a decision" }),
+        el("p", { className: "muted small", text: "No active AI suggestion for this record." })
+      );
     } else if (!s) {
       ai.append(
         el("h3", { text: "AI suggestion, not a decision" }),
@@ -324,10 +329,26 @@ async function render(root, ctx) {
       // The shared panel (X.46.4): Accept records YOUR decision, Discard sets it aside, nothing is decided until you act.
       const wanted = item.source_id;
       ai.append(el("p", { className: "muted small", text: "Loading the AI suggestion…" }));
-      suggestionPanel(ctx, { targetKind: "screening", targetId: wanted, onChange: reloadQueue }).then((panel) => {
-        if (current()?.source_id !== wanted || !state.showAi) return; // the person moved on while it loaded
+      suggestionPanel({ ...ctx, canWrite: canDecide }, {
+        targetKind: "screening",
+        targetId: wanted,
+        onChange: async (path, area) => {
+          if (area === "/ai-locks" || /\/discard$/.test(path)) state.hiddenAi.add(wanted);
+          if (/\/restore$/.test(path)) state.hiddenAi.delete(wanted);
+          if (/\/(?:accept|edit-accept)$/.test(path)) state.undoStack.push({ sourceId: wanted, suggestionId: path.split("/")[1] });
+          await reloadQueue();
+        },
+      }).then((panel) => {
+        if (current()?.source_id !== wanted || !state.showAi) return;
         if (panel.querySelector(".suggestion-card")) {
           ai.replaceChildren(panel);
+          return;
+        }
+        if (state.hiddenAi.has(wanted)) {
+          ai.replaceChildren(
+            el("h3", { text: "AI suggestion, not a decision" }),
+            el("p", { className: "muted small", text: "No active AI suggestion for this record." })
+          );
           return;
         }
         // A pre-screen row written before suggestions were stored through the panel: show it read-only.
@@ -406,7 +427,7 @@ async function render(root, ctx) {
         method: "POST",
         body: JSON.stringify({ source_id: item.source_id, stage: STAGE, decision, reason_code: reasonCode, note }),
       });
-      state.undoStack.push(item.source_id);
+      state.undoStack.push({ sourceId: item.source_id });
       // Remove by id, and keep the person on the record they are now viewing: they may have moved on while the
       // request was in flight.
       const keep = current()?.source_id;
@@ -438,11 +459,16 @@ async function render(root, ctx) {
   }
 
   async function undo() {
-    const sourceId = state.undoStack[state.undoStack.length - 1];
+    const entry = state.undoStack[state.undoStack.length - 1];
+    const sourceId = entry?.sourceId;
     if (!sourceId || !canDecide || state.busy) return;
     state.busy = true;
     try {
-      await request(api("/decisions/undo"), { method: "POST", body: JSON.stringify({ source_id: sourceId, stage: STAGE }) });
+      const undoPath = entry.suggestionId ? `/suggestions/${entry.suggestionId}/undo` : null;
+      await request(undoPath ? projectApi(ctx.project.id, undoPath) : api("/decisions/undo"), {
+        method: "POST",
+        ...(undoPath ? {} : { body: JSON.stringify({ source_id: sourceId, stage: STAGE }) }),
+      });
       state.undoStack.pop();
       // The undo has been recorded: the record is waiting again even if the reload below fails, so count it now.
       state.pending += 1;

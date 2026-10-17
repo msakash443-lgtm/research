@@ -873,6 +873,8 @@ class Note(Timestamped, Base):
     body: Mapped[str] = mapped_column(Text, default="")
     quoted_text: Mapped[str | None] = mapped_column(Text)
     source_url: Mapped[str | None] = mapped_column(String(2000))
+    source_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("sources.id"), index=True)
+    excerpt_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("source_excerpts.id"), index=True)
     locator: Mapped[str | None] = mapped_column(String(255))
     status: Mapped[NoteStatus] = mapped_column(Enum(NoteStatus, name="note_status"), default=NoteStatus.inbox, server_default=NoteStatus.inbox.value)
     ai_locked: Mapped[bool] = mapped_column(default=False, server_default=false())
@@ -880,6 +882,7 @@ class Note(Timestamped, Base):
     captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     device: Mapped[str | None] = mapped_column(String(40))
     revisions: Mapped[list["NoteRevision"]] = relationship(back_populates="note", cascade="all, delete-orphan", order_by="NoteRevision.revision")
+    attachments: Mapped[list["NoteAttachment"]] = relationship(back_populates="note", cascade="all, delete-orphan", order_by="NoteAttachment.created_at")
 
 
 class NoteRevision(Base):
@@ -896,6 +899,18 @@ class NoteRevision(Base):
     edited_by: Mapped[str | None] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     note: Mapped[Note] = relationship(back_populates="revisions")
+
+class NoteAttachment(Timestamped, Base):
+    """A private binary attachment belonging to a quick-capture note."""
+
+    __tablename__ = "note_attachments"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    note_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("notes.id"), index=True)
+    path: Mapped[str] = mapped_column(String(1000), unique=True)
+    media_type: Mapped[str] = mapped_column(String(100))
+    size: Mapped[int]
+    sha256: Mapped[str] = mapped_column(String(64))
+    note: Mapped[Note] = relationship(back_populates="attachments")
 
 
 class AiSuggestion(Base):

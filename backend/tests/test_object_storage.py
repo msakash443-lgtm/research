@@ -40,6 +40,14 @@ def test_put_then_get_round_trips_bytes_and_reports_hash(store):
     assert store.stat("projects/p/sources/s/fulltext.pdf") == stored
 
 
+def test_delete_is_idempotent_and_removes_local_object(store):
+    key = "projects/p/sources/s/fulltext.pdf"
+    store.put(key, b"pdf")
+    store.delete(key)
+    store.delete(key)
+    assert not store.exists(key)
+
+
 def test_missing_object_raises_not_found(store):
     assert not store.exists("nope.txt")
     with pytest.raises(ObjectNotFound):
@@ -222,6 +230,9 @@ class _FakeS3Transport(httpx.BaseTransport):
             return httpx.Response(200, content=self.objects[key])
         if request.method == "HEAD":
             return httpx.Response(200 if key in self.objects else 404)
+        if request.method == "DELETE":
+            self.objects.pop(key, None)
+            return httpx.Response(204)
         raise AssertionError(f"unexpected method {request.method}")
 
 
@@ -254,6 +265,16 @@ def test_s3_put_then_get_round_trips_bytes_and_reports_hash():
     assert store.get("projects/p/sources/s/fulltext.pdf") == data
     assert store.exists("projects/p/sources/s/fulltext.pdf")
     assert store.stat("projects/p/sources/s/fulltext.pdf") == stored
+
+
+def test_s3_delete_is_idempotent():
+    transport = _FakeS3Transport()
+    store = _s3_store(transport)
+    key = "projects/p/sources/s/fulltext.pdf"
+    store.put(key, b"pdf")
+    store.delete(key)
+    store.delete(key)
+    assert not store.exists(key)
 
 
 def test_s3_missing_object_raises_not_found():

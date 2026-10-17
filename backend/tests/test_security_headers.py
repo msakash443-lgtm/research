@@ -20,3 +20,15 @@ def test_hsts_is_not_sent_in_development(monkeypatch):
     assert "Strict-Transport-Security" not in response.headers
     # The other headers still apply in development.
     assert response.headers["X-Frame-Options"] == "DENY"
+
+
+def test_microphone_policy_allows_same_origin_capture_only():
+    response = TestClient(main.app).get("/health")
+    assert response.headers["Permissions-Policy"] == "camera=(), microphone=(self), geolocation=()"
+
+
+def test_offline_shell_assets_are_served():
+    client = TestClient(main.app)
+    assert client.get("/sw.js").status_code == 200
+    assert "outbox-sync" in client.get("/sw.js").text
+    assert client.get("/manifest.webmanifest").json()["start_url"] == "/"

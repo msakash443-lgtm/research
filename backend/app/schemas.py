@@ -328,6 +328,7 @@ class StageOptionRead(BaseModel):
 class StageChainItem(BaseModel):
     stage: ProjectStage
     gate: GateCode | None
+    label: str | None = None
 
 
 class StageRead(BaseModel):
@@ -343,6 +344,19 @@ class DisciplineProfileRead(BaseModel):
     label: str
     description: str
     settings: ProfileSettings
+
+
+class ResearchTypeRead(BaseModel):
+    name: str
+    version: int
+    label: str
+    description: str
+    human_participants: bool
+    stages: list[StageStep]
+
+
+class ResearchTypeUpdate(BaseModel):
+    name: str = Field(min_length=2, max_length=60, pattern=r"^[a-z][a-z0-9_]{1,59}$")
 
 
 class ProfileUpdate(BaseModel):
@@ -411,6 +425,38 @@ class NoteCreate(BaseModel):
         return self
 
 
+class NoteAttachmentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    media_type: str
+    size: int
+    sha256: str
+    created_at: datetime
+class HighlightCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    client_id: str = Field(min_length=1, max_length=64)
+    source_id: uuid.UUID
+    quoted_text: str = Field(min_length=1, max_length=5000)
+    body: str = Field(default="", max_length=20000)
+    locator: str | None = Field(default=None, max_length=255)
+    captured_at: datetime | None = None
+
+    @field_validator("quoted_text", "body", "locator")
+    @classmethod
+    def _strip_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        return value or None
+
+    @model_validator(mode="after")
+    def _require_quote(self) -> "HighlightCreate":
+        if not self.quoted_text:
+            raise ValueError("A highlight needs quoted text")
+        return self
+
+
+
 class NoteRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID
@@ -419,16 +465,17 @@ class NoteRead(BaseModel):
     status: NoteStatus
     body: str
     quoted_text: str | None
-    source_url: str | None
+    source_id: uuid.UUID | None
+    excerpt_id: uuid.UUID | None
     locator: str | None
     ai_locked: bool
     revision: int
     captured_at: datetime
     device: str | None
     owner_id: uuid.UUID
+    attachments: list[NoteAttachmentRead] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
-
 
 class NotePatch(BaseModel):
     model_config = ConfigDict(extra="forbid")

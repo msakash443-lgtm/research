@@ -79,6 +79,8 @@ class ObjectStore(Protocol):
 
     def stat(self, key: str) -> StoredObject: ...
 
+    def delete(self, key: str) -> None: ...
+
 
 def validate_key(key: str) -> str:
     """Return `key` unchanged if it is a safe relative key, else raise `InvalidObjectKey`."""
@@ -187,6 +189,12 @@ class LocalDiskStore(_StatByReading):
 
     def exists(self, key: str) -> bool:
         return self._path(key).is_file()
+    def delete(self, key: str) -> None:
+        path = self._path(key)
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            return
 
 
 _UNSUPPORTED_CONDITIONAL_STATUSES = frozenset({400, 405, 501})
@@ -340,6 +348,10 @@ class S3Store(_StatByReading):
         if response.status_code != 200:
             raise ObjectStorageError(f"S3 GET {key!r} failed: {response.status_code} {_safe_body(response)}")
         return response.content
+    def delete(self, key: str) -> None:
+        response = self._send("DELETE", key)
+        if response.status_code not in (200, 204, 404):
+            raise ObjectStorageError(f"S3 DELETE {key!r} failed: {response.status_code} {_safe_body(response)}")
 
     def exists(self, key: str) -> bool:
         response = self._send("HEAD", key)

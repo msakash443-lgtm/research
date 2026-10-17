@@ -6,14 +6,15 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from app import task_queue as q
+from app import task_queue as q, research_types
 from app import task_registry as registry
 from app import task_runner, worker
-from gate_helpers import approve_earlier_gates
-from app.database import SessionLocal
 from app.gates import ensure_gates, release_tasks_for_approved_gates
+from gate_helpers import approve_earlier_gates
 from app.main import app
+from app.database import SessionLocal
 from app.models import AuditEvent, Gate, GateCode, GateStatus, Project, ProjectMember, ProjectRole, Task, TaskStatus
+from app.stage_order import StageNotInChain
 
 
 def _login(email):
@@ -63,6 +64,26 @@ def _task(task_id):
 def _approve(team, who, code="G2"):
     approve_earlier_gates(team["project"], code)  # gates go in order (M0.5.10)
     return team[who].post(f"/api/projects/{team['project']}/gates/{code}/approve", json={"note": "ok"})
+def test_dropped_gate_task_and_gate_decision_are_rejected_and_audited(team):
+    with SessionLocal() as db:
+        project = db.get(Project, uuid.UUID(team["project"]))
+        project.research_type = "literature_review"
+        project.stage_plan_json = research_types.load_research_type("literature_review").model_dump(mode="json")
+        db.commit()
+
+    registry.register("analysis_task", requires_gate=GateCode.G8)(lambda task: None)
+    try:
+        with SessionLocal() as db:
+            with pytest.raises(StageNotInChain):
+                q.enqueue_task(db, uuid.UUID(team["project"]), "analysis_task", {"q": "x"}, actor="tester")
+            db.flush()
+            assert db.scalar(select(AuditEvent).where(AuditEvent.action == "stage.not_in_chain")) is not None
+    finally:
+        registry.HANDLERS.pop("analysis_task", None)
+        registry.REQUIRED_GATES.pop("analysis_task", None)
+
+    response = team["owner"].post(f"/api/projects/{team['project']}/gates/G8/approve", json={"note": "no"})
+    assert response.status_code == 409
 
 
 def test_a_task_whose_gate_is_pending_starts_blocked_and_is_never_claimed(gated_type, team):

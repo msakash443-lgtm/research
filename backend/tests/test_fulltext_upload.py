@@ -14,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pypdf import PdfWriter
 
+from app.object_storage import ObjectNotFound, get_object_store
 from app.config import get_settings
 from app.main import app
 from tests.test_fulltext import make_pdf
@@ -61,6 +62,22 @@ def test_a_valid_pdf_is_stored_and_flagged_as_a_manual_upload():
     # Persisted, not just returned once.
     stored = client.get(f"/api/projects/{project_id}/sources").json()[0]
     assert stored["fulltext_path"] == body["fulltext_path"]
+
+def test_withdrawing_full_text_deletes_the_object_and_records_licence_withdrawal():
+    client = _login("withdraw@example.com")
+    project_id, source_id = _source(client, "Withdrawn paper")
+    uploaded = _upload(client, project_id, source_id, PDF)
+    key = uploaded.json()["fulltext_path"]
+
+    response = client.post(f"/api/projects/{project_id}/sources/{source_id}/fulltext/withdraw")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["fulltext_path"] is None
+    assert body["fulltext_access"]["status"] == "withdrawn"
+    assert body["fulltext_access"]["previous"]["status"] == "stored"
+    with pytest.raises(ObjectNotFound):
+        get_object_store(get_settings()).get(key)
 
 
 def test_the_wrong_content_type_is_refused_before_anything_is_read():

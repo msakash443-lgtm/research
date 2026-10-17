@@ -1,19 +1,50 @@
 import uuid
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app import audit
+from app import audit, research_types
 from app.agent.context import select_agent_context
 from app.ai_item_locks import CONTEXT_ITEM_KIND, locked_ids
 from app.database import get_db
 from app.gates import new_gates
-from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_access
-from app.models import ContextKind, Project, ProjectMember, ProjectRole, ResearchContextItem, User
-from app.schemas import ContextItemCreate, ContextItemRead, ProjectCreate, ProjectRead
+from app.dependencies import MANAGE_ROLES, READ_ROLES, WRITE_ROLES, current_user, project_access
+from app.models import ContextKind, Gate, GateStatus, Project, ProjectMember, ProjectRole, ResearchContextItem, ProjectStage, User
+from app.schemas import ContextItemCreate, ContextItemRead, ProjectCreate, ProjectRead, ResearchTypeRead, ResearchTypeUpdate
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+catalogue = APIRouter(prefix="/research-types", tags=["research types"])
+@catalogue.get("", response_model=list[ResearchTypeRead])
+def list_research_types(user: User = Depends(current_user)):
+    return [research_types.load_research_type(name) for name in research_types.available_research_types()]
+
+
+
+@router.put("/{project_id}/research-type", response_model=ResearchTypeRead)
+def update_research_type(
+    payload: ResearchTypeUpdate,
+    project: Project = Depends(project_access(MANAGE_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    if project.stage != ProjectStage.idea:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Research type can only change at the idea stage")
+    if db.scalar(select(Gate.id).where(Gate.project_id == project.id, Gate.status == GateStatus.approved)) is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Research type cannot change after a gate is approved")
+    try:
+        selected = research_types.load_research_type(payload.name)
+    except research_types.ResearchTypeError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    project.research_type = selected.name
+    project.stage_plan_json = selected.model_dump(mode="json")
+    project.touch()
+    audit.record(
+        db, actor=audit.user_actor(user), action="project.research_type_changed", project_id=project.id,
+        payload={"research_type": selected.name, "version": selected.version},
+    )
+    db.commit()
+    return selected
 
 
 @router.get("", response_model=list[ProjectRead])

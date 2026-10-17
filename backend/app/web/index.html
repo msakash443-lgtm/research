@@ -6,9 +6,10 @@
     <meta name="theme-color" content="#fcfcfa" />
     <title>Research AI</title>
     <link rel="stylesheet" href="/assets/styles.css" />
-  </head>
+    <link rel="manifest" href="/manifest.webmanifest" />
+</head>
   <body>
-    <main class="shell">
+    <div class="shell">
       <header class="topbar">
         <div class="topbar-start">
           <button id="nav-toggle" class="menu-toggle" type="button" aria-label="Open projects" aria-controls="nav-sidebar" aria-expanded="false" hidden><span></span><span></span><span></span></button>
@@ -19,8 +20,8 @@
           <span id="role-chip" class="role-chip" hidden></span>
           <span id="ai-chip" class="role-chip" hidden></span>
           <a id="inbox-button" class="quiet-button" href="#/inbox">Inbox</a>
-          <button id="notes-button" class="quiet-button" type="button">Notes</button>
-          <button id="capture-button" class="quiet-button" type="button">Capture</button>
+          <button id="notes-button" class="quiet-button" type="button" aria-controls="notes-dialog" aria-haspopup="dialog">Notes</button>
+          <button id="capture-button" class="quiet-button" type="button" aria-controls="capture-dialog" aria-haspopup="dialog">Capture</button>
           <button id="memory-toggle" class="quiet-button" type="button" aria-controls="memory-sidebar" aria-expanded="false" hidden>Memory</button>
           <span id="account-name"></span>
           <button id="logout" class="quiet-button">Sign out</button>
@@ -85,7 +86,7 @@
           <div id="memory-body"></div>
         </aside>
       </section>
-    </main>
+    </div>
 
     <div id="guide-popover" class="popover" popover="auto">
       <h3 id="guide-what"></h3>
@@ -183,12 +184,12 @@
 
     <dialog id="confirm-dialog"><div class="dialog-heading"><h2 id="confirm-title"></h2><button type="button" class="close" data-close>×</button></div><p id="confirm-message"></p><div class="dialog-actions"><button type="button" class="quiet-button" data-close>Cancel</button><button type="button" id="confirm-ok">Confirm</button></div></dialog>
 
-    <dialog id="capture-dialog"><form id="capture-form" method="dialog">
-      <div class="dialog-heading"><h2>New note</h2><button type="button" class="close" data-close>×</button></div>
+    <dialog id="capture-dialog" aria-labelledby="capture-title"><form id="capture-form" method="dialog">
+      <div class="dialog-heading"><h2 id="capture-title">New note</h2><button type="button" class="close" data-close aria-label="Close new note dialog">×</button></div>
       <input type="hidden" name="kind" value="typed" />
       <div class="dialog-tabs" role="group" aria-label="What kind of note">
-        <button type="button" class="tab-button active" data-capture-kind="typed">Note</button>
-        <button type="button" class="tab-button" data-capture-kind="clip">Web link</button>
+        <button type="button" class="tab-button active" data-capture-kind="typed" aria-pressed="true">Note</button>
+        <button type="button" class="tab-button" data-capture-kind="clip" aria-pressed="false">Web link</button>
       </div>
       <label>Note<textarea name="body" maxlength="20000" placeholder="Type a thought, hunch or lead…" autofocus></textarea></label>
       <label id="capture-link-field" hidden>Link<input type="url" name="source_url" maxlength="2000" placeholder="https://…" /></label>
@@ -198,8 +199,8 @@
       <div class="dialog-actions"><button type="button" class="quiet-button" data-close>Cancel</button><button type="submit">Save</button></div>
     </form></dialog>
 
-    <dialog id="notes-dialog" class="wide-dialog">
-      <div class="dialog-heading"><h2>My notes</h2><button type="button" class="close" data-close>×</button></div>
+    <dialog id="notes-dialog" class="wide-dialog" aria-labelledby="notes-title">
+      <div class="dialog-heading"><h2 id="notes-title">My notes</h2><button type="button" class="close" data-close aria-label="Close notes dialog">×</button></div>
       <div id="notes-list" class="notes-list"></div>
     </dialog>
 

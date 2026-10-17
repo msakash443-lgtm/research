@@ -20,7 +20,7 @@ from app.agent.llm import LLMResponseError, OpenAICompatibleLLM
 from app.models import Project, ScreeningCriterion, SeedCheckRun, SeedPaper
 from app.prescreen import PrescreenError, load_prescreen_prompt, prescreen_source
 from app.screening import autoexclude_threshold, screenable_sources
-from app.ai_item_locks import locked_ids
+from app.ai_item_locks import is_locked
 
 
 def run_seed_check(
@@ -44,7 +44,7 @@ def run_seed_check(
         select(SeedPaper).where(SeedPaper.project_id == project.id).order_by(SeedPaper.created_at, SeedPaper.id)
     ).all()
     threshold = autoexclude_threshold(project, autoexclude_default_threshold)
-    locked = locked_ids(db, project.id, "source")  # "never for this item": a locked source is never sent to the model
+    locked = set()
 
     entries: list[dict] = []
     for match in seed_check.match_seeds(seeds, screenable_sources(db, project)):
@@ -53,7 +53,7 @@ def run_seed_check(
             entries.append({**entry, "status": match.status})
             continue
         entry.update(source_id=str(match.source.id), matched_by=match.matched_by)
-        if str(match.source.id) in locked:
+        if is_locked(db, project.id, "source", match.source.id):
             entries.append({**entry, "status": seed_check.AI_LOCKED})
             continue
         if ensure_owned:
@@ -62,6 +62,9 @@ def run_seed_check(
             suggestion = prescreen_source(llm, criteria, match.source, min_confidence=min_confidence, prompt=prompt)
         except (PrescreenError, LLMResponseError) as exc:
             entries.append({**entry, "status": seed_check.FAILED, "reason": str(exc)[:300]})
+            continue
+        if is_locked(db, project.id, "source", match.source.id):
+            entries.append({**entry, "status": seed_check.AI_LOCKED})
             continue
         entries.append({
             **entry,

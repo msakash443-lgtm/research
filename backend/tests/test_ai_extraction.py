@@ -13,7 +13,7 @@ from app.database import SessionLocal
 from app.extraction_schema import ExtractionSchema, FieldSpec
 from app.fulltext import FullText, Page, Section
 from app.main import app
-from app.models import AuditEvent, Extraction, ProjectExtractionSchema, Source, Task, TaskStatus
+from app.models import AiSuggestion, AuditEvent, Extraction, ProjectExtractionSchema, Source, Task, TaskStatus
 from app.object_storage import fulltext_key
 from app.task_runner import run_one_task
 from tests.test_fulltext import make_pdf
@@ -185,6 +185,12 @@ def test_ai_extraction_runs_only_on_stored_pdf_and_persists_unverified_provenanc
         assert extraction.schema_version == "project:brief@1"
         assert extraction.model_id == "fake-model" and extraction.prompt_version == "evidence_extraction@1"
         assert extraction.extracted_by == "ai" and extraction.verified_by_human is False
+        suggestions = db.scalars(select(AiSuggestion).where(
+            AiSuggestion.target_kind == "extraction", AiSuggestion.target_id == str(extraction.id)
+        )).all()
+        assert len(suggestions) == 1
+        assert suggestions[0].target_field == "research_question"
+        assert suggestions[0].evidence_json[0]["quote"] == "We study burnout among nurses."
         assert (extraction.agreement_json is not None) is double_extract
         if double_extract:
             assert extraction.agreement_json["fields"] == {"research_question": "disagree"}

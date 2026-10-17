@@ -13,6 +13,31 @@ import { advanceCard } from "./common.js";
 
 export const LEVEL_LABEL = { required: "Must do", recommended: "Advisable", information: "Good practice" };
 
+const STALE_WORK = {
+  criteria: new Set(["criteria"]),
+  results: new Set(["search_run"]),
+  sources: new Set(["search_run"]),
+  screen: new Set(["screening_decision"]),
+  evidence: new Set(["extraction"]),
+  verification: new Set(["extraction"]),
+  ask: new Set(["research_run"]),
+};
+
+export function staleWorkBanner(ctx, stepId) {
+  const kinds = STALE_WORK[stepId];
+  if (!kinds) return null;
+  const stale = (ctx.summary.staleArtifacts || []).filter((artifact) => kinds.has(artifact.kind));
+  if (!stale.length) return null;
+  const box = el("div", { className: "next-step stale-work" });
+  box.append(el("h3", { text: "Needs redoing" }));
+  const list = el("ul", { className: "warning-list" });
+  stale.forEach((artifact) =>
+    list.append(el("li", { text: artifact.stale_reason || "Earlier work changed; redo this step before relying on it." }))
+  );
+  box.append(list);
+  return box;
+}
+
 // The journey is the screens in reading order; Research path and the Project group are not part of it.
 const JOURNEY = STEPS.filter((step) => step.id !== "guide" && step.group !== "Project");
 
@@ -48,13 +73,38 @@ function unmetConditions(options) {
   return unmet.sort((a, b) => (a.level === b.level ? 0 : a.level === "required" ? -1 : 1));
 }
 
-function conditionBox(conditions) {
+function fixHref(ctx, fix) {
+  if (!fix) return null;
+  if (/^Approve\b/i.test(fix)) return `#/p/${ctx.project.id}/approvals`;
+  const match = fix.match(/^([^:]+):/);
+  if (!match) return null;
+  const routes = {
+    Scope: "scope",
+    Criteria: "criteria",
+    Search: "search",
+    "Results check": "results",
+    Results: "results",
+    Sources: "sources",
+    Screening: "screen",
+    "Extraction review": "approvals",
+    Extraction: "evidence",
+    Verification: "verification",
+    Ask: "ask",
+    Write: "write",
+    Approvals: "approvals",
+  };
+  const key = match[1].trim();
+  if (!Object.hasOwn(routes, key)) return null;
+  return `#/p/${ctx.project.id}/${routes[key]}`;
+}
+
+function conditionBox(ctx, conditions) {
   const box = el("div", { className: "next-step condition-box" });
   box.append(el("h3", { text: "Before you move on" }));
   const list = el("ul", { className: "condition-list" });
   conditions.forEach((condition) => {
     const item = el("li", { className: `condition condition-${condition.level}` });
-    const message = condition.message.charAt(0).toUpperCase() + condition.message.slice(1);
+    const message = condition.message;
     item.append(
       el("span", { className: `level-badge level-${condition.level}`, text: LEVEL_LABEL[condition.level] || label(condition.level) }),
       el("strong", { text: ` ${message}` })
@@ -62,11 +112,27 @@ function conditionBox(conditions) {
     if (condition.level === "recommended") {
       item.append(el("p", { className: "muted small", text: "You can move on without this, but you will be asked to write a reason." }));
     }
-    if (condition.fix) item.append(el("p", { className: "muted small", text: `Where: ${condition.fix}` }));
+    const href = fixHref(ctx, condition.fix);
+    if (condition.fix) {
+      item.append(el("p", { className: "muted small", text: `Where: ${condition.fix}` }));
+      if (href) {
+        item.append(el("a", {
+          className: "back-link condition-fix",
+          href,
+          text: "Fix this",
+          attrs: { "aria-label": `Fix: ${condition.message}` },
+        }));
+      }
+    }
     list.append(item);
   });
   box.append(list);
   return box;
+}
+
+export function conditionFixLink(ctx, condition) {
+  const href = fixHref(ctx, condition.fix);
+  return href ? { href, text: "Fix this" } : null;
 }
 
 export function renderFrame(root, ctx, { stepId, work, ai = null, next = [], stepNext = null }) {
@@ -76,8 +142,9 @@ export function renderFrame(root, ctx, { stepId, work, ai = null, next = [], ste
   const nodes = [];
 
   const conditions = unmetConditions(options);
-  if (conditions.length) nodes.push(conditionBox(conditions));
-
+  if (conditions.length) nodes.push(conditionBox(ctx, conditions));
+  const stale = staleWorkBanner(ctx, stepId);
+  if (stale) nodes.push(stale);
   nodes.push(...work);
   if (ai) nodes.push(ai);
 

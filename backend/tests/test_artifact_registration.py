@@ -7,12 +7,13 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from app import artifacts as art
+from app import artifacts as art, research_types
 from app.config import get_settings
 from app.connectors.base import ConnectorBase, PaperRecord, SearchPage, SearchRequest
 from app.database import SessionLocal
 from app.main import app
-from app.models import Artifact, ArtifactStatus, Project, ProjectStage as S, User
+from app.models import Artifact, ArtifactStatus, AuditEvent, Project, ProjectStage as S, User
+from app.stage_order import StageNotInChain
 from app.search_query import BooleanQuery, ConceptBlock
 from app.search_runner import run_search
 from gate_helpers import approve_earlier_gates
@@ -176,3 +177,28 @@ def test_verifying_a_stale_extraction_makes_its_artifact_current_again(world, mo
     assert world["owner"].post(f"/api/projects/{world['pid']}/extractions/{extraction_id}/verify", json=VERIFY).status_code == 200
     assert _statuses(world["pid"], "extraction") == {ArtifactStatus.current}
     assert len(_artifacts(world["pid"], "extraction")) == 1
+def test_registering_artifact_for_dropped_stage_fails_and_audits(world):
+    with SessionLocal() as db:
+        project = db.get(Project, uuid.UUID(world["pid"]))
+        project.research_type = "literature_review"
+        project.stage_plan_json = research_types.load_research_type("literature_review").model_dump(mode="json")
+        db.commit()
+
+    with SessionLocal() as db:
+        with pytest.raises(StageNotInChain):
+            art.register_artifact(
+                db,
+                uuid.UUID(world["pid"]),
+                "dropped_stage",
+                None,
+                S.plan_locked,
+                actor="tester",
+            )
+        db.flush()
+        event = db.scalar(
+            select(AuditEvent).where(
+                AuditEvent.project_id == uuid.UUID(world["pid"]),
+                AuditEvent.action == "stage.not_in_chain",
+            )
+        )
+        assert event is not None

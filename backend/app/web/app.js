@@ -5,7 +5,7 @@ import { STAGES, STEPS, GROUPS, GUIDES, STEP_IDS, stepStatus, setStageChain } fr
 import { renderMemory } from "./js/memory.js";
 import { aiLevel } from "./js/aiLevels.js";
 import { renderInbox } from "./js/inbox.js";
-import { parseInboxRoute } from "./js/inboxLogic.js";
+import { enqueueCapture, flushOutbox, pendingCount, registerOfflineSync } from "./js/offlineOutbox.js";
 
 import overview from "./js/steps/overview.js";
 import guide from "./js/steps/guide.js";
@@ -35,6 +35,22 @@ const state = {
   cache: { profiles: null, connectors: null, guide: null },
   pollTimer: null,
 };
+
+async function sendOutbox(path, payload) {
+  return request(path, { method: "POST", body: JSON.stringify(payload) });
+}
+
+async function syncOfflineCaptures() {
+  const chooseConflict = () => {
+    const answer = window.prompt("Offline capture conflict. Choose mine, theirs, or both.", "mine");
+    return ["mine", "theirs", "both"].includes(answer) ? answer : "mine";
+  };
+  const result = await flushOutbox(sendOutbox, chooseConflict);
+  if (result.sent) toast(`Synced ${result.sent} offline capture${result.sent === 1 ? "" : "s"}.`);
+  return result;
+}
+
+registerOfflineSync(syncOfflineCaptures);
 
 function buildCtx() {
   const role = state.role;
@@ -401,6 +417,25 @@ $("#guide-popover").addEventListener("beforetoggle", (event) => {
   $("#guide-approval").textContent = guide.approval || "";
 });
 
+function prepareDialogsForAssistiveTech() {
+  document.querySelectorAll("dialog").forEach((dialog, index) => {
+    if (!dialog.getAttribute("aria-labelledby")) {
+      const heading = dialog.querySelector("h2, h3");
+      if (heading) {
+        if (!heading.id) heading.id = `dialog-title-${index}`;
+        dialog.setAttribute("aria-labelledby", heading.id);
+      }
+    }
+    dialog.querySelectorAll(".close").forEach((button) => {
+      if (!button.getAttribute("aria-label")) {
+        button.setAttribute("aria-label", "Close dialog");
+      }
+    });
+  });
+}
+
+prepareDialogsForAssistiveTech();
+
 $("#new-project").addEventListener("click", () => {
   setDrawer(null);
   $("#project-dialog").showModal();
@@ -504,7 +539,11 @@ document.querySelectorAll("#capture-form .tab-button[data-capture-kind]").forEac
     const form = $("#capture-form");
     const kind = button.dataset.captureKind;
     form.elements.kind.value = kind;
-    $$(".tab-button[data-capture-kind]", form).forEach((other) => other.classList.toggle("active", other === button));
+    $$(".tab-button[data-capture-kind]", form).forEach((other) => {
+      const active = other === button;
+      other.classList.toggle("active", active);
+      other.setAttribute("aria-pressed", String(active));
+    });
     $("#capture-link-field").hidden = kind !== "clip";
     $("#capture-quote-field").hidden = kind !== "clip";
   });
@@ -532,7 +571,12 @@ $("#capture-form").addEventListener("submit", (event) => {
       form.reset();
       toast("Saved to your Inbox.");
     } catch (error) {
-      toast(error.message);
+      if (!error.status) {
+        const queued = await enqueueCapture(data);
+        toast(queued ? "No connection. Capture queued on this device." : error.message);
+      } else {
+        toast(error.message);
+      }
     }
   });
 });
@@ -667,6 +711,12 @@ $("#development-login").addEventListener("submit", async (event) => {
 });
 
 $("#logout").addEventListener("click", async () => {
+  const pending = await pendingCount();
+  if (pending) {
+    await syncOfflineCaptures();
+    const remaining = await pendingCount();
+    if (remaining && !window.confirm(`${remaining} offline capture${remaining === 1 ? "" : "s"} remain on this device. Sign out anyway?`)) return;
+  }
   await request("/api/auth/logout", { method: "POST" });
   state.user = null;
   showEmpty();

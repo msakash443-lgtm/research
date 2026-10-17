@@ -15,33 +15,40 @@ import uuid
 from datetime import datetime, timezone
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import audit
+from app.config import get_settings
 from app.ai_item_locks import CONTEXT_ITEM_KIND
 from app.database import get_db
 from app.dependencies import WRITE_ROLES, current_user, project_role
 from app.models import (
     AiItemLock,
     ContextKind,
+    NoteAttachment,
+    SourceExcerpt,
     Note,
     NoteRevision,
+    NoteKind,
     NoteStatus,
     Project,
     ProjectMember,
     ResearchContextItem,
     Source,
+    excerpt_hash,
     User,
 )
+from app.object_storage import get_object_store, validate_key
 from app.note_suggest import ProjectSummary, SourceSummary, suggest
 from app.schemas import (
     ContextItemRead,
     NoteCreate,
     NoteFile,
+    HighlightCreate,
     NoteLock,
     NotePatch,
     NotePromote,
@@ -134,7 +141,7 @@ def list_notes(
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    query = select(Note).where(Note.owner_id == user.id).order_by(Note.captured_at.desc())
+    query = select(Note).where(Note.owner_id == user.id).order_by(Note.captured_at.desc(), Note.created_at.desc(), Note.id.desc())
     if status_filter is not None:
         query = query.where(Note.status == status_filter)
     return [NoteRead.model_validate(note) for note in db.scalars(query)]
@@ -154,6 +161,159 @@ def _notes_markdown(notes: list[Note]) -> str:
     return "\n".join(parts)
 
 
+
+@router.post("/highlight", response_model=NoteRead, status_code=status.HTTP_201_CREATED)
+def capture_highlight(
+    payload: HighlightCreate,
+    response: Response,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Save a source-linked PDF highlight while keeping the researcher's comment separate."""
+    existing = db.scalar(select(Note).where(Note.owner_id == user.id, Note.client_id == payload.client_id))
+    if existing is not None:
+        response.status_code = status.HTTP_200_OK
+        return NoteRead.model_validate(existing)
+
+    source = db.get(Source, payload.source_id)
+    project = db.get(Project, source.project_id) if source is not None else None
+    if source is None or project is None or project_role(db, project, user) not in WRITE_ROLES:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
+    if not source.fulltext_path:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This source has no stored PDF")
+
+    actor = audit.user_actor(user)
+    quoted_text = payload.quoted_text.strip()
+    locator = payload.locator.strip() if payload.locator else None
+    excerpt = SourceExcerpt(
+        source_id=source.id,
+        content=quoted_text,
+        locator=locator,
+        content_hash=excerpt_hash(quoted_text),
+        created_by=actor,
+    )
+    db.add(excerpt)
+    db.flush()
+    note = Note(
+        owner_id=user.id,
+        project_id=project.id,
+        client_id=payload.client_id,
+        kind=NoteKind.highlight,
+        body=payload.body or "",
+        quoted_text=quoted_text,
+        source_id=source.id,
+        excerpt_id=excerpt.id,
+        locator=locator,
+        revision=1,
+        captured_at=payload.captured_at or datetime.now(timezone.utc),
+    )
+    db.add(note)
+    db.flush()
+    db.add(NoteRevision(note_id=note.id, revision=1, body=note.body, quoted_text=quoted_text, edited_by=actor))
+    audit.record(db, actor=actor, action="source.excerpt_added", project_id=project.id,
+                 payload={"source_id": str(source.id), "excerpt_id": str(excerpt.id), "content_hash": excerpt.content_hash})
+    audit.record(db, actor=actor, action="note.created", project_id=project.id,
+                 payload={"note_id": str(note.id), "kind": note.kind.value, "source_id": str(source.id), "excerpt_id": str(excerpt.id)})
+    project.touch()
+    db.commit()
+    db.refresh(note)
+    return NoteRead.model_validate(note)
+
+@router.post("/voice", response_model=NoteRead, status_code=status.HTTP_201_CREATED)
+async def capture_voice(
+    request: Request,
+    client_id: str = Query(min_length=1, max_length=64),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Capture audio bytes only; no transcription or speech-recognition path exists in V1."""
+    existing = db.scalar(select(Note).where(Note.owner_id == user.id, Note.client_id == client_id))
+    if existing is not None:
+        return NoteRead.model_validate(existing)
+    media_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    extensions = {
+        "audio/webm": "webm",
+        "audio/ogg": "ogg",
+        "audio/wav": "wav",
+        "audio/x-wav": "wav",
+        "audio/mpeg": "mp3",
+        "audio/mp4": "m4a",
+    }
+    extension = extensions.get(media_type)
+    if extension is None:
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Voice note must be WebM, Ogg, WAV, MP3, or M4A")
+    max_bytes = get_settings().object_storage_max_bytes
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > max_bytes:
+            raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Voice note is too large")
+    if not body:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Voice note cannot be empty")
+    note = Note(
+        owner_id=user.id, project_id=None, client_id=client_id, kind=NoteKind.voice, body="",
+        revision=1, captured_at=datetime.now(timezone.utc),
+    )
+    store = get_object_store(get_settings())
+    db.add(note)
+    db.flush()
+    key = validate_key(f"notes/{user.id}/{note.id}/voice.{extension}")
+    try:
+        stored = store.put(key, bytes(body))
+    except Exception:
+        db.rollback()
+        raise
+    db.add(NoteAttachment(note_id=note.id, path=stored.key, media_type=media_type, size=stored.size, sha256=stored.sha256))
+    db.add(NoteRevision(note_id=note.id, revision=1, body="", quoted_text=None, edited_by=audit.user_actor(user)))
+    audit.record(db, actor=audit.user_actor(user), action="note.created", payload={"note_id": str(note.id), "kind": "voice"})
+    db.commit()
+    db.refresh(note)
+    return NoteRead.model_validate(note)
+
+
+@router.post("/photo", response_model=NoteRead, status_code=status.HTTP_201_CREATED)
+async def capture_photo(
+    request: Request,
+    client_id: str = Query(min_length=1, max_length=64),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Capture an image note; the image is stored as an object and is never OCR'd."""
+    existing = db.scalar(select(Note).where(Note.owner_id == user.id, Note.client_id == client_id))
+    if existing is not None:
+        return NoteRead.model_validate(existing)
+    media_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    extensions = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
+    extension = extensions.get(media_type)
+    if extension is None:
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Photo must be JPEG, PNG, or WebP")
+    max_bytes = get_settings().object_storage_max_bytes
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > max_bytes:
+            raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Photo is too large")
+    if not body:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Photo cannot be empty")
+    note = Note(
+        owner_id=user.id, project_id=None, client_id=client_id, kind=NoteKind.photo, body="",
+        revision=1, captured_at=datetime.now(timezone.utc),
+    )
+    store = get_object_store(get_settings())
+    db.add(note)
+    db.flush()
+    key = validate_key(f"notes/{user.id}/{note.id}/photo.{extension}")
+    try:
+        stored = store.put(key, bytes(body))
+    except Exception:
+        db.rollback()
+        raise
+    db.add(NoteAttachment(note_id=note.id, path=stored.key, media_type=media_type, size=stored.size, sha256=stored.sha256))
+    db.add(NoteRevision(note_id=note.id, revision=1, body="", quoted_text=None, edited_by=audit.user_actor(user)))
+    audit.record(db, actor=audit.user_actor(user), action="note.created", payload={"note_id": str(note.id), "kind": "photo"})
+    db.commit()
+    db.refresh(note)
+    return NoteRead.model_validate(note)
 # Declared before /{note_id} so "export" is not read as a note id (X.31.22).
 @router.get("/export")
 def export_notes(
@@ -163,7 +323,7 @@ def export_notes(
 ):
     """The caller's own notes in every status, newest first: a JSON list, or one Markdown document.
     Only the caller's own notes; a filed note's project readers do not get the export. Audited with format and count."""
-    notes = list(db.scalars(select(Note).where(Note.owner_id == user.id).order_by(Note.captured_at.desc())))
+    notes = list(db.scalars(select(Note).where(Note.owner_id == user.id).order_by(Note.captured_at.desc(), Note.created_at.desc(), Note.id.desc())))
     audit.record(db, actor=audit.user_actor(user), action="note.exported", payload={"format": fmt, "count": len(notes)})
     db.commit()
     if fmt == "json":

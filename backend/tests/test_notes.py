@@ -5,7 +5,9 @@ from sqlalchemy import select
 
 from app.database import SessionLocal
 from app.main import app
-from app.models import AuditEvent
+from app.config import get_settings
+from app.object_storage import get_object_store
+from app.models import AuditEvent, Source, SourceExcerpt
 
 
 def _login(email):
@@ -221,3 +223,87 @@ def test_capture_can_be_locked_from_the_start():
     client = _login("lock2@example.com")
     note = client.post("/api/notes", json={"client_id": "c1", "kind": "typed", "body": "secret", "ai_locked": True}).json()
     assert note["ai_locked"] is True
+
+def test_highlight_capture_creates_source_excerpt_and_keeps_comment_separate():
+
+    client = _login("highlight@example.com")
+    project_id = client.post("/api/projects", json={"title": "Highlights"}).json()["id"]
+    source_id = client.post(
+        f"/api/projects/{project_id}/sources",
+        json={"title": "Stored paper", "evidence_excerpt": "existing"},
+    ).json()["id"]
+    with SessionLocal() as db:
+        source = db.get(Source, uuid.UUID(source_id))
+        source.fulltext_path = "sources/paper.pdf"
+        db.commit()
+
+    response = client.post(
+        "/api/notes/highlight",
+        json={
+            "client_id": "highlight-1",
+            "source_id": source_id,
+            "quoted_text": "The highlighted passage.",
+            "body": "My comment about the passage.",
+            "locator": "p. 4",
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    note = response.json()
+    assert note["kind"] == "highlight"
+    assert note["body"] == "My comment about the passage."
+    assert note["quoted_text"] == "The highlighted passage."
+    assert note["source_id"] == source_id
+    assert note["excerpt_id"]
+    with SessionLocal() as db:
+        excerpt = db.scalar(select(SourceExcerpt).where(SourceExcerpt.id == uuid.UUID(note["excerpt_id"])))
+        assert excerpt.content == note["quoted_text"]
+        assert excerpt.locator == "p. 4"
+
+
+def test_highlight_capture_refuses_sources_without_stored_pdf():
+    client = _login("highlight-no-pdf@example.com")
+    project_id = client.post("/api/projects", json={"title": "No PDF"}).json()["id"]
+    source_id = client.post(f"/api/projects/{project_id}/sources", json={"title": "No PDF"}).json()["id"]
+    response = client.post(
+        "/api/notes/highlight",
+        json={"client_id": "highlight-2", "source_id": source_id, "quoted_text": "passage"},
+    )
+    assert response.status_code == 409
+
+
+def test_photo_capture_stores_attachment_without_ocr():
+    client = _login("photo@example.com")
+    payload = b"\x89PNG\r\n\x1a\nimage-bytes"
+    response = client.post(
+        "/api/notes/photo?client_id=photo-1",
+        content=payload,
+        headers={"content-type": "image/png"},
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["kind"] == "photo"
+    assert body["body"] == ""
+    assert len(body["attachments"]) == 1
+    attachment = body["attachments"][0]
+    assert attachment["media_type"] == "image/png"
+    assert attachment["size"] == len(payload)
+    assert get_object_store(get_settings()).get(f"notes/{body['owner_id']}/{body['id']}/photo.png") == payload
+
+def test_voice_capture_stores_audio_without_transcription():
+    client = _login("voice@example.com")
+    payload = b"RIFF\x00\x00\x00\x00WAVE audio-bytes"
+    response = client.post(
+        "/api/notes/voice?client_id=voice-1",
+        content=payload,
+        headers={"content-type": "audio/wav"},
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["kind"] == "voice"
+    assert body["body"] == ""
+    assert len(body["attachments"]) == 1
+    attachment = body["attachments"][0]
+    assert attachment["media_type"] == "audio/wav"
+    assert attachment["size"] == len(payload)
+    assert get_object_store(get_settings()).get(f"notes/{body['owner_id']}/{body['id']}/voice.wav") == payload

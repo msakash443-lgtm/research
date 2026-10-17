@@ -4,19 +4,19 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import active_learning, ai_quality, audit
+from app import active_learning, ai_quality, audit, suggestion_store, suggestions
 from app.ai_controls import require_ai_on
 from app.artifacts import register_artifact
 from app.config import get_settings
 from app.database import get_db
 from app.lookups import live_source_or_404
 from app.dependencies import APPROVE_ROLES, MANAGE_ROLES, READ_ROLES, WRITE_ROLES, current_user, project_access, project_role
-from app.models import AutoExcludeAudit, Project, ProjectStage, ScreeningDecision, SeedCheckRun, Source, Task, TaskStatus, User
+from app.models import AiSuggestion, AutoExcludeAudit, Project, ProjectStage, ScreeningDecision, SeedCheckRun, Source, Task, TaskStatus, User
 from app.task_handlers import SCREENING_PRESCREEN, SEED_FALSE_EXCLUSION_CHECK
 from app.task_queue import enqueue_task
 from app.screening import (
@@ -110,10 +110,25 @@ class DecisionRead(BaseModel):
 
 
 class SuggestionRead(BaseModel):
+    id: uuid.UUID | None = None
+    state: str | None = None
     decision: str
     reason_code: str | None
     confidence: float | None
     rationale: str | None
+    @model_serializer
+    def _serialize(self) -> dict:
+        result = {
+            "decision": self.decision,
+            "reason_code": self.reason_code,
+            "confidence": self.confidence,
+            "rationale": self.rationale,
+        }
+        if self.id is not None:
+            result["id"] = self.id
+        if self.state is not None:
+            result["state"] = self.state
+        return result
 
 
 class QueueItem(BaseModel):
@@ -265,9 +280,8 @@ def set_active_learning(
     db.commit()
     db.refresh(project)
     return ActiveLearningRead(enabled=project.active_learning_enabled)
-
-
 @router.get("/queue", response_model=QueueRead)
+
 def get_queue(
     stage: str = Query("title_abstract"),
     limit: int = Query(50, ge=1, le=200),
@@ -334,16 +348,34 @@ def get_queue(
         if classifier is not None:
             waiting = active_learning.rank_by_relevance(classifier, waiting, lambda s: f"{s.title or ''} {s.abstract or ''}")
             applied_sort = "relevance"
+    suggestion_rows = {
+        row.target_id: row
+        for row in db.scalars(
+            select(AiSuggestion).where(
+                AiSuggestion.project_id == project.id,
+                AiSuggestion.target_kind == "screening",
+                AiSuggestion.target_id.in_([str(source.id) for source in waiting[offset : offset + limit]]),
+            )
+        ).all()
+    }
     items = []
     for source in waiting[offset : offset + limit]:
         rows = grouped.get(source.id, [])
         suggestion = None if project.dual_screen_enabled else ai_suggestion(rows)
+        shared = None if project.dual_screen_enabled else suggestion_rows.get(str(source.id))
         items.append(
             QueueItem(
                 source_id=source.id, title=source.title, authors=source.authors, year=source.year, doi=source.doi,
                 abstract=source.abstract, fulltext_access=source.fulltext_access if stage == "full_text" else None,
                 found_via=source.found_via,
-                ai_suggestion=SuggestionRead(decision=suggestion.decision, reason_code=suggestion.reason_code, confidence=suggestion.confidence, rationale=suggestion.note) if suggestion else None,
+                ai_suggestion=SuggestionRead(
+                    id=shared.id if shared else None,
+                    state=suggestions.state_of(event.kind for event in shared.events) if shared else None,
+                    decision=suggestion.decision if suggestion else "",
+                    reason_code=suggestion.reason_code if suggestion else None,
+                    confidence=suggestion.confidence if suggestion else None,
+                    rationale=suggestion.note if suggestion else None,
+                ) if suggestion or shared else None,
             )
         )
     return QueueRead(

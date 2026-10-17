@@ -8,18 +8,6 @@ let selected = new Set();
 let filter = "all"; // "all" | "unverified" | "verified"
 let currentProjectId = null;
 
-// A reopened earlier stage (M0.5.5) can make a completed search run stale ("search_run", app/search_runner.py
-// SEARCH_RUN_KIND, registered at ProjectStage.retrieved); this screen's sources came from that search.
-function staleBanner(ctx) {
-  const stale = (ctx.summary.staleArtifacts || []).filter((a) => a.kind === "search_run");
-  if (!stale.length) return null;
-  const box = el("div", { className: "next-step" });
-  box.append(el("h3", { text: "Needs redoing" }));
-  const list = el("ul", { className: "warning-list" });
-  stale.forEach((a) => list.append(el("li", { text: a.stale_reason || "an earlier stage was reopened; re-check this search." })));
-  box.append(list);
-  return box;
-}
 
 // EC-3.3 (search_planned -> retrieved, Information level) counts auto-retrieved sources not yet
 // verified. Information-level conditions never appear in the frame's own condition box (X.48.1), so
@@ -167,8 +155,69 @@ function fulltextSection(ctx, source) {
   if (ctx.canWrite && source.doi && !source.fulltext_path) {
     section.append(el("div", { className: "source-actions", children: [fulltextFetchButton(ctx, source)] }));
   }
+  if (ctx.canWrite && source.fulltext_path) section.append(highlightCapture(ctx, source));
   return section.childElementCount ? section : null;
 }
+
+function highlightCapture(ctx, source) {
+  const panel = el("div", { className: "source-highlight" });
+  const load = el("button", { className: "quiet-button", type: "button", text: "Open PDF text to highlight" });
+  const body = el("div", { className: "source-highlight-body", attrs: { hidden: "" } });
+  load.addEventListener("click", async () => {
+    load.disabled = true;
+    try {
+      const fulltext = await request(projectApi(ctx.project.id, `/sources/${source.id}/fulltext`));
+      const selection = el("pre", {
+        className: "source-fulltext-selectable",
+        text: fulltext.text || "",
+        attrs: { tabindex: "0", "aria-label": "Stored PDF text; select a passage to save as a highlight" },
+      });
+      const comment = el("textarea", { attrs: { maxlength: "20000", rows: "3", "aria-label": "Comment on this highlight", placeholder: "Optional note about this passage…" } });
+      const locator = el("input", { attrs: { maxlength: "255", "aria-label": "Page or section", placeholder: "Page or section (optional)" } });
+      const save = el("button", { type: "button", text: "Save selected passage" });
+      save.addEventListener("click", async () => {
+        const quotedText = window.getSelection()?.toString().trim() || "";
+        if (!quotedText) {
+          toast("Select a passage in the PDF text first.");
+          return;
+        }
+        save.disabled = true;
+        try {
+          await request("/api/notes/highlight", {
+            method: "POST",
+            body: JSON.stringify({
+              client_id: crypto.randomUUID(),
+              source_id: source.id,
+              quoted_text: quotedText,
+              body: comment.value.trim(),
+              locator: locator.value.trim() || null,
+            }),
+          });
+          toast("Highlight saved to your Inbox and source excerpts.");
+          comment.value = "";
+          locator.value = "";
+          window.getSelection()?.removeAllRanges();
+        } catch (error) {
+          toast(error.message);
+        } finally {
+          save.disabled = false;
+        }
+      });
+      body.replaceChildren(selection, comment, locator, save);
+      body.hidden = false;
+      load.hidden = true;
+      selection.focus();
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      load.disabled = false;
+    }
+  });
+  panel.append(load, body);
+  return panel;
+}
+
+
 
 // How snowballing found a source (M1.9.2). Titles are third-party text, so they go in as text only.
 function foundViaText(via) {
@@ -290,8 +339,6 @@ function render(root, ctx) {
   panel.append(sourcesList(root, ctx));
 
   const sections = [];
-  const stale = staleBanner(ctx);
-  if (stale) sections.push(stale);
   sections.push(panel);
   const hint = verificationHint(ctx);
   if (hint) sections.push(hint);

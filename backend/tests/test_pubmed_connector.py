@@ -71,7 +71,7 @@ def test_article_normalisation():
     assert (record.connector, record.external_id, record.title) == ("pubmed", "7", "Remote work and wellbeing")
     assert record.doi == "10.1000/p7" and record.year == 2021 and record.venue == "J Occup Health"
     assert record.authors == ("Ada Lovelace", "The Remote Work Group")
-    assert record.abstract == "BACKGROUND: Why it matters. RESULTS: It helps."
+    assert record.abstract == "BACKGROUND: Why it matters.\n\nRESULTS: It helps."
     assert record.url == "https://pubmed.ncbi.nlm.nih.gov/7/"
     assert record.source_ids == {"pubmed": "7", "pmcid": "PMC123"} and record.oa_url.endswith("/PMC123/")
     assert record.quality_flags == ()

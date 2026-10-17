@@ -11,6 +11,7 @@ from sqlalchemy import select
 from app import audit
 from app.agent.executor import execute_research_run
 from app.ai_extraction import AiExtractionError, run_ai_extraction
+from app import extraction_suggestions  # noqa: F401  (registers the extraction suggestion handler)
 from app.database import SessionLocal
 from app.connectors.base import ConnectorError
 from app.connectors.factory import (

@@ -32,8 +32,9 @@ from sqlalchemy.exc import IntegrityError
 from app import audit
 from app.config import get_settings
 from app.database import SessionLocal
-from app.models import GateCode, Task, TaskStatus, utcnow
-from app.gates import gate_is_approved
+from app.models import GateCode, Project, Task, TaskStatus, utcnow
+from app.gates import GATE_STAGES, gate_is_approved
+from app.stage_order import StageNotInChain, require_stage
 from app.task_registry import FAILURE_HOOKS, PAYLOAD_SCRUBS, REQUIRED_GATES, ClaimedTask
 
 logger = logging.getLogger(__name__)
@@ -67,6 +68,18 @@ def enqueue_task(
         if existing is not None:
             return existing
     gate = REQUIRED_GATES.get(task_type)
+    if gate is not None:
+        project = db.get(Project, project_id)
+        if project is not None:
+            stage = GATE_STAGES[gate]
+            try:
+                require_stage(project, stage)
+            except StageNotInChain:
+                audit.record(
+                    db, actor=actor, action="stage.not_in_chain", project_id=project_id,
+                    payload={"stage": stage.value, "task_type": task_type},
+                )
+                raise
     waiting = gate is not None and not gate_is_approved(db, project_id, gate)
     task = Task(
         project_id=project_id,

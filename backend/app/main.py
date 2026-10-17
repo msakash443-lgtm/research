@@ -11,6 +11,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.database import Base, engine
 from app.source_gate_guard import ExtractionGateLocked
+from app.stage_order import StageNotInChain
 from app.config import get_settings
 from app.middleware import ContentLengthLimitMiddleware
 from app.routers import ai_locks, ai_settings, audit, provenance_reports, workspace_ai, auth, bibliometrics, claims, clusters, connectors, coverage, criteria, design_tools, evidence_matrix, exports, extraction_schemas, extractions, gates, guide, integrity, members, notes, documents, prisma, profile, projects, replication, research_runs, scholar_metrics, screening, searches, alerts, seeds, snowball, sources, stage, suggestions, usage, zotero
@@ -42,6 +43,9 @@ app = FastAPI(
 @app.exception_handler(ExtractionGateLocked)
 def extraction_gate_locked_handler(request, exc: ExtractionGateLocked):
     return JSONResponse(status_code=409, content={"detail": str(exc)})
+@app.exception_handler(StageNotInChain)
+def stage_not_in_chain_handler(request, exc: StageNotInChain):
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
 app.add_middleware(
     ContentLengthLimitMiddleware,
     max_body_bytes=settings.max_request_body_bytes,
@@ -66,6 +70,7 @@ if settings.cors_origins:
     )
 app.include_router(auth.router, prefix="/api")
 app.include_router(projects.router, prefix="/api")
+app.include_router(projects.catalogue, prefix="/api")
 app.include_router(audit.router, prefix="/api")
 app.include_router(usage.router, prefix="/api")
 app.include_router(ai_settings.router, prefix="/api")
@@ -118,7 +123,7 @@ async def security_headers(request, call_next):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(self), geolocation=()")
     # X.4.2: production is HTTPS-only (PUBLIC_ORIGIN is validated as https), so tell browsers to stay on HTTPS.
     if settings.environment == "production":
         response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
@@ -153,6 +158,15 @@ def readiness() -> JSONResponse:
 @app.get("/", include_in_schema=False)
 def dashboard() -> FileResponse:
     return FileResponse(Path(__file__).parent / "web" / "index.html")
+
+@app.get("/sw.js", include_in_schema=False)
+def service_worker() -> FileResponse:
+    return FileResponse(Path(__file__).parent / "web" / "sw.js", media_type="application/javascript")
+
+
+@app.get("/manifest.webmanifest", include_in_schema=False)
+def manifest() -> FileResponse:
+    return FileResponse(Path(__file__).parent / "web" / "manifest.webmanifest", media_type="application/manifest+json")
 
 
 app.mount("/assets", StaticFiles(directory=Path(__file__).parent / "web"), name="assets")

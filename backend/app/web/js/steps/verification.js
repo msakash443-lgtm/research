@@ -1,6 +1,7 @@
 import { el, emptyCard, toast } from "../dom.js";
 import { request, projectApi } from "../api.js";
 import { provenanceBadge } from "../provenance.js";
+import { suggestionPanel } from "../suggestion.js";
 
 function show(value) {
   if (value === null || value === undefined) return "Not reported in this paper";
@@ -60,6 +61,13 @@ async function renderReview(root, ctx, item) {
       } catch (error) { toast(error.message); verify.disabled = false; }
     });
     fieldsPane.append(verify);
+  }
+  if (extraction.extracted_by === "ai") {
+    const suggestions = await suggestionPanel(ctx, {
+      targetKind: "extraction", targetId: extraction.id,
+      onChange: () => render(root, ctx),
+    });
+    fieldsPane.append(suggestions);
   }
   work.append(documentPane, fieldsPane);
   root.append(work);

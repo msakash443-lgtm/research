@@ -18,25 +18,37 @@ from app.models import GateStatus, Project, ProjectStage, Task, TaskStatus
 
 STAGES = list(ProjectStage)
 PREFIX = "/api/projects/{project_id}"
-# Read routes that need a query parameter to be valid at all (not a lock; the parameter is the route's own contract).
+# Read routes that need a query parameter to be valid at all.
 REQUIRED_QUERY = {
     "/stage/conditions": "target=scoped",
     "/design/method-recommendation": "goal=explore",
     "/design/sample-size": "test=correlation&r=0.3",
 }
+# These routes contain a value-shaped path segment but do not identify a child row.
+PARAMETERIZED_READS = {
+    "/bibliometrics/export/vosviewer/{kind}.zip": "/bibliometrics/export/vosviewer/co_citation.zip",
+    "/extraction-schemas/{schema_name}": "/extraction-schemas/default",
+}
 
 
-def _project_read_paths() -> list[str]:
+def _project_read_paths() -> list[tuple[str, str]]:
     paths = []
     for route in app.routes:
         path = getattr(route, "path", "")
         if "GET" not in getattr(route, "methods", set()) or not path.startswith(PREFIX):
             continue
         rest = path[len(PREFIX):]
-        if "{" in rest:  # needs an id of a child record; the list route above it is covered
-            continue
-        paths.append(rest)
+        if "{" in rest:
+            replacement = PARAMETERIZED_READS.get(rest)
+            if replacement is None:
+                continue  # Child-record endpoints need a seeded child row; parent reads cover this lock invariant.
+            paths.append((rest, replacement))
+        else:
+            paths.append((rest, rest))
     return sorted(set(paths))
+
+
+READ_PATHS = _project_read_paths()
 
 
 READ_PATHS = _project_read_paths()
@@ -61,8 +73,9 @@ def _at_stage_with_gates_pending(pid: uuid.UUID, stage: ProjectStage) -> None:
 
 
 def test_the_route_table_yields_a_meaningful_set_of_read_endpoints():
+    route_names = {pattern for pattern, _ in READ_PATHS}
     assert len(READ_PATHS) >= 25
-    assert {"/stage", "/sources", "/screening/queue", "/prisma", "/audit"} <= set(READ_PATHS)
+    assert {"/stage", "/sources", "/screening/queue", "/prisma", "/audit"} <= route_names
 
 
 @pytest.mark.parametrize("stage", STAGES, ids=lambda s: s.value)
@@ -71,21 +84,24 @@ def test_every_read_endpoint_works_at_every_stage_with_gates_pending(world, monk
     monkeypatch.setattr(get_settings(), "obsidian_export_enabled", True)  # a deployment flag, not a stage lock
     _at_stage_with_gates_pending(pid, stage)
     failures = []
-    for rest in READ_PATHS:
-        query = REQUIRED_QUERY.get(rest)
+    for pattern, rest in READ_PATHS:
+        query = REQUIRED_QUERY.get(pattern)
         url = f"/api/projects/{project_id}{rest}" + (f"?{query}" if query else "")
         response = client.get(url)
         if response.status_code != 200:
-            failures.append((rest, response.status_code, response.text[:120]))
+            failures.append((pattern, response.status_code, response.text[:120]))
     assert failures == []
 
 
 @pytest.mark.parametrize("stage", STAGES, ids=lambda s: s.value)
 def test_quick_capture_works_at_every_stage_with_gates_pending(world, stage):
-    client, _, pid = world
+    client, project_id, pid = world
     _at_stage_with_gates_pending(pid, stage)
     response = client.post("/api/notes", json={"client_id": f"cap-{stage.value}", "body": "an idea at the bus stop"})
     assert response.status_code == 201, response.text
+    note_id = response.json()["id"]
+    filed = client.post(f"/api/notes/{note_id}/file", json={"project_id": project_id})
+    assert filed.status_code == 200, filed.text
 
 
 @pytest.mark.parametrize("stage", STAGES[1:], ids=lambda s: s.value)
@@ -108,5 +124,6 @@ def test_an_exploratory_ask_is_accepted_and_never_held_at_a_gate(world, fake_llm
     )
     assert response.status_code == 202, response.text
     with SessionLocal() as db:
-        statuses = {t.status for t in db.scalars(select(Task).where(Task.project_id == pid))}
-    assert TaskStatus.blocked not in statuses
+        tasks = list(db.scalars(select(Task).where(Task.project_id == pid, Task.type == "research_run")))
+    assert len(tasks) == 1
+    assert tasks[0].status != TaskStatus.blocked

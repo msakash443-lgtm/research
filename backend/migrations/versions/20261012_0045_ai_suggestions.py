@@ -96,10 +96,13 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Refuse to drop a log that still has rows: it is the record of what people decided.
+    # Refuse to drop either table: pending suggestions may have no event yet, but are still
+    # provenance records that must not disappear silently.
     bind = op.get_bind()
     if bind.execute(sa.text("SELECT COUNT(*) FROM ai_suggestion_events")).scalar():
         raise RuntimeError("ai_suggestion_events still has rows; refusing to drop the record of people's decisions")
+    if bind.execute(sa.text("SELECT COUNT(*) FROM ai_suggestions")).scalar():
+        raise RuntimeError("ai_suggestions still has rows; refusing to drop AI suggestion provenance")
     if bind.dialect.name == "postgresql":
         op.execute("DROP TRIGGER IF EXISTS ai_suggestion_events_no_truncate ON ai_suggestion_events")
         op.execute("DROP TRIGGER IF EXISTS ai_suggestion_events_no_update_delete ON ai_suggestion_events")

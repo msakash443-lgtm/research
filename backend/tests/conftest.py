@@ -9,6 +9,15 @@ os.environ["ENVIRONMENT"] = "development"
 os.environ["AUTO_CREATE_SCHEMA"] = "true"
 os.environ["RUN_RESEARCH_INLINE"] = "true"
 os.environ["SESSION_SECRET"] = "test-session-secret-that-is-long-enough"
+for _ambient_setting in (
+    "LLM_API_BASE_URL",
+    "LLM_API_KEY",
+    "LLM_MODEL",
+    "LOCAL_LLM_API_BASE_URL",
+    "LOCAL_LLM_API_KEY",
+    "LOCAL_LLM_MODEL",
+):
+    os.environ.pop(_ambient_setting, None)
 
 from app.config import Settings
 

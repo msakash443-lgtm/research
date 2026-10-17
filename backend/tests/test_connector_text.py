@@ -1,6 +1,6 @@
 import pytest
 
-from app.connectors import arxiv, core, crossref, ieee_xplore, openalex, scopus, semantic_scholar, unpaywall, web_of_science
+from app.connectors import arxiv, core, crossref, ieee_xplore, openalex, pubmed, scopus, semantic_scholar, unpaywall, web_of_science
 from app.connectors.base import clean_abstract, clean_text
 
 
@@ -61,4 +61,35 @@ ARXIV_FEED = (
 def test_plain_text_abstracts_keep_paragraph_breaks_in_every_connector(build):
     record = build()
     assert record.abstract == ABSTRACT
+    assert "no_abstract" not in record.quality_flags
+
+
+def test_crossref_jats_abstract_keeps_paragraph_and_section_boundaries():
+    record = crossref.to_record({
+        "DOI": "10.1234/structured",
+        "title": ["A structured abstract"],
+        "abstract": "<jats:abstract xmlns:jats='urn:x'><jats:title>Abstract</jats:title><jats:sec><jats:title>Background</jats:title><jats:p>First line<br/>wrapped.</jats:p></jats:sec><jats:sec><jats:p>Second paragraph.</jats:p></jats:sec></jats:abstract>",
+    })
+    assert record.abstract == "Background\n\nFirst line wrapped.\n\nSecond paragraph."
+
+
+
+def test_openalex_inverted_index_remains_one_abstract_paragraph():
+    record = openalex.to_record({
+        "id": "https://openalex.org/W123",
+        "display_name": "A title",
+        "abstract_inverted_index": {"First": [0], "paragraph": [1], "Second": [2], "part": [3]},
+    })
+    assert record.abstract == "First paragraph Second part"
+
+def test_pubmed_labeled_abstract_sections_are_separate_paragraphs():
+    import xml.etree.ElementTree as ET
+
+    article = ET.fromstring(
+        "<PubmedArticle><MedlineCitation><PMID>123</PMID><Article><ArticleTitle>Structured</ArticleTitle>"
+        "<Abstract><AbstractText Label='BACKGROUND'>First line. Wrapped.</AbstractText>"
+        "<AbstractText Label='RESULTS'>Second section.</AbstractText></Abstract></Article></MedlineCitation></PubmedArticle>"
+    )
+    record = pubmed.to_record(article)
+    assert record.abstract == "BACKGROUND: First line. Wrapped.\n\nRESULTS: Second section."
     assert "no_abstract" not in record.quality_flags

@@ -29,7 +29,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import ai_quality, audit
-from app.ai_item_locks import locked_ids
+from app.ai_item_locks import AiItemLocked, is_locked, locked_ids
 from app.agent.llm import LLMResponseError, OpenAICompatibleLLM
 from app.answer_guard import check_answer
 from app.models import AutoExcludeAudit, Project, ScreeningCriterion, ScreeningDecision, Source
@@ -179,8 +179,15 @@ def run_prescreen(
     for source in todo[:limit]:
         if ensure_owned:
             ensure_owned(db)
+        if is_locked(db, project.id, "source", source.id):
+            result.locked += 1
+            continue
         try:
             suggestion = prescreen_source(llm, criteria, source, min_confidence=min_confidence, prompt=prompt)
+            if is_locked(db, project.id, "source", source.id):
+                db.rollback()
+                result.locked += 1
+                continue
         except (PrescreenError, LLMResponseError) as exc:
             result.failed += 1
             audit.record(
@@ -228,7 +235,7 @@ def run_prescreen(
                     )
             db.commit()
             result.suggested += 1
-        except IntegrityError:  # a person decided this source while the model was answering
+        except (IntegrityError, AiItemLocked):  # a person or lock changed this source while the model was answering
             db.rollback()
             result.skipped += 1
             continue

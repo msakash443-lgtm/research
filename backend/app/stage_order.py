@@ -20,11 +20,31 @@ _BRANCHES: dict[ProjectStage, tuple[ProjectStage, ...]] = {
     ProjectStage.revision_loop: (ProjectStage.accepted,),  # to resubmit, re-enter and move forward again
     ProjectStage.accepted: (),
 }
+class StageNotInChain(ValueError):
+    """The requested work targets a stage omitted from this project's frozen chain."""
+
+    def __init__(self, project: Project, stage: ProjectStage):
+        self.project_id = project.id
+        self.requested_stage = stage
+        super().__init__(f"Stage '{stage.value}' is not part of research type '{project.research_type}'")
+
+
+def require_stage(project: Project, stage: ProjectStage) -> None:
+    if stage not in chain(project):
+        raise StageNotInChain(project, stage)
 
 
 def chain(project: Project | None = None) -> list[ProjectStage]:
-    """The stages a project passes through, in order. Same for every project until X.43."""
-    return list(_JOURNEY)
+    """The stages a project passes through, using its frozen research-type snapshot when present."""
+    if project is None or not project.stage_plan_json:
+        return list(_JOURNEY)
+    from app.research_types import ResearchType, _check
+
+    snapshot = ResearchType(**project.stage_plan_json)
+    if snapshot.name != project.research_type:
+        raise ValueError("project research type and stage snapshot do not match")
+    _check(snapshot, "project stage snapshot")
+    return snapshot.chain
 
 
 def index(project: Project | None, stage: ProjectStage) -> int:
@@ -34,12 +54,15 @@ def index(project: Project | None, stage: ProjectStage) -> int:
 def next_stages(project: Project | None, stage: ProjectStage) -> list[ProjectStage]:
     """The stages a project may move to from `stage`, in the order they are offered."""
     if stage in _BRANCHES:
-        return list(_BRANCHES[stage])
+        return [candidate for candidate in _BRANCHES[stage] if candidate in chain(project)]
     order = chain(project)
-    return [order[order.index(stage) + 1]]
+    position = order.index(stage)
+    return order[position + 1:position + 2]
 
 
 def gate_order(gate_stages: dict[GateCode, ProjectStage], project: Project | None = None) -> list[GateCode]:
-    """Gates in the order their stages are reached. Derived, so reordering stages reorders gates."""
+    """Gates in the order their stages are reached, restricted to the project's chain."""
     position = {stage: i for i, stage in enumerate(chain(project))}
-    return sorted(gate_stages, key=lambda code: position[gate_stages[code]])
+    return sorted((code for code, stage in gate_stages.items() if stage in position), key=lambda code: position[gate_stages[code]])
+
+

@@ -1,6 +1,8 @@
 import { $, el, label, toast, saveOnce } from "../dom.js";
 import { request, projectApi } from "../api.js";
 import { SEARCHABLE } from "../workflow.js";
+import { synonymSuggestionPanelOptions, synonymSuggestionRequest } from "../synonymSuggestLogic.js";
+import { suggestionPanel } from "../suggestion.js";
 import { gateCard } from "./common.js";
 import { renderFrame } from "./frame.js";
 
@@ -36,13 +38,42 @@ async function connectorsBox(ctx) {
   return box;
 }
 
-function conceptBlockRow(container) {
+function conceptBlockRow(container, ctx) {
   const row = el("li", { className: "concept-block" });
   const labelInput = el("input", { attrs: { type: "text", maxlength: "100", placeholder: "Concept label (optional)" } });
   const terms = el("textarea", { attrs: { placeholder: "One term per line", rows: "3", required: "" } });
+  const actions = el("div", { className: "form-actions" });
   const remove = el("button", { className: "quiet-button", type: "button", text: "Remove" });
+  const suggest = el("button", { className: "quiet-button", type: "button", text: "Suggest synonyms" });
+  const panel = el("div", { className: "synonym-suggestion-mount" });
   remove.addEventListener("click", () => row.remove());
-  row.append(labelInput, terms, remove);
+  suggest.addEventListener("click", async () => {
+    const block = {
+      label: labelInput.value.trim() || undefined,
+      terms: terms.value.split("\n").map((term) => term.trim()).filter(Boolean),
+    };
+    if (!block.terms.length) {
+      toast("Add at least one term before asking for synonyms.");
+      return;
+    }
+    suggest.disabled = true;
+    try {
+      const requestSpec = synonymSuggestionRequest(ctx.project.id, block);
+      const response = await request(requestSpec.path, requestSpec.options);
+      panel.replaceChildren(
+        await suggestionPanel(ctx, {
+          ...synonymSuggestionPanelOptions(response),
+          onChange: () => ctx.refresh(),
+        })
+      );
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      suggest.disabled = false;
+    }
+  });
+  actions.append(suggest, remove);
+  row.append(labelInput, terms, actions, panel);
   row._labelInput = labelInput;
   row._terms = terms;
   container.append(row);
@@ -67,10 +98,10 @@ async function openSearchDialog(ctx) {
   }
   const blocksContainer = $("#search-blocks");
   blocksContainer.replaceChildren();
-  conceptBlockRow(blocksContainer);
+  conceptBlockRow(blocksContainer, ctx);
   $("#search-add-concept").onclick = () => {
     if (blocksContainer.children.length >= 10) return;
-    conceptBlockRow(blocksContainer).querySelector("textarea").focus();
+    conceptBlockRow(blocksContainer, ctx).querySelector("textarea").focus();
   };
 
   form.onsubmit = (event) => {

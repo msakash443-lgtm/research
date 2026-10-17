@@ -7,6 +7,7 @@ Nothing here approves, releases or runs anything.
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from typing import Any
 
@@ -14,10 +15,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-
-from app import audit, citation_rank
+from app import audit, citation_rank, suggestion_store
 from app.agent.llm import LLMConfigurationError, LLMResponseError
 from app.ai_controls import llm_for_project, require_ai_on
+from app.ai_item_locks import is_locked
 from app.config import get_settings
 from app.connectors.access import is_enabled
 from app.connectors.factory import SEARCHABLE
@@ -189,6 +190,7 @@ class SynonymRequest(BaseModel):
 class SynonymProposal(BaseModel):
     term: str
     reason: str
+    suggestion_id: uuid.UUID | None = None
 
 
 class SynonymSuggestions(BaseModel):
@@ -196,7 +198,13 @@ class SynonymSuggestions(BaseModel):
     dropped: int
     model_id: str
     prompt_version: str
-    note: str = "Proposals only: nothing has been added to your search. Edit, then add the terms you want."
+    target_id: str
+    note: str = "Proposals only: nothing has been added to your search. Review the shared AI suggestion card, then decide which terms to add."
+
+
+def _synonym_target_id(block: ConceptBlock) -> str:
+    payload = "|".join([block.label or "", *block.terms]).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()[:64]
 
 
 @router.post("/suggest-synonyms", response_model=SynonymSuggestions)
@@ -204,10 +212,14 @@ def suggest_search_synonyms(
     body: SynonymRequest,
     project: Project = Depends(project_access(WRITE_ROLES)),
     user: User = Depends(current_user),
+    db: Session = Depends(get_db),
 ):
-    """Ask the model for extra terms for one concept. Proposals only: nothing is saved or searched."""
+    """Ask the model for extra terms and persist each proposal as a shared suggestion."""
     settings = get_settings()
     require_ai_on(project)
+    target_id = _synonym_target_id(body.block)
+    if is_locked(db, project.id, "synonym", target_id):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This concept block is set to 'never for this item'.")
     try:
         llm = llm_for_project(settings, project, purpose="synonyms")
         result = suggest_synonyms(llm, body.block, project.title)
@@ -215,15 +227,28 @@ def suggest_search_synonyms(
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     except (LLMResponseError, SuggestionError) as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
-    # Its own short transaction: a proposal request changes no project data, only the audit trail.
-    with SessionLocal() as db:
-        audit.record(
-            db, actor=audit.user_actor(user), action="search.synonyms_suggested", project_id=project.id,
-            payload={"proposed": len(result.items), "dropped": result.dropped, "terms_in_use": len(body.block.terms)},
-            model_id=result.model_id, prompt_version=result.prompt_version,
+
+    proposals = []
+    for proposal in result.items:
+        suggestion = suggestion_store.create_suggestion(
+            db,
+            project_id=project.id,
+            target_kind="synonym",
+            target_id=target_id,
+            content=f"{proposal.term}: {proposal.reason}",
+            model_id=result.model_id,
+            prompt_version=result.prompt_version,
+            producing_agent="synonym-suggestions",
+            evidence=[],
         )
-        db.commit()
+        proposals.append(SynonymProposal(term=proposal.term, reason=proposal.reason, suggestion_id=suggestion.id))
+    audit.record(
+        db, actor=audit.user_actor(user), action="search.synonyms_suggested", project_id=project.id,
+        payload={"proposed": len(result.items), "dropped": result.dropped, "terms_in_use": len(body.block.terms)},
+        model_id=result.model_id, prompt_version=result.prompt_version,
+    )
+    db.commit()
     return SynonymSuggestions(
-        proposals=[SynonymProposal(term=p.term, reason=p.reason) for p in result.items],
-        dropped=result.dropped, model_id=result.model_id, prompt_version=result.prompt_version,
+        proposals=proposals, dropped=result.dropped, model_id=result.model_id,
+        prompt_version=result.prompt_version, target_id=target_id,
     )

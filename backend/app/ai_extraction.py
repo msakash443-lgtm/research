@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import secrets
 import uuid
 from dataclasses import dataclass
@@ -11,7 +12,7 @@ from typing import Any, Callable
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import audit, project_schemas
+from app import audit, project_schemas, suggestion_store
 from app.answer_guard import check_answer
 from app.extraction_schema import ExtractionSchema, SchemaError, ValueSpec, check_extraction, schema_version
 from app.extraction_spans import check_evidence_spans
@@ -273,6 +274,23 @@ def run_ai_extraction(
     )
     db.add(row)
     db.flush()
+    for field_key, value in fields.items():
+        if value is None:
+            continue
+        span = evidence.get(field_key)
+        suggestion_store.create_suggestion(
+            db,
+            project_id=project.id,
+            target_kind="extraction",
+            target_id=str(row.id),
+            target_field=field_key,
+            content=json.dumps(value, ensure_ascii=False, default=str),
+            confidence=confidence.get(field_key),
+            evidence=[span] if span else [],
+            model_id=model_id,
+            prompt_version=row.prompt_version,
+            producing_agent=AI_EXTRACTOR.removeprefix("agent:"),
+        )
     audit.record(
         db, actor=AI_EXTRACTOR, action="extraction.ai_created", project_id=project.id,
         payload={"task_id": str(task_id), "extraction_id": str(row.id), "source_id": str(source.id),

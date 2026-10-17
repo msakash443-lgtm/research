@@ -88,6 +88,7 @@ MATRIX = [
     ("POST", "/api/projects/{p}/sources/{s}/fulltext/fetch", WRITE, 202),  # queues only
     ("POST", "/api/projects/{p}/sources/{s}/fulltext/arxiv/fetch", WRITE, 202),  # queues only
     ("POST", "/api/projects/{p}/sources/{s}/fulltext/upload", WRITE, 201),  # raw PDF body; _call gives each principal a fresh source (write-once)
+    ("POST", "/api/projects/{p}/sources/{s}/fulltext/withdraw", WRITE, 200),
     ("GET", "/api/projects/{p}/sources/{s}/fulltext", ALL, 200),  # fixture stores full text on source {s} directly
     ("GET", "/api/projects/{p}/searches", ALL, 200),
     ("GET", "/api/projects/{p}/searches/{q}/results", ALL, 200),
@@ -202,6 +203,7 @@ MATRIX = [
     ("PATCH", "/api/projects/{p}/clusters/{c}/clusters/{l}", WRITE, 200),
     ("PUT", "/api/projects/{p}/criteria", WRITE, 200),  # who edits criteria; G2 approval is separate
     ("PUT", "/api/projects/{p}/profile", MANAGE, 200),  # owner only: decides databases and reporting norms
+    ("PUT", "/api/projects/{p}/research-type", MANAGE, 409),  # matrix project is past idea; auth still must be owner-only
     ("POST", "/api/projects/{p}/stage/advance", WRITE, 200),
     ("POST", "/api/projects/{p}/stage/reenter", MANAGE, 200),  # owner only: it voids approvals and stales work
     ("GET", "/api/projects/{p}/stage/history", ALL, 200),
@@ -234,8 +236,9 @@ BODIES = {
     ("PUT", "/api/projects/{p}/usage/budget"): {"override": 5000},
     ("POST", "/api/projects/{p}/sources/{s}/excerpts"): {"content": "Matrix passage.", "locator": "p. 1"},
     ("PUT", "/api/projects/{p}/ai-settings"): {"ai_involvement": "suggestions_only"},
-    ("PUT", "/api/projects/{p}/criteria"): {"framework": "custom", "criteria": [{"kind": "include", "text": "Peer-reviewed studies"}]},
     ("PUT", "/api/projects/{p}/profile"): {"discipline": "economics", "overrides": {"databases": ["openalex"]}},
+    ("PUT", "/api/projects/{p}/criteria"): {"framework": "custom", "criteria": [{"kind": "include", "text": "Peer-reviewed studies"}]},
+    ("PUT", "/api/projects/{p}/research-type"): {"name": "literature_review"},
     ("POST", "/api/projects/{p}/stage/reenter"): {"stage": "scoped", "reason": "Rework the scope"},
     ("POST", "/api/projects/{p}/context"): {"kind": "question", "content": "Why?"},
     ("POST", "/api/projects/{p}/sources"): {"title": "A source"},
@@ -607,6 +610,23 @@ def _call(world, principal, method, template):
         ).json()
         path = path.replace(f"/sources/{world['ids']['s']}/", f"/sources/{fresh['id']}/")
         return world["clients"][principal].post(path, content=UPLOAD_PDF, headers={"content-type": "application/pdf"})
+    if (method, template) == ("POST", "/api/projects/{p}/sources/{s}/fulltext/withdraw"):
+        from app.config import get_settings as _get_settings
+        from app.object_storage import fulltext_key, get_object_store
+
+        fresh = world["clients"]["owner"].post(
+            f"/api/projects/{world['ids']['p']}/sources", json={"title": "Fulltext withdrawal target"}
+        ).json()
+        stored = get_object_store(_get_settings()).put(
+            fulltext_key(uuid.UUID(world["ids"]["p"]), uuid.UUID(fresh["id"]), "pdf"), UPLOAD_PDF
+        )
+        with SessionLocal() as db:
+            source = db.get(Source, uuid.UUID(fresh["id"]))
+            source.fulltext_path = stored.key
+            source.fulltext_access = {"status": "stored", "via": "test"}
+            db.commit()
+        path = path.replace(f"/sources/{world['ids']['s']}/", f"/sources/{fresh['id']}/")
+        return world["clients"][principal].post(path)
     if (method, template) == ("GET", "/api/projects/{p}/sources/{s}/fulltext"):
         from app.config import get_settings as _get_settings
         from app.object_storage import fulltext_key, get_object_store

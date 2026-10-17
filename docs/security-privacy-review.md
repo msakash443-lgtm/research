@@ -159,3 +159,37 @@ hardening.
 | X.4.8 | Personal-data export for a user | P3 |
 | X.4.9 | Processor register + in-app privacy notice | P3 |
 | X.4.10 | Privacy profile (jurisdiction, retention defaults, residency) | P3 (after Q23) |
+
+## X.4.7.3 project archive/deletion design (2026-10-17)
+
+The first implementation step is a reversible **archive**, not a hard delete. An archived project
+must remain readable to its owner for export and audit purposes, must be hidden from the normal active
+project list, and must reject new writes, task enqueueing, gate decisions, stage changes, and source
+uploads. Restoring an archive is an owner-only operation and must be audited. This avoids silently
+destroying the append-only evidence needed to explain a completed research process.
+
+Hard deletion is intentionally not implemented until the owner/DPO chooses a retention rule for
+`audit_events`, `document_versions`, `authorship_events`, `similarity_checks`, and
+`provenance_reports`. Those tables have database-level append-only guards; a project delete cannot
+legitimately cascade through them. A compliant deletion design therefore needs either a retained
+project tombstone with pseudonymised content or a separately authorised retention purge outside the
+application's ordinary project-delete transaction.
+
+The current project-scoped foreign-key inventory is:
+
+- direct project children: `project_members`, `gates`, `research_context_items`, `sources`,
+  `screening_criteria`, `screening_decisions`, `auto_exclude_audits`, `seed_papers`,
+  `seed_check_runs`, `project_extraction_schemas`, `search_queries`, `search_alerts`,
+  `snowball_runs`, `extractions`, `meta_analysis_plans`, `constructs`, `theories`, `claims`,
+  `gaps`, `research_briefs`, `research_questions`, `notes`, `ai_suggestions`, `ai_item_locks`,
+  `documents`, `provenance_reports`, `research_runs`, `tasks`, `artifacts`, `artifact_edges`,
+  `source_embeddings`, and `cluster_runs`;
+- indirect project children include `conceptual_paths` through `constructs`, plus source/context/
+  document/research-run child tables and note attachments;
+- stored objects include source full-text keys and note attachment keys. Archive does not delete
+  them. A future approved hard-delete operation must enumerate and call `ObjectStore.delete()` for
+  each key before removing the corresponding metadata rows, with failure-safe retry records.
+
+Implementation boundary: X.4.7.3 may ship the archive/restore state transition and write guards.
+Hard deletion remains blocked pending the Q23 retention decision and a migration design that handles
+append-only rows without disabling their integrity triggers.

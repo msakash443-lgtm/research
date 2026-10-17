@@ -32,6 +32,7 @@ from app.connectors.base import (
     SearchPage,
     SearchRequest,
     citation_count,
+    clean_abstract,
     clean_link,
     clean_text,
 )
@@ -46,6 +47,8 @@ SUPPORTED_FILTERS = ("year_from", "year_to", "type")
 _YEAR = re.compile(r"^\d{4}$")
 _TYPE = re.compile(r"^[a-z][a-z-]{0,40}$")
 _TAGS = re.compile(r"<[^>]+>")
+_STRUCTURED_OPEN = re.compile(r"<(?:jats:)?(?:p|sec)\b[^>]*>", re.IGNORECASE)
+_STRUCTURED_CLOSE = re.compile(r"</(?:jats:)?(?:p|sec)\s*>", re.IGNORECASE)
 _SPACE = re.compile(r"\s+")
 
 
@@ -66,10 +69,15 @@ def _first(value: Any, limit: int) -> str | None:
 def _abstract(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
-    text = _SPACE.sub(" ", html.unescape(_TAGS.sub(" ", value))).strip()
+    text = html.unescape(value)
+    text = _STRUCTURED_OPEN.sub("\n\n", text)
+    text = _STRUCTURED_CLOSE.sub("\n\n", text)
+    text = _TAGS.sub(" ", text)
+    text = _SPACE.sub(" ", text.replace("\n\n", "\u0000"))
+    text = text.replace("\u0000", "\n\n").strip()
     if text.lower().startswith("abstract "):
         text = text[9:].strip()
-    return text[:20000] or None
+    return clean_abstract(text, 20000)
 
 
 def _year(item: dict[str, Any]) -> int | None:

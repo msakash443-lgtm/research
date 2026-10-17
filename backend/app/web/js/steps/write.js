@@ -12,6 +12,7 @@ import { sourceFlagsPlugin, unlinkedRanges } from "../editor/sourceFlags.js";
 import { citableSources, citedIdsIn, pickerMatches, sourceLabel } from "../sourcePanelLogic.js";
 import { renderReport } from "../provenanceReport.js";
 import { manuscriptExportItems } from "../manuscriptExportLogic.js";
+import { readOriginColors, writeOriginColors } from "../originColorsLogic.js";
 
 // The writing editor (X.31.4). A section is saved as versions: the editor sends the whole document with the version
 // it was built on (`base_number`), and the server adds the next version or refuses (409 when someone else saved first,
@@ -157,7 +158,9 @@ async function openSection(root, ctx, section) {
     resultsEl: null, pollTimer: null, similarityTimer: null,
     // The last saved version's id and plain text: a similarity flag's offsets point into this text (X.31.14).
     latestId: latest?.id ?? null, latestText: latest?.content_text ?? "",
+    originColors: readOriginColors(window.localStorage, ctx.project.id),
   };
+  editorEl.classList.toggle("origin-colors-off", !s.originColors);
 
   const setStatus = (text, isError = false) => {
     status.textContent = text;
@@ -635,6 +638,18 @@ async function openSection(root, ctx, section) {
     panelBody.replaceChildren(
       el("h3", { text: "This section's record" }),
       el("p", { className: "small", text: `${summary.characters} characters. Only what you typed counts as typed. Pasted text stays marked until you say what it is.` }),
+      (() => {
+        const labelNode = el("label", { className: "write-origin-toggle" });
+        const input = el("input", { type: "checkbox", attrs: { "aria-label": "Show origin colours" } });
+        input.checked = s.originColors;
+        input.addEventListener("change", () => {
+          s.originColors = input.checked;
+          editorEl.classList.toggle("origin-colors-off", !s.originColors);
+          writeOriginColors(window.localStorage, ctx.project.id, s.originColors);
+        });
+        labelNode.append(input, document.createTextNode(" Show origin colours"));
+        return labelNode;
+      })(),
       el("ul", { children: byOrigin }),
       el("h4", { text: "Unconfirmed pastes" }),
       resolver.length ? el("ul", { className: "write-resolver", children: resolver }) : el("p", { className: "muted small", text: "None." }),

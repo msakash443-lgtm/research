@@ -12,7 +12,7 @@ from app.database import get_db
 from app.dependencies import MANAGE_ROLES, READ_ROLES, WRITE_ROLES, current_user, project_access
 from app.models import Artifact, ArtifactStatus, AuditEvent, Project, ProjectStage, User
 from app.gates import GATE_STAGES
-from app import guidance, stage_order
+from app import guidance, research_types, stage_order
 from app import exit_conditions as ec
 from app.schemas import (
     AdvanceRead,
@@ -142,7 +142,10 @@ def get_stage(project: Project = Depends(project_access(READ_ROLES)), db: Sessio
             )
             for o, conds in evaluated
         ],
-        chain=[StageChainItem(stage=s, gate=gate_by_stage.get(s)) for s in stage_order.chain(project)],
+        chain=[
+            StageChainItem(stage=step.stage, gate=step.gate, label=step.label)
+            for step in research_types.ResearchType(**project.stage_plan_json).stages
+        ],
         suggestions=[SuggestionRead(**dataclasses.asdict(s)) for s in suggestions],
     )
 

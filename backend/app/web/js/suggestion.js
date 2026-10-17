@@ -63,9 +63,9 @@ export async function suggestionPanel(ctx, { targetKind, targetId, onChange, ext
       busy = false;
       return;
     }
-    busy = false;
     await load();
-    if (onChange) await onChange();
+    if (onChange) await onChange(path, area);
+    busy = false;
   }
   const post = (path, body) => act(path, { method: "POST", ...(body ? { body: JSON.stringify(body) } : {}) });
 
@@ -77,6 +77,7 @@ export async function suggestionPanel(ctx, { targetKind, targetId, onChange, ext
 
   function card(suggestion) {
     const node = el("article", { className: `suggestion-card suggestion-${suggestion.state}` });
+    if (suggestion.target_field) node.append(el("p", { className: "muted small", text: `Field: ${suggestion.target_field}` }));
     const text = suggestion.state === "accepted" ? suggestion.accepted_text : suggestion.content;
     node.append(el("p", { className: "suggestion-text", text }));
     if (suggestion.state === "accepted" && suggestion.accepted_text !== suggestion.content) {
