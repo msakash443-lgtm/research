@@ -66,6 +66,8 @@ MATRIX = [
     ("GET", "/api/projects/{p}/documents/{doc}/versions", ALL, 200),
     ("GET", "/api/projects/{p}/documents/{doc}/versions/{v}", ALL, 200),
     ("GET", "/api/projects/{p}/documents/{doc}/ledger", ALL, 200),
+    ("GET", "/api/projects/{p}/documents/{doc}/outline", ALL, 200),
+    ("GET", "/api/projects/{p}/documents/{doc}/link-check", ALL, 200),
     ("POST", "/api/projects/{p}/documents/{doc}/versions", WRITE, 201),
     ("POST", "/api/projects/{p}/documents/{doc}/versions/{v}/restore", WRITE, 200),
     ("POST", "/api/projects/{p}/documents/{doc}/paragraph-from-note", WRITE, 200),
@@ -76,6 +78,10 @@ MATRIX = [
     ("GET", "/api/projects/{p}/provenance-reports", ALL, 200),
     ("GET", "/api/projects/{p}/provenance-reports/{rep}", ALL, 200),
     ("GET", "/api/projects/{p}/manuscript/export", ALL, 200),
+    ("GET", "/api/projects/{p}/manuscript/statements", ALL, 200),
+    ("PUT", "/api/projects/{p}/manuscript/statements", WRITE, 200),
+    ("GET", "/api/projects/{p}/manuscript/credit", ALL, 200),
+    ("PUT", "/api/projects/{p}/manuscript/credit/{cr}", WRITE, 200),
     ("POST", "/api/projects/{p}/sources", WRITE, 201),
     ("POST", "/api/projects/{p}/sources/{s}/verify", WRITE, 200),
     ("POST", "/api/projects/{p}/sources/merge", WRITE, 200),
@@ -165,6 +171,36 @@ MATRIX = [
     ("GET", "/api/projects/{p}/coverage-matrix", ALL, 200),
     ("GET", "/api/projects/{p}/design/method-recommendation", ALL, 200),
     ("GET", "/api/projects/{p}/design/sample-size", ALL, 200),
+    ("GET", "/api/projects/{p}/design/saturation-guidance", ALL, 200),
+    ("GET", "/api/projects/{p}/ethics-pack", ALL, 200),
+    ("GET", "/api/projects/{p}/preregistration", ALL, 200),
+    ("POST", "/api/projects/{p}/instrument/item-checks", ALL, 200),
+    ("GET", "/api/projects/{p}/instrument/measures", ALL, 200),
+    ("POST", "/api/projects/{p}/instrument/draft", ALL, 200),
+    ("POST", "/api/projects/{p}/instrument/validity-plan", ALL, 200),
+    ("GET", "/api/projects/{p}/datasets", ALL, 200),
+    ("POST", "/api/projects/{p}/datasets", WRITE, 201),
+    ("GET", "/api/projects/{p}/datasets/{ds}", ALL, 200),
+    ("GET", "/api/projects/{p}/datasets/{ds}/content", ALL, 200),
+    ("POST", "/api/projects/{p}/datasets/{ds}/clean", WRITE, 201),
+    ("POST", "/api/projects/{p}/datasets/{ds}/exclusion-rules", WRITE, 201),  # M5.7.1: proposing changes no data
+    ("GET", "/api/projects/{p}/datasets/{ds}/exclusion-rules", ALL, 200),
+    ("POST", "/api/projects/{p}/datasets/{ds}/exclusion-rules/{rule_id}/approve", APPROVE_G1, 200),  # human approval, owner or supervisor
+    ("POST", "/api/projects/{p}/datasets/{ds}/exclude", WRITE, 201),  # applies approved rules only, as a new version
+    ("GET", "/api/projects/{p}/datasets/{ds}/codebook", ALL, 200),  # M5.7.2: generated on read, stored nowhere
+    ("POST", "/api/projects/{p}/datasets/google-forms", WRITE, 503),  # M5.2: no token in the test env; role gate runs first
+    ("POST", "/api/projects/{p}/datasets/{ds}/quality", ALL, 200),  # M5.2: read-only flags, nothing stored
+    ("POST", "/api/projects/{p}/transcripts/anonymise", WRITE, 200),  # M5.7.3: stateless redaction
+    ("POST", "/api/projects/{p}/datasets/{ds}/analysis-plans", WRITE, 201),  # M5.3.1: plans are written by owner and co-author
+    ("GET", "/api/projects/{p}/analysis-plans", ALL, 200),
+    ("GET", "/api/projects/{p}/analysis-plans/{ap}", ALL, 200),
+    ("GET", "/api/projects/{p}/analysis-plans/{ap}/script", ALL, 200),  # M5.3.2: generated text only, nothing runs
+    ("POST", "/api/projects/{p}/analysis-plans/{ap}/lock", MANAGE, 200),  # owner only; idempotent after the first lock
+    ("POST", "/api/projects/{p}/analysis-plans/{ap}/runs", WRITE, 409),  # M5.3.3: the matrix plan is unlocked, so 409; role gate first
+    ("POST", "/api/projects/{p}/qual/suggest", WRITE, 503),  # M5.5.2: no local model in the matrix world, so participant text is refused, never sent to the fake third-party endpoint
+    ("GET", "/api/projects/{p}/qual/excerpts", ALL, 200),  # M5.5.2
+    ("POST", "/api/projects/{p}/qual/decisions", WRITE, 404),  # M5.5.2: no pending suggestion exists in the matrix world; role gate first
+    ("GET", "/api/projects/{p}/analysis-plans/{ap}/runs", ALL, 200),  # M5.3.3: stored runs only
     ("GET", "/api/projects/{p}/constructs", ALL, 200),
     ("POST", "/api/projects/{p}/constructs", WRITE, 201),
     ("GET", "/api/projects/{p}/theories", ALL, 200),
@@ -181,6 +217,10 @@ MATRIX = [
     ("GET", "/api/projects/{p}/research-questions/{rq}/finer", ALL, 200),
     ("GET", "/api/projects/{p}/brief", ALL, 200),
     ("PUT", "/api/projects/{p}/brief", WRITE, 200),
+    ("GET", "/api/projects/{p}/idea-brief", ALL, 200),
+    ("GET", "/api/projects/{p}/idea-brief/semantic-novelty", ALL, 200),
+    ("GET", "/api/projects/{p}/idea-brief/landscape-scan", ALL, 200),  # no query in the matrix: empty scan, no search
+    ("PUT", "/api/projects/{p}/idea-brief", WRITE, 200),
     ("GET", "/api/projects/{p}/brief/query", ALL, 200),
     ("GET", "/api/projects/{p}/hypotheses", ALL, 200),
     ("POST", "/api/projects/{p}/hypotheses", WRITE, 201),
@@ -230,10 +270,14 @@ MATRIX = [
 ]
 
 BODIES = {
+    ("POST", "/api/projects/{p}/qual/suggest"): {"excerpt": "A matrix excerpt about trust."},
+    ("POST", "/api/projects/{p}/qual/decisions"): {"suggestion_id": str(uuid.uuid4()), "decision": "accept"},
     ("POST", "/api/projects/{p}/documents"): {"title": "Matrix section", "position": 9},
     ("PATCH", "/api/projects/{p}/documents/{doc}"): {"title": "Matrix title"},
     ("PUT", "/api/projects/{p}/bibliometrics/inputs/{s}"): {"reference_ids": ["10.1234/ref"], "keywords": ["research"]},
     ("PUT", "/api/projects/{p}/usage/budget"): {"override": 5000},
+    ("PUT", "/api/projects/{p}/manuscript/statements"): {"data_availability_statement": "Data on request."},
+    ("PUT", "/api/projects/{p}/manuscript/credit/{cr}"): {"roles": ["Investigation"]},
     ("POST", "/api/projects/{p}/sources/{s}/excerpts"): {"content": "Matrix passage.", "locator": "p. 1"},
     ("PUT", "/api/projects/{p}/ai-settings"): {"ai_involvement": "suggestions_only"},
     ("PUT", "/api/projects/{p}/profile"): {"discipline": "economics", "overrides": {"databases": ["openalex"]}},
@@ -247,6 +291,17 @@ BODIES = {
     ("POST", "/api/projects/{p}/gaps"): {"type": "empirical", "statement": "A gap", "matrix_cell_ids": ["cell"]},
     ("PATCH", "/api/projects/{p}/gaps/{gap_id}"): {"priority": 5, "selected": True},
     ("PUT", "/api/projects/{p}/brief"): {"topic": "Remote collaboration", "keyword_groups": [{"terms": ["trust"]}], "min_citations": 3},
+    ("PUT", "/api/projects/{p}/idea-brief"): {"problem": "Teams stall", "why_it_matters": "Delivery slips"},
+    ("POST", "/api/projects/{p}/instrument/item-checks"): {"items": ["The course met my expectations."]},
+    ("POST", "/api/projects/{p}/instrument/draft"): {"measure_keys": ["bfi"]},
+    ("POST", "/api/projects/{p}/instrument/validity-plan"): {"measure_keys": ["pss"], "own_item_count": 3},
+    ("POST", "/api/projects/{p}/datasets"): {"name": "matrix upload", "csv_text": "a,b\n1,2\n"},
+    ("POST", "/api/projects/{p}/datasets/{ds}/clean"): {"name": "matrix clean", "steps": [{"op": "trim_whitespace"}]},
+    ("POST", "/api/projects/{p}/datasets/google-forms"): {"form_id": "matrixform", "name": "matrix forms"},
+    ("POST", "/api/projects/{p}/datasets/{ds}/quality"): {},
+    ("POST", "/api/projects/{p}/datasets/{ds}/exclusion-rules"): {"column": "a", "op": "equals", "value": "9"},
+    ("POST", "/api/projects/{p}/transcripts/anonymise"): {"text": "Ann met Bo.", "terms": ["Ann"]},
+    ("POST", "/api/projects/{p}/datasets/{ds}/analysis-plans"): {"tests": ["descriptives"], "variables": ["a"], "seed": 1},
     ("POST", "/api/projects/{p}/research-questions"): {"text": "How does trust affect collaboration?", "type": "relational", "gap_ids": []},
     ("PATCH", "/api/projects/{p}/research-questions/{rq}"): {"type": "exploratory"},
     ("POST", "/api/projects/{p}/hypotheses"): {"research_question_id": "{rq}", "statement": "Trust predicts collaboration.", "direction": "positive", "theoretical_basis": "Theory", "empirical_support": "Evidence"},
@@ -429,14 +484,29 @@ def world(monkeypatch, fake_llm):
     # Targets for the member routes: an uninvited user to add, and a removable reviewer.
     _login(f"matrix-invitee-{tag}@example.com")
     _, removable_id = _login(f"matrix-removable-{tag}@example.com")
+    removable_member_id = uuid.uuid4()
     with SessionLocal() as db:
-        db.add(ProjectMember(project_id=uuid.UUID(project_id), user_id=uuid.UUID(removable_id), role=ProjectRole.reviewer))
+        db.add(ProjectMember(id=removable_member_id, project_id=uuid.UUID(project_id), user_id=uuid.UUID(removable_id), role=ProjectRole.reviewer))
         db.commit()
     doc_id = _seed_document(project_id, owner_id)
+    from app import datasets as dataset_rules  # M5.1: a raw dataset for the dataset routes
+    from app.models import DatasetVersion
+
+    dataset_id = uuid.uuid4()
+    with SessionLocal() as db:
+        db.add(DatasetVersion(id=dataset_id, project_id=uuid.UUID(project_id), version_no=1, parent_id=None, kind="raw",
+                              name="matrix", content="a,b\n1,2\n", sha256=dataset_rules.sha256_hex("a,b\n1,2\n"), row_count=1,
+                              column_names=["a", "b"], cleaning_steps=[], created_by=str(owner_id)))
+        db.commit()
+    plan = owner.post(f"/api/projects/{project_id}/datasets/{dataset_id}/analysis-plans",
+                      json={"tests": ["descriptives"], "variables": ["a"], "seed": 1})
+    assert plan.status_code == 201, plan.text
+    rule = owner.post(f"/api/projects/{project_id}/datasets/{dataset_id}/exclusion-rules", json={"column": "a", "op": "is_blank"})  # M5.7.1
+    assert rule.status_code == 201, rule.text
+    assert owner.post(f"/api/projects/{project_id}/datasets/{dataset_id}/exclusion-rules/{rule.json()['id']}/approve").status_code == 200
     return {
         "clients": clients,
-        "ids": {"p": project_id, "s": source_id, "extract_s": extraction_source_id, "ai_s": ai_source["id"], "h": str(claim_id), "field_key": "research_question", "u": removable_id, "q": str(search_id), "d": str(seed_id), "e": str(extraction_id), "c": str(clustering_id), "l": str(cluster_id), "n": "lab_schema", "a": str(alert_id), "k": str(audit_id), "g": _fresh_suggestion(project_id, []), "doc": doc_id, "rep": _seed_report(project_id, owner_id, doc_id), "v": "1", "author": owner_id},
-        "ids": {"p": project_id, "s": source_id, "extract_s": extraction_source_id, "ai_s": ai_source["id"], "h": str(claim_id), "gap_id": gap_id, "rq": question_id, "hp": hypothesis_id, "field_key": "research_question", "u": removable_id, "q": str(search_id), "d": str(seed_id), "e": str(extraction_id), "plan_id": str(uuid.uuid4()), "cp": str(uuid.uuid4()), "c": str(clustering_id), "l": str(cluster_id), "n": "lab_schema", "a": str(alert_id), "k": str(audit_id), "g": _fresh_suggestion(project_id, []), "doc": doc_id, "rep": _seed_report(project_id, owner_id, doc_id), "v": "1", "author": owner_id},
+        "ids": {"p": project_id, "s": source_id, "extract_s": extraction_source_id, "ai_s": ai_source["id"], "h": str(claim_id), "gap_id": gap_id, "rq": question_id, "hp": hypothesis_id, "field_key": "research_question", "u": removable_id, "q": str(search_id), "d": str(seed_id), "e": str(extraction_id), "plan_id": str(uuid.uuid4()), "cp": str(uuid.uuid4()), "c": str(clustering_id), "l": str(cluster_id), "n": "lab_schema", "a": str(alert_id), "k": str(audit_id), "g": _fresh_suggestion(project_id, []), "doc": doc_id, "ds": str(dataset_id), "ap": plan.json()["id"], "rule_id": rule.json()["id"], "rep": _seed_report(project_id, owner_id, doc_id), "v": "1", "author": owner_id, "cr": str(removable_member_id)},
         "twin": twin_id,
         "invitee": f"matrix-invitee-{tag}@example.com",
     }
@@ -478,6 +548,20 @@ def _seed_document(project_id, author_id):
         return str(document.id)
 
 
+def _fresh_search(project_id):
+    """A completed search row with no open task and no alert subscription, for routes that refuse
+    a second concurrent run or a second alert on the same search (so a success can't 409 the next principal)."""
+    with SessionLocal() as db:
+        search_id = uuid.uuid4()
+        db.add(SearchQuery(
+            project_id=uuid.UUID(project_id), search_id=search_id, database="openalex", query_string='"x"',
+            run_at=utcnow(), n_results=1, counts={"retrieved": 1, "unique": 1},
+            results=[{"id": "W1", "doi": "10.1000/matrix", "work_key": "matrix-paper"}],
+        ))
+        db.commit()
+        return str(search_id)
+
+
 def _seed_report(project_id, owner_id, document_id):
     """A saved provenance report for the GET-by-id route (X.31.12)."""
     from app import provenance_store
@@ -500,11 +584,15 @@ def _call(world, principal, method, template):
         path += "?goal=explore"
     if method == "GET" and template.endswith("/design/sample-size"):
         path += "?test=correlation&r=0.3"
+    if method == "GET" and template.endswith("/design/saturation-guidance"):
+        path += "?design=interviews"
     if method == "GET" and template.endswith("/ledger"):
         path += "?span_id=seed"
     if method == "GET" and template.endswith("/similarity-checks"):
         path += f"?document_id={world['ids']['doc']}"
     body = BODIES.get((method, template))
+    if (method, template) == ("POST", "/api/projects/{p}/datasets/{ds}/exclude"):
+        body = {"name": "matrix exclude", "rule_ids": [world["ids"]["rule_id"]]}
     if (method, template) == ("POST", "/api/projects/{p}/similarity-checks"):
         body = {"document_id": world["ids"]["doc"]}
     if (method, template) in (("POST", "/api/projects/{p}/ai/suggestions"), ("POST", "/api/projects/{p}/ai/suggestions/preview")):
@@ -533,7 +621,78 @@ def _call(world, principal, method, template):
             drawn = owner.post(f"/api/projects/{pid}/conceptual-model/paths", json=body).json()["id"]
             return world["clients"][principal].delete(f"/api/projects/{pid}/conceptual-model/paths/{drawn}")
     if (method, template) == ("POST", "/api/projects/{p}/sources/merge"):
-        body = {"source_ids": [world["ids"]["s"], world["twin"]]}
+        # Fresh duplicate-DOI pair per call, so a success can't 409 the next principal.
+        owner, pid = world["clients"]["owner"], world["ids"]["p"]
+        doi = f"10.9999/{uuid.uuid4().hex}"
+        a = owner.post(f"/api/projects/{pid}/sources", json={"title": "Merge dup", "doi": doi}).json()["id"]
+        b = owner.post(f"/api/projects/{pid}/sources", json={"title": "Merge dup (copy)", "doi": doi}).json()["id"]
+        body = {"source_ids": [a, b]}
+    if (method, template) == ("POST", "/api/projects/{p}/sources/{s}/check"):
+        # A fresh source per call: the dedup guard refuses a second queued check on the same source.
+        fresh = world["clients"]["owner"].post(f"/api/projects/{world['ids']['p']}/sources", json={"title": "Check target"}).json()
+        path = path.replace(f"/sources/{world['ids']['s']}/", f"/sources/{fresh['id']}/")
+    if (method, template) == ("POST", "/api/projects/{p}/sources/{s}/fulltext/fetch"):
+        # A fresh source per call: the dedup guard refuses a second queued fetch on the same source.
+        fresh = world["clients"]["owner"].post(f"/api/projects/{world['ids']['p']}/sources", json={"title": "Fulltext fetch target", "doi": f"10.9999/{uuid.uuid4().hex}"}).json()
+        path = path.replace(f"/sources/{world['ids']['s']}/", f"/sources/{fresh['id']}/")
+    if (method, template) == ("POST", "/api/projects/{p}/searches/{q}/rerun"):
+        # A fresh, unsubscribed search per call: the dedup guard refuses a second queued run.
+        fresh_search = _fresh_search(world["ids"]["p"])
+        path = path.replace(f"/searches/{world['ids']['q']}/", f"/searches/{fresh_search}/")
+    if (method, template) == ("POST", "/api/projects/{p}/searches/{q}/alerts"):
+        # A fresh search per call: a search can only have one alert subscription.
+        fresh_search = _fresh_search(world["ids"]["p"])
+        path = path.replace(f"/searches/{world['ids']['q']}/", f"/searches/{fresh_search}/")
+    if (method, template) == ("POST", "/api/projects/{p}/seeds"):
+        # A fresh DOI per call: the seed DOI is unique per project.
+        body = {"title": "Another seed paper", "doi": f"10.1234/{uuid.uuid4().hex}"}
+    if (method, template) == ("DELETE", "/api/projects/{p}/seeds/{d}"):
+        # A fresh seed per call, so a success can't 404 the next principal.
+        fresh = world["clients"]["owner"].post(f"/api/projects/{world['ids']['p']}/seeds", json={"title": "Removable seed", "doi": f"10.4321/{uuid.uuid4().hex}"}).json()
+        path = path.replace(f"/seeds/{world['ids']['d']}", f"/seeds/{fresh['id']}")
+    if (method, template) == ("POST", "/api/projects/{p}/members"):
+        # A fresh, already-signed-in invitee per call: a project member can only be invited once,
+        # and invite refuses an email with no account.
+        invitee_email = f"matrix-invitee-{uuid.uuid4().hex[:8]}@example.com"
+        _login(invitee_email)
+        body = {"email": invitee_email, "role": "reviewer"}
+    if (method, template) == ("DELETE", "/api/projects/{p}/members/{u}"):
+        # A fresh removable member per call, so a success can't 404 the next principal.
+        _, removable_id = _login(f"matrix-removable-{uuid.uuid4().hex[:8]}@example.com")
+        with SessionLocal() as db:
+            db.add(ProjectMember(project_id=uuid.UUID(world["ids"]["p"]), user_id=uuid.UUID(removable_id), role=ProjectRole.reviewer))
+            db.commit()
+        path = path.replace(f"/members/{world['ids']['u']}", f"/members/{removable_id}")
+    if (method, template) == ("POST", "/api/projects/{p}/extraction-schemas"):
+        # A fresh schema name per call: the schema name is unique per project.
+        body = {"name": f"copied_schema_{uuid.uuid4().hex[:8]}", "based_on": "default"}
+    if (method, template) == ("POST", "/api/projects/{p}/alerts/{a}/run"):
+        # A fresh, just-subscribed alert per call: the dedup guard refuses a second queued run.
+        owner = world["clients"]["owner"]
+        fresh_search = _fresh_search(world["ids"]["p"])
+        alert = owner.post(f"/api/projects/{world['ids']['p']}/searches/{fresh_search}/alerts", json={}).json()
+        path = path.replace(f"/alerts/{world['ids']['a']}/", f"/alerts/{alert['alert_id']}/")
+    if (method, template) == ("DELETE", "/api/projects/{p}/alerts/{a}"):
+        # A fresh alert per call, so a success can't 404 the next principal.
+        owner = world["clients"]["owner"]
+        fresh_search = _fresh_search(world["ids"]["p"])
+        alert = owner.post(f"/api/projects/{world['ids']['p']}/searches/{fresh_search}/alerts", json={}).json()
+        path = path.replace(f"/alerts/{world['ids']['a']}", f"/alerts/{alert['alert_id']}")
+    if (method, template) == ("POST", "/api/projects/{p}/theories"):
+        # A fresh name per call: the theory name is unique per project.
+        body = {"name": f"Social exchange {uuid.uuid4().hex[:8]}", "description": "A lens."}
+    if (method, template) == ("POST", "/api/projects/{p}/constructs"):
+        # A fresh name per call: the (name, author) pair is unique per project.
+        body = {"name": f"Trust {uuid.uuid4().hex[:8]}", "definition": "Definition", "author": "Smith"}
+    if (method, template) == ("POST", "/api/projects/{p}/gates/G1/approve"):
+        # Reset G1 to pending before each call: the project has already moved past G1's stage, so
+        # the reopen endpoint refuses (M0.5.10 rule); write the row directly instead.
+        from app.models import Gate as _Gate, GateCode as _GateCode, GateStatus as _GateStatus
+        with SessionLocal() as db:
+            db.query(_Gate).filter(
+                _Gate.project_id == uuid.UUID(world["ids"]["p"]), _Gate.code == _GateCode.G1,
+            ).update({"status": _GateStatus.pending, "decided_by": None, "decided_at": None, "note": None})
+            db.commit()
     if (method, template) == ("PUT", "/api/projects/{p}/screening/dual-screen"):
         body = {"enabled": True}
     if (method, template) == ("POST", "/api/projects/{p}/screening/decisions"):
@@ -653,7 +812,11 @@ def _call(world, principal, method, template):
         return world["clients"][principal].post(path)
     if (method, template) == ("POST", "/api/projects/{p}/stage/advance"):
         # The matrix checks who may advance, not lock levels: supply reasons for the Recommended rows this
-        # fixture leaves unmet (lock levels are covered in test_stage_condition_overrides.py).
+        # fixture leaves unmet (lock levels are covered in test_stage_condition_overrides.py). Reset the
+        # stage before each call so one allowed principal's success can't 409 the next.
+        with SessionLocal() as db:
+            db.get(Project, uuid.UUID(world["ids"]["p"])).stage = ProjectStage.search_planned
+            db.commit()
         response = world["clients"][principal].post(path, json={})
         detail = response.json().get("detail") if response.status_code == 409 else None
         locked = detail.get("recommended") if isinstance(detail, dict) else None
@@ -669,25 +832,28 @@ def _call(world, principal, method, template):
     return world["clients"][principal].request(method, path, json=body)
 
 
-@pytest.mark.parametrize("principal", PRINCIPALS)
 @pytest.mark.parametrize("method,template,allowed,success", MATRIX, ids=[f"{m} {t}" for m, t, _, _ in MATRIX])
-def test_role_matrix(world, principal, method, template, allowed, success):
-    response = _call(world, principal, method, template)
-
-    if principal == "anonymous":
-        assert response.status_code == 401
-    elif principal == "stranger":
-        assert response.status_code == 404
-    elif principal.removesuffix("_member") in allowed:
-        assert response.status_code == success, response.text
-    else:
-        assert response.status_code == 403, response.text
+def test_role_matrix(world, method, template, allowed, success):
+    failures = []
+    for principal in PRINCIPALS:
+        response = _call(world, principal, method, template)
+        if principal == "anonymous":
+            ok, want = response.status_code == 401, 401
+        elif principal == "stranger":
+            ok, want = response.status_code == 404, 404
+        elif principal.removesuffix("_member") in allowed:
+            ok, want = response.status_code == success, success
+        else:
+            ok, want = response.status_code == 403, 403
+        if not ok:
+            failures.append(f"{principal}: expected {want}, got {response.status_code}: {response.text}")
+    assert not failures, "\n".join(failures)
 
 
 def test_the_matrix_covers_every_project_scoped_route():
     """A new project route must be added to MATRIX, or this fails."""
     routed = {
-            (method, route.path.replace("{project_id}", "{p}").replace("{source_id}", "{s}").replace("{user_id}", "{u}").replace("{code}", "G1").replace("{search_id}", "{q}").replace("{seed_id}", "{d}").replace("{extraction_id}", "{e}").replace("{evidence_id}", "{e}").replace("{plan_id}", "{plan_id}").replace("{claim_id}", "{h}").replace("{gap_id}", "{gap_id}").replace("{question_id}", "{rq}").replace("{hypothesis_id}", "{hp}").replace("{field_key}", "{field_key}").replace("{clustering_id}", "{c}").replace("{cluster_id}", "{l}").replace("{schema_name}", "{n}").replace("{alert_id}", "{a}").replace("{audit_id}", "{k}").replace("{suggestion_id}", "{g}").replace("{document_id}", "{doc}").replace("{number}", "{v}").replace("{target_kind}", "source").replace("{target_id}", "{s}").replace("{kind}", "co_citation").replace("{report_id}", "{rep}").replace("{path_id}", "{cp}"))
+            (method, route.path.replace("{project_id}", "{p}").replace("{source_id}", "{s}").replace("{user_id}", "{u}").replace("{code}", "G1").replace("{search_id}", "{q}").replace("{seed_id}", "{d}").replace("{extraction_id}", "{e}").replace("{evidence_id}", "{e}").replace("{plan_id}", "{plan_id}").replace("{claim_id}", "{h}").replace("{gap_id}", "{gap_id}").replace("{question_id}", "{rq}").replace("{hypothesis_id}", "{hp}").replace("{field_key}", "{field_key}").replace("{clustering_id}", "{c}").replace("{cluster_id}", "{l}").replace("{schema_name}", "{n}").replace("{alert_id}", "{a}").replace("{audit_id}", "{k}").replace("{suggestion_id}", "{g}").replace("{document_id}", "{doc}").replace("{number}", "{v}").replace("{target_kind}", "source").replace("{target_id}", "{s}").replace("{kind}", "co_citation").replace("{report_id}", "{rep}").replace("{path_id}", "{cp}").replace("{dataset_id}", "{ds}").replace("{analysis_plan_id}", "{ap}").replace("{member_id}", "{cr}"))
         for route in app.routes
         if "{project_id}" in getattr(route, "path", "")
         for method in route.methods

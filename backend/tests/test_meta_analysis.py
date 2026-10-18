@@ -76,3 +76,33 @@ def test_plan_requires_verified_comparable_studies_and_g8_before_results():
             "sample": {"n": 103}, "key_findings": [{"effect_size": "r=0.5"}]}
         db.commit()
     assert client.post(f"{base}/{plan_id}/run").status_code == 409
+
+
+def test_g8_can_be_approved_once_a_meta_analysis_plan_exists():
+    """M5.3.4 regression: meta-analysis freezes its plan by G8, so G8 must not need an AnalysisPlan lock."""
+    client = TestClient(app)
+    client.post("/api/auth/development/login", json={"email": f"meta-g8-{uuid.uuid4().hex}@example.com", "display_name": "Meta"})
+    pid = client.post("/api/projects", json={"title": "Pooling G8"}).json()["id"]
+    source_ids = [client.post(f"/api/projects/{pid}/sources", json={"title": f"Study {i}"}).json()["id"] for i in range(2)]
+    from app.models import utcnow
+    with SessionLocal() as db:
+        extraction_ids = []
+        for i, sid in enumerate(source_ids):
+            row = Extraction(project_id=uuid.UUID(pid), source_id=uuid.UUID(sid), schema_version="default@1",
+                             fields_json={"sample": {"n": 103}, "key_findings": [{"effect_size": f"r={.2 + .2*i}"}]},
+                             evidence_spans={}, extracted_by="human", extractor="test",
+                             verified_by_human=True, verified_by="test", verified_at=utcnow())
+            db.add(row)
+            db.flush()
+            extraction_ids.append(str(row.id))
+        for gate in db.query(Gate).filter_by(project_id=uuid.UUID(pid)).all():
+            if gate.code in (GateCode.G1, GateCode.G2, GateCode.G3, GateCode.G4, GateCode.G5, GateCode.G6, GateCode.G7):
+                gate.status = GateStatus.approved
+        db.commit()
+    base = f"/api/projects/{pid}/meta-analysis"
+    body = {"outcome": "Same measured outcome", "primary_model": "fixed",
+            "studies": [{"extraction_id": eid, "finding_index": 0} for eid in extraction_ids]}
+    assert client.post(base, json=body).status_code == 201
+    approved = client.post(f"/api/projects/{pid}/gates/G8/approve")
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["status"] == "approved"

@@ -15,6 +15,7 @@ import json
 import time
 import uuid
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -67,6 +68,7 @@ def _screening_project() -> uuid.UUID:
     return uuid.UUID(pid)
 
 
+@pytest.mark.slow
 def test_screening_leaves_the_model_most_of_the_1000_per_hour_budget():
     pid = _screening_project()
     abstract = "We study how teams share knowledge across projects using a survey of 412 engineers. " * 8
@@ -99,6 +101,7 @@ def test_screening_leaves_the_model_most_of_the_1000_per_hour_budget():
     )
 
 
+@pytest.mark.slow
 def test_500_full_texts_are_indexed_within_an_hour():
     pdfs = []
     for n in range(FULLTEXT_COUNT):

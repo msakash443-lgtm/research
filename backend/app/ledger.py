@@ -15,7 +15,9 @@ from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-ALLOWED_NODES = frozenset({"doc", "paragraph", "heading", "blockquote", "bullet_list", "ordered_list", "list_item", "hard_break", "text", "cite"})
+from app.number_citation import resolve_number
+
+ALLOWED_NODES = frozenset({"doc", "paragraph", "heading", "blockquote", "bullet_list", "ordered_list", "list_item", "hard_break", "text", "cite", "stat"})
 ALLOWED_MARKS = frozenset({"em", "strong", "prov", "evidence"})
 TEXT_BLOCKS = frozenset({"paragraph", "heading"})
 ORIGINS = frozenset({"typed", "dictated", "pasted", "imported", "from_note", "ai_edited", "ai_suggested"})
@@ -131,6 +133,10 @@ def validate_schema(document: dict[str, Any]) -> list[Problem]:
                 problems.append(Problem("invalid_schema", f"mark {mark.get('type') if isinstance(mark, dict) else mark!r} is not allowed"))
         if kind == "cite" and not isinstance((node.get("attrs") or {}).get("source_id"), str):
             problems.append(Problem("invalid_schema", "a citation needs a source_id"))
+        if kind == "stat":
+            stat_attrs = node.get("attrs") or {}
+            if not (isinstance(stat_attrs.get("analysis_run_id"), str) and isinstance(stat_attrs.get("path"), str)):
+                problems.append(Problem("invalid_schema", "an inserted number needs an analysis_run_id and a path"))
         if kind != "text":
             continue
         if not isinstance(node.get("text"), str):
@@ -219,15 +225,18 @@ def check_integrity(
     accepted: dict[str, str],
     suggestion_texts: Sequence[str],
     citable_source_ids: Iterable[str],
+    number_run_outputs: dict[str, Any] | None = None,
     restored: dict[str, Any] | None = None,
 ) -> list[Problem]:
     """The rules a save must pass. `accepted` maps accepted suggestion ids to the text a person accepted;
     `suggestion_texts` is every AI output for this document; `citable_source_ids` are the project's verified,
-    unmerged sources. Empty list means the save may be written."""
+    unmerged sources; `number_run_outputs` maps this project's `AnalysisRun` ids to their stored `output_json`.
+    Empty list means the save may be written."""
     before = collect_spans(previous)
     after = collect_spans(new)
     restored_ids = set(collect_spans(restored)) if restored is not None else set()
     citable = set(citable_source_ids)
+    runs = number_run_outputs or {}
     problems: list[Problem] = []
 
     for sid, old in before.items():
@@ -256,6 +265,16 @@ def check_integrity(
     for node in _nodes(new):
         if node.get("type") == "cite" and node["attrs"]["source_id"] not in known_cites | citable:
             problems.append(Problem("uncited_source", f"source {node['attrs']['source_id']} is not a verified project source"))
+
+    known_stats = {(n["attrs"]["analysis_run_id"], n["attrs"]["path"]) for n in _nodes(previous) if n.get("type") == "stat"}
+    for node in _nodes(new):
+        if node.get("type") != "stat":
+            continue
+        run_id, path = node["attrs"]["analysis_run_id"], node["attrs"]["path"]
+        if (run_id, path) in known_stats:
+            continue
+        if resolve_number(runs.get(run_id), path) is None:
+            problems.append(Problem("unresolved_number", f"path {path!r} is not a number in analysis run {run_id}'s output"))
     return _unique(problems)
 
 

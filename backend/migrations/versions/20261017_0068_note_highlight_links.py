@@ -12,8 +12,10 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Batch mode is required for SQLite, where ALTER TABLE cannot add a foreign-key constraint.
-    with op.batch_alter_table("notes", recreate="always") as batch:
+    # Batch mode recreates the table only on SQLite, where ALTER TABLE cannot add a foreign-key
+    # constraint. On PostgreSQL it emits plain ALTERs: recreating `notes` would drop notes_pkey,
+    # which note_revisions, note_attachments and research_context_items reference.
+    with op.batch_alter_table("notes", recreate="auto") as batch:
         batch.add_column(sa.Column("source_id", sa.Uuid(), nullable=True))
         batch.add_column(sa.Column("excerpt_id", sa.Uuid(), nullable=True))
         batch.create_foreign_key("fk_notes_source_id_sources", "sources", ["source_id"], ["id"])
@@ -25,7 +27,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("ix_notes_excerpt_id", table_name="notes")
     op.drop_index("ix_notes_source_id", table_name="notes")
-    with op.batch_alter_table("notes", recreate="always") as batch:
+    with op.batch_alter_table("notes", recreate="auto") as batch:
         batch.drop_constraint("fk_notes_excerpt_id_source_excerpts", type_="foreignkey")
         batch.drop_constraint("fk_notes_source_id_sources", type_="foreignkey")
         batch.drop_column("excerpt_id")

@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app import design_tools
+from app import design_tools, saturation_guidance
 from app.dependencies import READ_ROLES, project_access
 from app.models import Project
 
@@ -22,6 +22,19 @@ def method_recommendation(
 ) -> dict[str, Any]:
     try:
         return design_tools.recommend_method(goal, can_randomize=can_randomize, accessible_population=accessible_population)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+
+
+@router.get("/saturation-guidance")
+def saturation(
+    design: str = Query(...),
+    homogeneous: bool | None = Query(None),
+    narrow_objective: bool | None = Query(None),
+    project: Project = Depends(project_access(READ_ROLES)),
+) -> dict[str, Any]:
+    try:
+        return saturation_guidance.saturation_guidance(design, homogeneous=homogeneous, narrow_objective=narrow_objective)
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app import audit, exit_conditions, prisma
@@ -13,7 +13,7 @@ from app.gates import (
     GATE_STAGES, approved_later_gates, ensure_gates, pending_earlier_gates, reblock_tasks_for_gate, release_tasks_for_gate,
     required_roles,
 )
-from app.models import Gate, GateCode, GateStatus, Project, ProjectRole, User, utcnow
+from app.models import AnalysisPlan, Gate, GateCode, GateStatus, MetaAnalysisPlan, Project, ProjectRole, User, utcnow
 from app.stage_order import StageNotInChain, require_stage
 from app.schemas import GateDecision, GateRead, GateReopen
 
@@ -21,6 +21,17 @@ router = APIRouter(prefix="/projects/{project_id}/gates", tags=["gates"])
 
 # The gate row for G3/G4 approval itself is excluded from the Required check below: it is unmet until this approval.
 _OWN_GATE_ROW = {GateCode.G3: "EC-4.1", GateCode.G4: "EC-5.1"}
+
+
+def has_locked_analysis_plan(db: Session, project_id) -> bool:
+    """True when this project has a locked analysis plan (M5.3.1 lock) or a meta-analysis plan.
+
+    A meta-analysis plan has no lock step: its router freezes the plan by G8 itself, and it refuses
+    new plans once G8 is approved, so a plan's existence is what G8 approval needs here.
+    """
+    locked = select(AnalysisPlan.id).where(AnalysisPlan.project_id == project_id, AnalysisPlan.locked_at.is_not(None))
+    meta = select(MetaAnalysisPlan.id).where(MetaAnalysisPlan.project_id == project_id)
+    return db.scalar(locked.limit(1)) is not None or db.scalar(meta.limit(1)) is not None
 
 
 def _reopen_problem(project: Project, gates: list[Gate], gate: Gate) -> str | None:
@@ -135,6 +146,12 @@ def decide_gate(
         problem = g4_problem(db, project)
         if problem:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=problem)
+    if code == GateCode.G8 and outcome == GateStatus.approved and not has_locked_analysis_plan(db, project.id):
+        # M5.3.4: the plan must be locked before the gate that freezes it can pass; lock-first is no longer only convention.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Gate G8 cannot be approved until an analysis plan is locked. Create the plan and lock it first.",
+        )
 
     # Conditional write: another request may have approved this gate since we read it.
     # The WHERE clause is re-checked by the database at write time, so an approval can't be

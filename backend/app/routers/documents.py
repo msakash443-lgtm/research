@@ -18,14 +18,17 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import audit, ledger, provenance_store, suggestions
+from app import audit, ledger, manuscript_guard, provenance_store, suggestions
 from app.database import get_db
 from app.lookups import project_document_or_404
+from app.similarity_task import latest_version
 from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_access
 from app.models import (
     AiSuggestion,
+    AnalysisRun,
     AuthorshipEvent,
     AuthorshipKind,
+    Claim,
     Document,
     DocumentVersion,
     Note,
@@ -225,6 +228,13 @@ def _citable_source_ids(db: Session, project: Project) -> set[str]:
     return {str(source.id) for source in sources if source.reviewed_by_person}
 
 
+def _number_run_outputs(db: Session, project: Project) -> dict[str, Any]:
+    """This project's analysis-run outputs, keyed by run id (M6.3): what a new `stat` node's path may resolve against."""
+    runs = db.scalars(select(AnalysisRun).where(AnalysisRun.project_id == project.id)).all()
+    return {str(run.id): run.output_json for run in runs}
+
+
+
 def _paste_candidates(db: Session, project: Project, document: Document) -> list[tuple[str, str, str]]:
     """Text a paste can match, in the order detection tries it: excerpts and abstracts of this project's sources,
     then the latest saved text of the project's other sections."""
@@ -268,7 +278,7 @@ def _store(
     accepted, texts = _ai_context(db, project, document)
     problems = ledger.check_integrity(
         previous, content, actor=actor, accepted=accepted, suggestion_texts=texts,
-        citable_source_ids=_citable_source_ids(db, project), restored=restored,
+        citable_source_ids=_citable_source_ids(db, project), number_run_outputs=_number_run_outputs(db, project), restored=restored,
     )
     if problems:
         _refuse(problems)
@@ -490,3 +500,64 @@ def span_ledger(
         .where(AuthorshipEvent.document_id == document.id, AuthorshipEvent.span_id == span_id)
         .order_by(DocumentVersion.number, AuthorshipEvent.created_at)
     ).all()
+
+
+class OutlineClaim(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    claim_id: uuid.UUID
+    text: str
+    verified: bool
+    evidence_count: int
+
+
+@router.get("/{document_id}/outline", response_model=list[OutlineClaim])
+def section_outline(document_id: uuid.UUID, project: Project = Depends(project_access(READ_ROLES)),
+                    db: Session = Depends(get_db)):
+    """The claims bound to this section, oldest first, with verification state. Claims in other sections or unbound are left out."""
+    document = project_document_or_404(db, project, document_id)
+    claims = db.scalars(select(Claim).where(Claim.project_id == project.id, Claim.section_id == document.id)
+                        .order_by(Claim.created_at, Claim.id)).all()
+    return [OutlineClaim(claim_id=claim.id, text=claim.text, verified=claim.verified,
+                         evidence_count=len(claim.evidence)) for claim in claims]
+
+
+class LinkFinding(BaseModel):
+    kind: str
+    subject: str
+    message: str
+
+
+class LinkCheckRead(BaseModel):
+    document_id: uuid.UUID
+    version_id: uuid.UUID | None
+    ok: bool
+    findings: list[LinkFinding]
+    cited_source_ids: list[str]
+    reference_source_ids: list[str]
+    orphan_claim_ids: list[str]
+
+
+def _source_id_or_none(value: str) -> uuid.UUID | None:
+    try:
+        return uuid.UUID(value)
+    except (TypeError, ValueError):
+        return None
+
+
+@router.get("/{document_id}/link-check", response_model=LinkCheckRead)
+def section_link_check(document_id: uuid.UUID, project: Project = Depends(project_access(READ_ROLES)),
+                       db: Session = Depends(get_db)):
+    """Claims, citations and inserted numbers of this section checked against the project's sources and analysis runs
+    (M6.2, M6.3): orphan claims, citations to sources that are unknown or unverified, verified evidence the text never
+    cites, and inserted numbers that name an unknown analysis run or a path that does not resolve to a number. Reads
+    the latest saved version and the claims bound to the section; it changes nothing and does not block export."""
+    document = project_document_or_404(db, project, document_id)
+    version = latest_version(db, document.id)
+    content = version.content_json if version is not None else {"type": "doc", "content": []}
+    report = manuscript_guard.section_report(db, project.id, document, content)
+    return LinkCheckRead(
+        document_id=document.id, version_id=version.id if version is not None else None, ok=report.ok,
+        findings=[LinkFinding(kind=f.kind, subject=f.subject, message=f.message) for f in report.findings],
+        cited_source_ids=report.cited_source_ids, reference_source_ids=report.reference_source_ids,
+        orphan_claim_ids=report.orphan_claim_ids,
+    )

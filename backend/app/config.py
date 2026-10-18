@@ -156,6 +156,10 @@ class Settings(BaseSettings):
     # Optional OpenCitations access token (sent as the `authorization` header).
     opencitations_access_token: SecretStr | None = None
     # Object storage for PDFs/full text (M0.10.2/M0.10.3). "local" or "s3"; any other value fails loudly.
+    # Key for keyed pseudonymisation of dataset columns (M5.6). Never logged or stored with the data; without it the
+    # pseudonymise step is refused rather than falling back to an unkeyed hash.
+    pseudonym_key: SecretStr | None = None
+
     object_storage_backend: str = "local"
     object_storage_root: str = "./data/objects"
     object_storage_max_bytes: int = Field(default=50 * 1024 * 1024, gt=0)
@@ -199,6 +203,13 @@ class Settings(BaseSettings):
     zotero_api_key: SecretStr | None = None
     zotero_user_id: str | None = None
     zotero_collection_key: str | None = None
+    # Google Forms connector (M5.2): a short-lived OAuth access token the owner obtains for their own Google
+    # account (scope: Forms responses read). Env-only; never stored in the database or echoed in errors.
+    # Unset = the import route answers 503.
+    google_forms_access_token: SecretStr | None = None
+    # Analysis sandbox (M5.3.3): a Docker image pinned by digest (name@sha256:...). Unset = runs answer 503.
+    analysis_sandbox_image: str | None = None
+    analysis_sandbox_timeout_seconds: int = 120
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -260,6 +271,11 @@ class Settings(BaseSettings):
                 missing.append("ZOTERO_USER_ID")
             if missing:
                 raise ValueError("ZOTERO_SYNC_ENABLED=true requires " + ", ".join(missing))
+        if self.pseudonym_key is not None:
+            # Checked in every environment: a copied example value would key pseudonyms with a public string (M5.6).
+            key = self.pseudonym_key.get_secret_value().strip()
+            if not key or key.startswith("replace-with-"):
+                raise ValueError("PSEUDONYM_KEY must be a real secret, or left unset; the example placeholder is not a key")
         if self.environment != "production":
             return self
 

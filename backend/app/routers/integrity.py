@@ -11,19 +11,20 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import audit, manuscript_export, similarity_providers
+from app import ai_disclosure, audit, credit, manuscript_export, manuscript_guard, similarity_providers
 from app.config import get_settings
+from app.discipline import ProfileError, effective_settings
 from app.database import get_db
 from app.lookups import project_document_or_404
 from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_access
-from app.models import Document, DocumentVersion, Project, SimilarityCheck, Source, User
+from app.models import AnalysisRun, AuditEvent, Document, DocumentVersion, Project, ProjectMember, SimilarityCheck, Source, User
 from app.refmanager import to_bibtex
 from app.similarity_task import latest_version
 from app.task_handlers import SIMILARITY_CHECK
@@ -140,21 +141,169 @@ def list_checks(
 
 
 DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-EXPORT_EXTENSIONS = {"md": "md", "json": "json", "docx": "docx", "bibtex": "bib"}
+LATEX_MEDIA_TYPE = "application/x-latex; charset=utf-8"
+EXPORT_EXTENSIONS = {"md": "md", "json": "json", "docx": "docx", "bibtex": "bib", "latex": "tex"}
+
+
+class ManuscriptStatementsRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    data_availability_statement: str | None
+    conflict_of_interest_statement: str | None
+    ethics_statement: str | None
+    ai_use_disclosure: str
+
+
+def _ai_use_disclosure(db: Session, project_id: uuid.UUID) -> str:
+    """Generated from the audit log (M6.6): every recorded action that carried a `model_id`."""
+    rows = db.execute(
+        select(AuditEvent.action, AuditEvent.model_id, AuditEvent.prompt_version).where(AuditEvent.project_id == project_id)
+    ).all()
+    return ai_disclosure.generate([ai_disclosure.AiAuditAction(action=a, model_id=m, prompt_version=p) for a, m, p in rows])
+
+
+def _display_name(user: User) -> str:
+    return user.display_name or user.email
+
+
+def _credit_contributions(db: Session, project_id: uuid.UUID) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    rows = db.execute(
+        select(User, ProjectMember.credit_roles)
+        .join(User, User.id == ProjectMember.user_id)
+        .where(ProjectMember.project_id == project_id)
+        .order_by(ProjectMember.created_at.asc())
+    ).all()
+    return tuple((_display_name(user), tuple(roles or [])) for user, roles in rows)
+
+
+class CreditContributorRead(BaseModel):
+    member_id: uuid.UUID
+    user_id: uuid.UUID
+    name: str
+    roles: list[str]
+
+
+class CreditRolesUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    roles: list[str] = Field(default_factory=list)
+
+
+@router.get("/manuscript/credit", response_model=list[CreditContributorRead])
+def list_credit_contributions(project: Project = Depends(project_access(READ_ROLES)), db: Session = Depends(get_db)):
+    """Every project member and their CRediT contribution roles, for the manuscript's "Author Contributions"
+    statement. AI is never listed here: only `ProjectMember` rows (human users) can hold roles."""
+    rows = db.execute(
+        select(ProjectMember, User)
+        .join(User, User.id == ProjectMember.user_id)
+        .where(ProjectMember.project_id == project.id)
+        .order_by(ProjectMember.created_at.asc())
+    ).all()
+    return [
+        CreditContributorRead(member_id=member.id, user_id=user.id, name=_display_name(user), roles=list(member.credit_roles or []))
+        for member, user in rows
+    ]
+
+
+@router.put("/manuscript/credit/{member_id}", response_model=CreditContributorRead)
+def set_credit_contribution(
+    member_id: uuid.UUID,
+    payload: CreditRolesUpdate,
+    project: Project = Depends(project_access(WRITE_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Sets one project member's CRediT roles (standard 14-term taxonomy, `app.credit.CREDIT_ROLES`); an unknown
+    role name is refused (422), never silently dropped. Audited with which roles were set, not free text, so this
+    carries no researcher-authored prose."""
+    member = db.scalar(select(ProjectMember).where(ProjectMember.id == member_id, ProjectMember.project_id == project.id))
+    if member is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Member not found")
+    try:
+        member.credit_roles = credit.validate_roles(payload.roles)
+    except credit.InvalidCreditRole as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    audit.record(
+        db, actor=audit.user_actor(user), action="manuscript.credit_set", project_id=project.id,
+        payload={"member_id": str(member.id), "roles": member.credit_roles},
+    )
+    db.commit()
+    db.refresh(member)
+    return CreditContributorRead(member_id=member.id, user_id=member.user_id, name=_display_name(member.user), roles=list(member.credit_roles))
+
+
+class ManuscriptStatementsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    data_availability_statement: str | None = Field(default=None, max_length=4000)
+    conflict_of_interest_statement: str | None = Field(default=None, max_length=4000)
+    ethics_statement: str | None = Field(default=None, max_length=4000)
+
+
+@router.get("/manuscript/statements", response_model=ManuscriptStatementsRead)
+def get_manuscript_statements(project: Project = Depends(project_access(READ_ROLES)), db: Session = Depends(get_db)):
+    """The researcher's own submission-statement text (M6.5): data availability, conflict of interest, ethics.
+    Unset fields are `null`; `GET /manuscript/export` shows a bracketed to-complete marker for those instead.
+    `ai_use_disclosure` (M6.6) is generated from the audit log, never researcher-written."""
+    return ManuscriptStatementsRead(
+        data_availability_statement=project.data_availability_statement,
+        conflict_of_interest_statement=project.conflict_of_interest_statement,
+        ethics_statement=project.ethics_statement,
+        ai_use_disclosure=_ai_use_disclosure(db, project.id),
+    )
+
+
+@router.put("/manuscript/statements", response_model=ManuscriptStatementsRead)
+def set_manuscript_statements(
+    payload: ManuscriptStatementsUpdate,
+    project: Project = Depends(project_access(WRITE_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Overwrites all three statements with the researcher's own words; nothing here calls a model. Audited with
+    which fields were set (never the text itself, same as every other audited free-text field in this app)."""
+    changes = payload.model_dump()
+    for field, value in changes.items():
+        setattr(project, field, value)
+    project.touch()
+    audit.record(
+        db, actor=audit.user_actor(user), action="manuscript.statements_updated", project_id=project.id,
+        payload={"fields_set": sorted(field for field, value in changes.items() if value)},
+    )
+    db.commit()
+    db.refresh(project)
+    return ManuscriptStatementsRead(
+        data_availability_statement=project.data_availability_statement,
+        conflict_of_interest_statement=project.conflict_of_interest_statement,
+        ethics_statement=project.ethics_statement,
+        ai_use_disclosure=_ai_use_disclosure(db, project.id),
+    )
+
+
+def _citation_style(project: Project) -> str | None:
+    try:
+        return effective_settings(project.discipline, project.config_json).citation_style
+    except ProfileError:
+        # A broken/renamed discipline profile is a profile-config problem, not a reason to block export; fall
+        # back to the default style the same way an unset discipline does.
+        return None
 
 
 @router.get("/manuscript/export", response_model=None)
 def export_manuscript(
-    fmt: Literal["md", "docx", "json", "bibtex"] = Query(default="md", alias="format"),
+    fmt: Literal["md", "docx", "latex", "json", "bibtex"] = Query(default="md", alias="format"),
     project: Project = Depends(project_access(READ_ROLES)),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    """The latest saved version of every section, in section order, as Markdown, Word, JSON or BibTeX (X.31.13).
+    """The latest saved version of every section, in section order, as Markdown, Word, LaTeX, JSON or BibTeX
+    (X.31.13, M6.5). Citations and the reference list use the project's discipline citation style
+    (`app.discipline.effective_settings`, `app.csl_styles`); an unset discipline keeps the plain author-year format
+    used before M6.5. The three submission statements (data availability, conflict of interest, ethics) are appended
+    to md/docx/latex, bracketed as "to complete" where the researcher has not written one yet (`app.ethics_pack`'s
+    convention); JSON carries the raw, possibly-null values instead.
 
     Sections never saved are left out (their count is in `X-Unsaved-Sections`); with nothing saved the export holds only
-    the title, so a read never fails on an empty manuscript. Citations to unverified sources are marked and left out of the references and the BibTeX (plan rule 24).
-    Audited with the format and the section count. Nothing here calls a model."""
+    the title, so a read never fails on an empty manuscript. Citations to unverified sources, and inserted numbers that
+    do not resolve against a project analysis run (M6.3), are marked and left out of the references and the BibTeX
+    (plan rule 24). Audited with the format and the section count. Nothing here calls a model."""
     documents = db.scalars(select(Document).where(Document.project_id == project.id).order_by(Document.position, Document.created_at)).all()
     saved: list[tuple[Document, DocumentVersion]] = []
     for document in documents:
@@ -162,9 +311,28 @@ def export_manuscript(
         if version is not None:
             saved.append((document, version))
     sections = [manuscript_export.Section(title=document.title, content=version.content_json) for document, version in saved]
+    blockers = manuscript_guard.export_blockers(db, project.id, [(document, version.content_json) for document, version in saved])
+    if blockers:
+        audit.record(
+            db, actor=audit.user_actor(user), action="manuscript.export_blocked", project_id=project.id,
+            payload={"format": fmt, "citations": [{"document_id": b.document_id, "kind": b.kind, "subject": b.subject} for b in blockers]},
+        )
+        db.commit()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "message": "Export refused: one or more saved sections cite a source, or carry an inserted number, that is not verified or not known to this project.",
+                "citations": [
+                    {"document_id": b.document_id, "document_title": b.document_title, "kind": b.kind, "subject": b.subject, "message": b.message}
+                    for b in blockers
+                ],
+            },
+        )
     cited_ids: set[str] = set()
+    run_ids: set[str] = set()
     for section in sections:
         cited_ids.update(manuscript_export.cited_source_ids(section.content))
+        run_ids.update(manuscript_export.stat_run_ids(section.content))
     source_rows: dict[str, Source] = {}
     if cited_ids:
         wanted = [uuid.UUID(i) for i in cited_ids if _is_uuid(i)]
@@ -176,7 +344,19 @@ def export_manuscript(
         )
         for key, row in source_rows.items()
     }
-    references = manuscript_export.references(sections, sources)
+    runs: dict[str, Any] = {}
+    if run_ids:
+        wanted_runs = [uuid.UUID(i) for i in run_ids if _is_uuid(i)]
+        runs = {str(r.id): r.output_json for r in db.scalars(select(AnalysisRun).where(AnalysisRun.project_id == project.id, AnalysisRun.id.in_(wanted_runs)))}
+    style = _citation_style(project)
+    references = manuscript_export.references(sections, sources, style)
+    statements = manuscript_export.Statements(
+        data_availability=project.data_availability_statement,
+        conflict_of_interest=project.conflict_of_interest_statement,
+        ethics=project.ethics_statement,
+        ai_use_disclosure=_ai_use_disclosure(db, project.id),
+        credit=_credit_contributions(db, project.id),
+    )
 
     audit.record(
         db, actor=audit.user_actor(user), action="manuscript.exported", project_id=project.id,
@@ -189,9 +369,20 @@ def export_manuscript(
         "X-Unsaved-Sections": str(len(documents) - len(saved)),
     }
     if fmt == "md":
-        return Response(manuscript_export.to_markdown(project.title, sections, sources), media_type="text/markdown; charset=utf-8", headers=headers)
+        return Response(
+            manuscript_export.to_markdown(project.title, sections, sources, runs, style=style, statements=statements),
+            media_type="text/markdown; charset=utf-8", headers=headers,
+        )
     if fmt == "docx":
-        return Response(manuscript_export.to_docx(project.title, sections, sources), media_type=DOCX_MEDIA_TYPE, headers=headers)
+        return Response(
+            manuscript_export.to_docx(project.title, sections, sources, runs, style=style, statements=statements),
+            media_type=DOCX_MEDIA_TYPE, headers=headers,
+        )
+    if fmt == "latex":
+        return Response(
+            manuscript_export.to_latex(project.title, sections, sources, runs, style=style, statements=statements),
+            media_type=LATEX_MEDIA_TYPE, headers=headers,
+        )
     if fmt == "bibtex":
         records = [
             {k: v for k, v in {"title": source_rows[s.id].title, "authors": source_rows[s.id].authors, "year": s.year, "doi": s.doi,
@@ -207,6 +398,7 @@ def export_manuscript(
             for d, v in saved
         ],
         references,
+        statements=statements,
     )
     return Response(json.dumps(body, ensure_ascii=False), media_type="application/json", headers=headers)
 

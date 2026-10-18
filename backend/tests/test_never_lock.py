@@ -23,6 +23,7 @@ REQUIRED_QUERY = {
     "/stage/conditions": "target=scoped",
     "/design/method-recommendation": "goal=explore",
     "/design/sample-size": "test=correlation&r=0.3",
+    "/design/saturation-guidance": "design=interviews",
 }
 # These routes contain a value-shaped path segment but do not identify a child row.
 PARAMETERIZED_READS = {

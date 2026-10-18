@@ -18,12 +18,12 @@
 ### §5.1 Idea capture and scoping
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
 |---|---|---|---|---|---|
-| 5.1.1 | Cluster/de-dup ideas; extract constructs & contexts | M4.7 | — | — | `[ ]` |
+| 5.1.1 | Cluster/de-dup ideas; extract constructs & contexts | M4.7.c | `GET /api/projects/{id}/idea-brief` (`clusters`, `constructs`, `duplicate_ideas`) | `test_idea_clustering.py`, `test_idea_brief.py` | `[?]` (lexical only; contexts not extracted) |
 | 5.1.2 | Rapid landscape scan | M4.7 | — | — | `[ ]` |
-| 5.1.3 | Novelty heuristic **with visible comparators**; feasibility checklist | M4.7 | — | — | `[ ]` |
+| 5.1.3 | Novelty heuristic **with visible comparators**; feasibility checklist | M4.7, M4.7.b | `GET/PUT /api/projects/{id}/idea-brief`; `GET …/idea-brief/semantic-novelty` (M4.7.b: embedding cosine, per-request, nothing stored, `model_id` recorded) | `test_idea_scoping.py`, `test_idea_brief.py`, `test_semantic_novelty.py`, `test_semantic_novelty_api.py`, `test_role_matrix.py` | `[?]` (lexical and semantic comparators built; semantic one needs EMBEDDING_MODEL and independent review) |
 | 5.1 in | Free-text idea/voice-note capture, scoping notes (design: `docs/researcher-workspace-design.md`) | X.31.1–X.31.2, X.31.17 | `POST/GET/PATCH /api/notes`, capture dialog; triage: `POST /api/notes/{id}/file`, `…/promote`, `GET …/suggestions`, `GET /api/projects/{id}/context?kind=`; inbox and decision-log screen (`#/inbox`, `web/js/inbox.js`) | `test_notes.py`, `test_note_guard.py`, `test_notes_triage.py`, `test_note_suggest.py`, `web/js/test/inboxLogic.test.mjs` | X.31.1 `[?]` (quick capture built); X.31.2.a `[?]` (triage backend); X.31.2.1 `[?]` (inbox and decision-log screen built ahead of the wireframe walkthrough, rule 32 override); X.31.17 `[ ]` |
-| 5.1 out | One-page idea brief | M4.7 | — | — | `[ ]` |
-| 5.1 gate | G1 approve topic direction | M4.7, M0.5.2–M0.5.4 | — | — | `[ ]` |
+| 5.1 out | One-page idea brief | M4.7 | `GET/PUT /api/projects/{id}/idea-brief` (problem, why it matters, risks, chosen idea, feasibility; landscape snapshot pending the scan subtask) | `test_idea_brief.py` | `[?]` (partial: landscape snapshot missing) |
+| 5.1 gate | G1 approve topic direction | M4.7, M0.5.2–M0.5.4 | `ready_for_g1` on the idea-brief GET (readiness only; approval stays in the gates list) | `test_idea_brief.py` | `[ ]` (readiness built; G1 approval unchanged) |
 
 ### §5.2 Systematic literature search
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
@@ -83,29 +83,29 @@
 ### §5.7 Design and ethics
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
 |---|---|---|---|---|---|
-| 5.7.1–2 | Method recommender; sampling/power | M4.3 | — | — | `[ ]` |
-| 5.7.3 | Instrument builder; item-quality checks | M4.4 | — | — | `[ ]` |
+| 5.7.1–2 | Method recommender; sampling/power; qualitative saturation guidance | M4.3 `[x]`, M4.3.1 `[x]` (ANOVA/regression power), M4.3.2 `[?]` (saturation ranges) | `GET /api/projects/{id}/design/method-recommendation`; `GET …/design/sample-size`; `GET …/design/saturation-guidance` (M4.3.2, read-only, stateless) | `test_design_tools.py`, `test_saturation_guidance.py`, `test_role_matrix.py`, `test_never_lock.py` | `[~]` (M4.3/M4.3.1 accepted by @codex; M4.3.2 built, awaiting independent review and full-suite result) |
+| 5.7.3 | Instrument builder; item-quality checks | M4.4 (M4.4.1 item checks `[?]`; M4.4.2 measure-library builder and M4.4.3 validity/reliability plan open) | `POST /api/projects/{id}/instrument/item-checks` (stateless flags) | `test_item_checks.py`, `test_role_matrix.py` | `[~]` (item checks built; instrument builder blocked: no validated-measure library in the repo) |
 | 5.7.4 | Ethics pack; G7 sign-off | M4.5 | — | — | `[ ]` |
-| 5.7.5 | Pre-registration draft | M4.6 | — | — | `[ ]` |
+| 5.7.5 | Pre-registration draft | M4.6 | `GET /api/projects/{id}/preregistration` (AsPredicted answers and OSF sections from stored RQs/hypotheses; stateless, nothing submitted) | `test_preregistration.py`, `test_role_matrix.py` | `[?]` (draft built; filing is the researcher's act; needs independent review) |
 
 ### §5.8 Data collection and management
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
 |---|---|---|---|---|---|
-| 5.8.1–2 | Survey deploy/ingest; response-quality monitoring | M5.2, M5.1 | — | — | `[ ]` |
-| 5.8.3 | Logged reversible cleaning; immutable raw data | M5.1 | — | — | `[ ]` |
-| 5.8.4 | Anonymisation; **codebook auto-generation** | M5.6, M5.7 *(new)* | — | — | `[ ]` |
-| 5.8.5 | Qualitative **transcription**, anonymisation, storage | M5.7 *(new)* | — | — | `[ ]` |
-| 5.8 gate | **Approve exclusion rules before applying**; never silently drop cases | M5.7 *(new)* | — | — | `[ ]` |
+| 5.8.1–2 | Survey deploy/ingest; response-quality monitoring | M5.2, M5.1 | — | — | `[?]` M5.2 built (Google Forms import + rule-based quality); awaiting review |
+| 5.8.3 | Logged reversible cleaning; immutable raw data | M5.1 | `POST/GET /api/projects/{id}/datasets`; `GET …/datasets/{id}` (`intact`); `GET …/datasets/{id}/content`; `POST …/datasets/{id}/clean` (new version, parent kept; no edit/delete route) | `test_datasets.py`, `test_role_matrix.py` | `[?]` (API-level immutability; DB trigger not added; Q4 applies before analysis of participant data) |
+| 5.8.4 | Anonymisation; **codebook auto-generation** | M5.6, M5.7 *(new)* | — | — | M5.6 `[?]` (keyed pseudonymisation built, awaiting review); M5.7.2 `[?]` (codebook built, awaiting review) |
+| 5.8.5 | Qualitative **transcription**, anonymisation, storage | M5.7 *(new)* | — | — | M5.7.3 `[?]` (anonymisation built, awaiting review); transcription M5.7.4 `[!]` (no service approved) |
+| 5.8 gate | **Approve exclusion rules before applying**; never silently drop cases | M5.7 *(new)* | — | — | M5.7.1 `[?]` (approval flow built, awaiting review) |
 
 ### §5.9 Analysis
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
 |---|---|---|---|---|---|
-| 5.9 Q1–2 | Scripts from plan; pinned env, seeds; G8 | M5.3 | — | — | `[ ]` |
-| 5.9 Q3 | Robustness suite | M5.4 | — | — | `[ ]` |
-| 5.9 Q4 | **Journal-style tables/figures**; notebooks | M5.4, M5.8 *(new)* | — | — | `[ ]` |
-| 5.9 Qual | Coding assist, codebook, inter-coder agreement | M5.5 | — | — | `[ ]` |
+| 5.9 Q1–2 | Scripts from plan; pinned env, seeds; G8 | M5.3 | — | — | `[~]` scripts (M5.3.2) and sandboxed runs (M5.3.3) built `[?]`; G8 precondition M5.3.4 `[ ]`; container path not run (no Docker here) |
+| 5.9 Q3 | Robustness suite | M5.4 | — | — | `[~]` M5.4.1 helpers `[?]`; suite M5.4.2 blocked on M5.3.3 |
+| 5.9 Q4 | **Journal-style tables/figures**; notebooks | M5.4, M5.8 *(new)* | — | — | `[!]` M5.8 blocked (M5.3 not `[x]`) |
+| 5.9 Qual | Coding assist, codebook, inter-coder agreement | M5.5 | — | — | `[~]` M5.5.1 logic `[?]`; AI suggestions M5.5.2 blocked on Q4 |
 | 5.9 gate | G9; **pre-registration deviations documented** | M5.8 *(new)*, M6.9 *(new)* | — | — | `[ ]` |
-| 5.9 QC | Re-run gives identical numbers | M5.4 | — | — | `[ ]` |
+| 5.9 QC | Re-run gives identical numbers | M5.4 | — | — | `[~]` fingerprint helper `[?]`; re-run check on runs M5.4.2 |
 
 ### §5.10 Interpretation and discussion
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
@@ -117,15 +117,15 @@
 ### §5.11 Writing and manuscript assembly
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
 |---|---|---|---|---|---|
-| 5.11.1 | Argument outline → section drafts | M6.1 | — | — | `[ ]` |
+| 5.11.1 | Argument outline → section drafts | M6.1 `[?]` (claim→section binding, outline endpoint); drafting M6.1.a `[ ]` | `GET /api/projects/{id}/documents/{doc}/outline` | `test_claim_section.py` + role-matrix row | `[ ]` |
 | 5.11.2 | **Genre templates** (IMRaD, conceptual, review, thesis) | M6.10 *(new)* | — | — | `[ ]` |
-| 5.11.3 | Claim–evidence linker; verified refs only | M6.2, M1.10, **X.14**; see also X.31.9/X.31.10 (source panel + citation picker in the per-note/section editor, design: `docs/researcher-workspace-design.md`) | wireframe `docs/wireframes/claim-evidence-panel.html` (X.14, awaiting scholar walkthrough) | — | `[ ]` |
+| 5.11.3 | Claim–evidence linker; verified refs only | M6.2 `[?]` (linker report), M1.10, **X.14**; see also X.31.9/X.31.10 (source panel + citation picker in the per-note/section editor, design: `docs/researcher-workspace-design.md`) | `GET /api/projects/{id}/documents/{doc}/link-check` (read-only report); wireframe `docs/wireframes/claim-evidence-panel.html` (X.14, awaiting scholar walkthrough) | `test_claim_linker.py`, `test_claim_link_check.py` | `[ ]` |
 | 5.11.4 | Style help with diffs | M6.8; see also X.31.11 (AI side panel, accept/reject proposals, design doc) | — | — | `[ ]` |
-| 5.11.5 | Ref-manager sync; CSL | M1.11, M6.5 | `POST …/sources/import`, `GET …/sources/export`, `GET …/zotero`, `POST …/zotero/pull` (G2-gated), `POST …/zotero/push` (verified only) | `test_refmanager*.py`, `test_zotero.py` | M1.11 `[x]` (M1.11.1 `[x]`; M1.11.2, M1.11.3 `[x]` — P3 closures at user request 2026-10-10) |
-| 5.11.6 | **Abstract, keywords, highlights, cover letter**; statements (incl. per-manuscript AI-use statement) | M6.10 *(new)*, M6.5, M6.6; AI-use statement also covered by X.31.12 (`provenance_report.py`, design doc) | — | — | `[ ]` |
+| 5.11.5 | Ref-manager sync; CSL | M1.11, M6.5 | `POST …/sources/import`, `GET …/sources/export`, `GET …/zotero`, `POST …/zotero/pull` (G2-gated), `POST …/zotero/push` (verified only); `GET …/manuscript/export?format=md\|docx\|latex\|json\|bibtex` (CSL-style citations/references, `app/csl_styles.py`) | `test_refmanager*.py`, `test_zotero.py`, `test_csl_styles.py`, `test_manuscript_export.py` | M1.11 `[x]` (M1.11.1 `[x]`; M1.11.2, M1.11.3 `[x]` — P3 closures at user request 2026-10-10); M6.5 `[?]` (built 2026-10-18, needs review) |
+| 5.11.6 | **Abstract, keywords, highlights, cover letter**; statements (incl. per-manuscript AI-use statement) | M6.10 *(new)*, M6.5, M6.6 (built 2026-10-18); AI-use statement also covered by X.31.12 (`provenance_report.py`, design doc) | `GET/PUT /projects/{id}/manuscript/statements` (data availability, conflict of interest, ethics — M6.5; generated `ai_use_disclosure` — M6.6); `GET/PUT /projects/{id}/manuscript/credit/{member_id}` (CRediT roles — M6.6); abstract/keywords/highlights/cover letter not built | `test_manuscript_export.py`, `test_ai_disclosure.py`, `test_credit.py` | M6.5 statements `[?]` (built 2026-10-18, needs review); M6.6 `[~]` (built 2026-10-18, needs review); rest `[ ]` |
 | 5.11.7 | Similarity pre-check | M6.7; project-source similarity also covered by X.31.14 (`[?]`: API `POST/GET /projects/{id}/similarity-checks`; "Similarity" tab in the write step; tests `test_similarity.py`, `test_similarity_api.py`, `similarityLogic.test.mjs`), institutional integration point by X.31.15 (design doc) | — | — | `[ ]` |
 | 5.11 gate | **G10 approve each section + AI-involvement level** | M6.1, M6.11 *(new)* | — | — | `[ ]` |
-| 5.11 QC | Zero unresolved citations / orphan claims | M6.2, M6.4 | — | — | `[ ]` |
+| 5.11 QC | Zero unresolved citations / orphan claims | M6.2 `[?]` (report only); M6.4 export block not built | `GET …/link-check` | `test_claim_linker.py`, `test_claim_link_check.py` | `[ ]` |
 
 ### §5.12 Revision
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
@@ -190,8 +190,8 @@
 | Requirement | Tasks | Tests | Status |
 |---|---|---|---|
 | No fabrication (hard to do accidentally) | M1.10, M3.4, M3.11.2, M6.2–M6.4 | `test_llm_success_path.py` (no placeholder output) | `[ ]` |
-| AI-use disclosure from provenance log | M6.6; per-manuscript statement also covered by X.31.12 (design: `docs/researcher-workspace-design.md`) | `POST/GET /projects/{id}/provenance-reports`, `GET …/provenance-reports/{id}?format=md\|json` (X.31.12, `[~]`: report UI not built); tests `test_provenance_report.py`, `test_provenance_reports_api.py`, `test_ledger_guard.py` | — | `[~]` |
-| Authorship / CRediT; AI never an author; authorship ledger (who typed/dictated/pasted/AI-accepted each span) | M6.6; authorship ledger covered by X.31.8–X.31.9, X.31.11 (append-only `authorship_events`, design doc) | `POST …/documents/{id}/versions`, `GET …/versions`, `GET …/versions/{n}`, `POST …/versions/{n}/restore`, `GET …/ledger` (X.31.9) | `test_ledger.py`, `test_documents.py`, `test_ledger_guard.py` (X.31.8–X.31.9); X.31.11 not built | `[~]` |
+| AI-use disclosure from provenance log | M6.6 (built 2026-10-18: generated from the audit log, `app/ai_disclosure.py`, appended to every manuscript export); per-manuscript statement also covered by X.31.12 (design: `docs/researcher-workspace-design.md`) | `GET …/manuscript/statements` (`ai_use_disclosure`); `POST/GET /projects/{id}/provenance-reports`, `GET …/provenance-reports/{id}?format=md\|json` (X.31.12, `[~]`: report UI not built); tests `test_ai_disclosure.py`, `test_manuscript_export.py`, `test_provenance_report.py`, `test_provenance_reports_api.py`, `test_ledger_guard.py` | — | `[~]` |
+| Authorship / CRediT; AI never an author; authorship ledger (who typed/dictated/pasted/AI-accepted each span) | M6.6 (built 2026-10-18: `app/credit.py`, the 14-term CRediT taxonomy, `ProjectMember.credit_roles`); authorship ledger covered by X.31.8–X.31.9, X.31.11 (append-only `authorship_events`, design doc) | `GET …/manuscript/credit`, `PUT …/manuscript/credit/{member_id}`; `POST …/documents/{id}/versions`, `GET …/versions`, `GET …/versions/{n}`, `POST …/versions/{n}/restore`, `GET …/ledger` (X.31.9) | `test_credit.py`, `test_manuscript_export.py`, `test_ledger.py`, `test_documents.py`, `test_ledger_guard.py` (X.31.8–X.31.9); X.31.11 not built | `[~]` |
 | Copyright: store full text only where licensed | M2.7.1, M1.3.4, M1.4.8 | `test_oa_fetch.py`, `test_arxiv_fulltext.py` | `[x]` (M1.4.8 independently reviewed 2026-10-10) |
 | Participant protection (consent, anonymisation, retention) | M4.5, M5.6, X.4 | — | `[ ]` |
 | Reporting-guideline checklists | X.11 | — | `[ ]` |
@@ -206,7 +206,7 @@
 | **Performance** (≥ 1,000 abstracts/h; 500 papers indexed < 1 h) | X.19 | `backend/tests/test_performance_benchmark.py` (app-side overhead only; model latency not measured) | `[?]` |
 | Scalability (multi-user, queue workers) | M0.3, M0.6 | — | `[ ]` |
 | Usability (keyboard screening, side-by-side, diffs) | M2.3.1, M3.6.1, M6.8, **X.14** (3 clickable wireframes in `docs/wireframes/`, walkthrough pending), X.32 | — | `[ ]` |
-| Portability (open export formats) | X.8, M1.11, M3.5.2, M6.5, X.34 (Obsidian vault, verified-only) | `test_obsidian_export.py` (X.34.1) | `[ ]` (X.34.1 `[?]`) |
+| Portability (open export formats) | X.8, M1.11, M3.5.2, M6.5, X.34 (Obsidian vault, verified-only) | `test_obsidian_export.py` (X.34.1), `test_manuscript_export.py` (M6.5 md/docx/latex/json/bibtex) | `[ ]` (X.34.1 `[?]`; M6.5 `[?]`, built 2026-10-18 needs review) |
 | Observability | X.7, M0.9.1 | — | `[ ]` |
 
 ### §11 Metrics
@@ -216,7 +216,7 @@
 | Screening κ ≥ 0.8; false exclusion < 2% | M2.4.2, M2.9, X.15 | `[ ]` |
 | Extraction ≥ 90% on critical fields | X.5, X.15 | `[ ]` |
 | Citation verification 100% before export | M1.10, M6.4 | `[ ]` |
-| Analysis re-run diff = 0 | M5.4 | `[ ]` |
+| Analysis re-run diff = 0 | M5.4 | `[~]` helper built; live check waits on M5.3.3 |
 | **Scholar outcomes** (time saved, corrections per 100 AI outputs, readiness) | X.20 *(new)* | `[ ]` |
 
 ### §13 Acceptance criteria (project definition of done)

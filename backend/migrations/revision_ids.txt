@@ -73,3 +73,12 @@
 20261015_0066 project_research_type
 20261017_0067 note_attachments
 20261017_0068 note_highlight_links
+20261017_0069 idea_briefs
+20261017_0070 claim_section_fk
+20261017_0071 dataset_versions
+20261017_0072 analysis_plans
+20261017_0073 exclusion_rules
+20261017_0074 analysis_runs
+20261018_0075 qual_suggestions
+20261018_0076 manuscript_statements
+20261018_0077 credit_roles

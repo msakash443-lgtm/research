@@ -15,6 +15,10 @@ def cite(source_id):
     return {"type": "cite", "attrs": {"source_id": source_id}}
 
 
+def stat(run_id, path):
+    return {"type": "stat", "attrs": {"analysis_run_id": run_id, "path": path}}
+
+
 def block(*inline, kind="paragraph"):
     return {"type": kind, "content": list(inline)}
 
@@ -159,6 +163,29 @@ def test_existing_citation_is_kept_even_if_its_source_is_no_longer_citable():
     assert ledger.check_integrity(before, after, actor="u1", accepted={}, suggestion_texts=[], citable_source_ids=set()) == []
 
 
+def test_new_number_must_resolve_against_a_known_analysis_run():
+    after = doc(block(run("Mean age was ", "a"), stat("run1", "mean")))
+
+    assert codes(ledger.check_integrity(EMPTY, after, actor="u1", **NO_AI)) == ["unresolved_number"]
+    assert codes(ledger.check_integrity(EMPTY, after, actor="u1", number_run_outputs={"run1": {"mean": 35.5}}, **NO_AI)) == []
+
+
+def test_new_number_whose_path_does_not_resolve_is_refused_even_with_a_known_run():
+    after = doc(block(stat("run1", "missing")))
+
+    problems = ledger.check_integrity(EMPTY, after, actor="u1", number_run_outputs={"run1": {"mean": 35.5}}, **NO_AI)
+
+    assert codes(problems) == ["unresolved_number"]
+
+
+def test_existing_number_is_kept_even_if_its_run_is_no_longer_known():
+    before = doc(block(stat("run1", "mean")))
+    after = doc(block(stat("run1", "mean"), run(" More.", "b")))
+
+    assert ledger.check_integrity(before, after, actor="u1", **NO_AI) == []
+
+
+
 # --- schema, size and text ------------------------------------------------------------------------
 
 def test_disallowed_node_is_an_invalid_schema():
@@ -177,6 +204,14 @@ def test_unknown_origin_is_an_invalid_schema():
     bad = doc(block(run("Text.", "a", origin="magic")))
 
     assert codes(ledger.validate_schema(bad)) == ["invalid_schema"]
+
+
+def test_a_stat_node_is_allowed_and_needs_its_attrs():
+    good = doc(block(stat("run1", "mean")))
+    missing_path = doc({"type": "stat", "attrs": {"analysis_run_id": "run1"}})
+
+    assert ledger.validate_schema(good) == []
+    assert codes(ledger.validate_schema(missing_path)) == ["invalid_schema"]
 
 
 def test_text_over_the_limit_is_refused():

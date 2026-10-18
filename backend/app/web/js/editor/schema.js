@@ -64,6 +64,20 @@ export const schema = new Schema({
       parseDOM: [{ tag: "span[data-source-id]", getAttrs: (dom) => ({ source_id: dom.getAttribute("data-source-id") || "" }) }],
       toDOM: (node) => ["span", { class: "cite", "data-source-id": node.attrs.source_id }],
     },
+    // A number computed by an analysis run (M6.3). An atom: it cannot be typed into, only inserted from a verified
+    // AnalysisRun output. `path` is a dot-separated walk through that run's output_json (app/number_citation.py).
+    stat: {
+      inline: true,
+      group: "inline",
+      atom: true,
+      selectable: true,
+      attrs: { analysis_run_id: { default: "" }, path: { default: "" } },
+      parseDOM: [{
+        tag: "span[data-analysis-run-id]",
+        getAttrs: (dom) => ({ analysis_run_id: dom.getAttribute("data-analysis-run-id") || "", path: dom.getAttribute("data-path") || "" }),
+      }],
+      toDOM: (node) => ["span", { class: "stat", "data-analysis-run-id": node.attrs.analysis_run_id, "data-path": node.attrs.path }],
+    },
   },
   marks: {
     em: { parseDOM: [{ tag: "em" }, { tag: "i" }], toDOM: () => ["em", 0] },

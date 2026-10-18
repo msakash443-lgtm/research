@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session, selectinload
 from app import audit
 from app.database import get_db
 from app.dependencies import READ_ROLES, WRITE_ROLES, APPROVE_ROLES, current_user, project_access
-from app.models import Claim, ClaimEvidence, Extraction, Project, Source, SourceExcerpt, User, utcnow
+from app.models import Claim, ClaimEvidence, Document, Extraction, Project, Source, SourceExcerpt, User, utcnow
 
 
 router = APIRouter(prefix="/projects/{project_id}/claims", tags=["claims"])
@@ -29,6 +29,7 @@ class ClaimIn(BaseModel):
     text: str = Field(min_length=1, max_length=10000)
     extraction_id: uuid.UUID | None = None
     strength: str | None = Field(default=None, max_length=30)
+    section_id: uuid.UUID | None = None
     evidence: list[EvidenceIn] = Field(default_factory=list, max_length=25)
 
 
@@ -82,6 +83,9 @@ def create_claim(payload: ClaimIn, project: Project = Depends(project_access(WRI
     if payload.extraction_id and db.scalar(select(Extraction.id).where(
         Extraction.id == payload.extraction_id, Extraction.project_id == project.id)) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Extraction not found")
+    if payload.section_id and db.scalar(select(Document.id).where(
+        Document.id == payload.section_id, Document.project_id == project.id)) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Section not found")
     if len({item.source_id for item in payload.evidence}) != len(payload.evidence):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Use one evidence link per source")
     for item in payload.evidence:
@@ -91,7 +95,7 @@ def create_claim(payload: ClaimIn, project: Project = Depends(project_access(WRI
         if row is None or item.quote not in row.content:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                                 "Evidence must quote an excerpt from an active project source")
-    claim = Claim(project_id=project.id, extraction_id=payload.extraction_id,
+    claim = Claim(project_id=project.id, extraction_id=payload.extraction_id, section_id=payload.section_id,
                   text=payload.text.strip(), strength=payload.strength, verified=False,
                   created_by=str(user.id))
     claim.evidence = [ClaimEvidence(source_id=item.source_id, excerpt_id=item.excerpt_id,

@@ -65,7 +65,19 @@ def _advance(world, stage=None, who="owner"):
     return response
 
 
+def _lock_a_plan(client, project_id):
+    """G8 needs a locked analysis plan (M5.3.4); create one through the API as the owner would."""
+    dataset = client.post(f"/api/projects/{project_id}/datasets", json={"name": "survey", "csv_text": "x\n1\n2\n"}).json()["id"]
+    plan = client.post(
+        f"/api/projects/{project_id}/datasets/{dataset}/analysis-plans",
+        json={"tests": ["descriptives"], "variables": ["x"], "seed": 1},
+    ).json()["id"]
+    assert client.post(f"/api/projects/{project_id}/analysis-plans/{plan}/lock").status_code == 200
+
+
 def _approve(world, code):
+    if code == "G8":
+        _lock_a_plan(world["clients"]["owner"], world["project"])
     return world["clients"]["owner"].post(f"/api/projects/{world['project']}/gates/{code}/approve", json={"note": "ok"})
 
 

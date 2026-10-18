@@ -3,7 +3,7 @@ import hashlib
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import event, select, CheckConstraint, ForeignKeyConstraint, and_, or_, DateTime, Enum, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, false, func
+from sqlalchemy import event, select, Boolean, CheckConstraint, ForeignKeyConstraint, and_, or_, DateTime, Enum, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, false, func
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -156,6 +156,11 @@ class Project(Timestamped, Base):
     # and keeps that snapshot as the column's server default; the ORM always writes the column itself.
     research_type: Mapped[str] = mapped_column(String(60), default="full_journey", server_default="full_journey")
     stage_plan_json: Mapped[dict] = mapped_column(JSON, default=_stage_plan_of_research_type)
+    # Manuscript submission statements (M6.5, spec §5.11.6): the researcher's own words, carried verbatim into
+    # every manuscript export; NULL means not yet written (export shows a bracketed to-complete marker, never a guess).
+    data_availability_statement: Mapped[str | None] = mapped_column(Text)
+    conflict_of_interest_statement: Mapped[str | None] = mapped_column(Text)
+    ethics_statement: Mapped[str | None] = mapped_column(Text)
     owner: Mapped[User] = relationship(back_populates="projects")
     context_items: Mapped[list["ResearchContextItem"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     sources: Mapped[list["Source"]] = relationship(back_populates="project", cascade="all, delete-orphan")
@@ -184,6 +189,10 @@ class ProjectMember(Timestamped, Base):
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
     role: Mapped[ProjectRole] = mapped_column(Enum(ProjectRole, name="project_role"))
+    # CRediT (Contributor Roles Taxonomy, M6.6, spec Sec5.11.6) contribution roles for the manuscript's
+    # "Author contributions" statement. Empty list means not yet assigned; `app.credit.CREDIT_ROLES` is the
+    # allowed set. AI is never a member here, so it can never hold a CRediT role.
+    credit_roles: Mapped[list[str]] = mapped_column(JSON, default=list, server_default="[]")
     project: Mapped[Project] = relationship(back_populates="members")
     user: Mapped[User] = relationship()
 
@@ -726,7 +735,7 @@ class Claim(Timestamped, Base):
     text: Mapped[str] = mapped_column(Text)
     verified: Mapped[bool] = mapped_column(default=False, server_default=false())
     strength: Mapped[str | None] = mapped_column(String(30))
-    section_id: Mapped[uuid.UUID | None] = mapped_column()
+    section_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("documents.id", ondelete="SET NULL"), index=True)
     created_by: Mapped[str] = mapped_column(String(100))
     evidence: Mapped[list["ClaimEvidence"]] = relationship(back_populates="claim", cascade="all, delete-orphan")
 
@@ -784,6 +793,123 @@ class ResearchBrief(Timestamped, Base):
     scope: Mapped[str | None] = mapped_column(Text)
     min_citations: Mapped[int | None] = mapped_column(Integer)
     updated_by: Mapped[str] = mapped_column(String(100))
+
+
+class IdeaBrief(Timestamped, Base):
+    """The scholar's idea brief for gate G1 (M4.7, spec 5.1): one row per project.
+
+    The problem, why it matters, risks, the chosen idea and the feasibility answers are the scholar's own words.
+    `selected_idea_id` points at a `ResearchContextItem` of kind `idea` in the same project (checked by the router).
+    `feasibility` is a list of `{item, status, note}`; items not yet answered are simply absent.
+    """
+
+    __tablename__ = "idea_briefs"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), unique=True)
+    problem: Mapped[str] = mapped_column(Text)
+    why_it_matters: Mapped[str] = mapped_column(Text)
+    risks: Mapped[str | None] = mapped_column(Text)
+    selected_idea_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("research_context_items.id"))
+    feasibility: Mapped[list] = mapped_column(JSON, default=list)
+    updated_by: Mapped[str] = mapped_column(String(100))
+
+
+
+class DatasetVersion(Timestamped, Base):
+    """One version of a dataset (M5.1, spec 5.8.3). Raw versions hold the upload exactly; cleaned versions point at
+    their parent and record every step. Rows are never edited or deleted by the API."""
+
+    __tablename__ = "dataset_versions"
+    __table_args__ = (UniqueConstraint("project_id", "version_no", name="uq_dataset_version_project_no"),)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    version_no: Mapped[int] = mapped_column(Integer)
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("dataset_versions.id"), nullable=True)
+    kind: Mapped[str] = mapped_column(String(10))  # "raw" or "cleaned"
+    name: Mapped[str] = mapped_column(String(200))
+    content: Mapped[str] = mapped_column(Text)  # the CSV text exactly as stored
+    sha256: Mapped[str] = mapped_column(String(64))
+    row_count: Mapped[int] = mapped_column(Integer)
+    column_names: Mapped[list] = mapped_column(JSON, default=list)
+    cleaning_steps: Mapped[list] = mapped_column(JSON, default=list)
+    created_by: Mapped[str] = mapped_column(String(100))
+
+
+class AnalysisPlan(Timestamped, Base):
+    """A human-chosen analysis plan for one dataset version (M5.3.1, spec 5.9). Once locked it is frozen: the plan
+    hash covers the spec, the dataset's SHA-256 and the pinned environment, and nothing edits the row afterwards."""
+
+    __tablename__ = "analysis_plans"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    dataset_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("dataset_versions.id"), index=True)
+    spec_json: Mapped[dict] = mapped_column(JSON)  # {"tests", "variables", "seed"}, normalised
+    plan_sha256: Mapped[str] = mapped_column(String(64))
+    environment_sha256: Mapped[str] = mapped_column(String(64))
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    locked_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_by: Mapped[str] = mapped_column(String(100))
+
+
+class AnalysisRun(Timestamped, Base):
+    """One sandboxed run of a locked analysis plan (M5.3.3). Records what ran (plan, dataset and script hashes, image
+    digest) and what came back. Results are stored as the script printed them; nothing is edited afterwards."""
+
+    __tablename__ = "analysis_runs"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    analysis_plan_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("analysis_plans.id"), index=True)
+    dataset_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("dataset_versions.id"), index=True)
+    plan_sha256: Mapped[str] = mapped_column(String(64))
+    dataset_sha256: Mapped[str] = mapped_column(String(64))
+    script_sha256: Mapped[str] = mapped_column(String(64))
+    environment_sha256: Mapped[str] = mapped_column(String(64))
+    image: Mapped[str] = mapped_column(String(300))
+    output_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    output_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_by: Mapped[str] = mapped_column(String(100))
+
+
+class ExclusionRule(Timestamped, Base):
+    """A case-exclusion rule for one dataset version (M5.7.1, spec 5.8 gate). A rule is proposed, then a human with
+    approve rights approves it; only approved rules can drop rows, and only through a logged cleaning version."""
+
+    __tablename__ = "exclusion_rules"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    dataset_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("dataset_versions.id"), index=True)
+    rule_json: Mapped[dict] = mapped_column(JSON)  # normalised: {"column", "op", "value"?}
+    rule_sha256: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(12))  # "proposed" or "approved"
+    proposed_by: Mapped[str] = mapped_column(String(100))
+    approved_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class QualExcerpt(Timestamped, Base):
+    """A participant-written excerpt kept for qualitative coding (M5.5.2). The text is participant data: it is
+    sent to a model only through the participant-data adapter (local endpoint)."""
+
+    __tablename__ = "qual_excerpts"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    text: Mapped[str] = mapped_column(Text)
+    created_by: Mapped[str] = mapped_column(String(100))
+
+
+class QualSuggestion(Timestamped, Base):
+    """A model's proposed code for one excerpt (M5.5.2). A suggestion is only a proposal until a person accepts it."""
+
+    __tablename__ = "qual_suggestions"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    excerpt_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("qual_excerpts.id"), index=True)
+    code: Mapped[str] = mapped_column(String(200))
+    is_new: Mapped[bool] = mapped_column(Boolean)
+    rationale: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(12))  # "pending", "accepted" or "rejected"
+    decided_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class ResearchQuestion(Timestamped, Base):
