@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import audit, qual_suggest
+from app import audit, qual_codebook_store, qual_suggest
 from app.agent.llm import LLMConfigurationError, LLMResponseError, OpenAICompatibleLLM
 from app.ai_controls import require_ai_on
 from app.config import get_settings
@@ -39,6 +39,18 @@ class DecisionIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     suggestion_id: uuid.UUID
     decision: Literal["accept", "reject"]
+
+
+class RenameCodeIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    old: str = Field(min_length=1, max_length=200)
+    new: str = Field(min_length=1, max_length=200)
+
+
+class MergeCodeIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source: str = Field(min_length=1, max_length=200)
+    target: str = Field(min_length=1, max_length=200)
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -66,11 +78,8 @@ def _excerpt_read(excerpt: QualExcerpt, suggestions: list[QualSuggestion]) -> di
 
 
 def _accepted_codes(db: Session, project: Project) -> dict[str, str]:
-    """Codes a person has accepted so far. Their definitions are not stored yet, so each is offered by name only."""
-    rows = db.scalars(
-        select(QualSuggestion).where(QualSuggestion.project_id == project.id, QualSuggestion.status == "accepted")
-    ).all()
-    return {row.code: "" for row in rows}
+    """Codes a person has already accepted into the project's codebook, with their definitions."""
+    return qual_codebook_store.active_codes(db, project.id)
 
 
 @router.post("/suggest", status_code=status.HTTP_201_CREATED)
@@ -140,12 +149,18 @@ def decide(
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    """Accept or reject one pending suggestion. A decided suggestion cannot be decided again."""
+    """Accept or reject one pending suggestion. A decided suggestion cannot be decided again. Accepting adds the
+    code to the project's codebook unless that name is already known (reuse)."""
     row = db.get(QualSuggestion, body.suggestion_id)
     if row is None or row.project_id != project.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Suggestion not found.")
     if row.status != "pending":
         raise HTTPException(status.HTTP_409_CONFLICT, "This suggestion has already been decided.")
+    if body.decision == "accept":
+        try:
+            qual_codebook_store.accept_code(db, project, user, row.code, row.rationale)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     row.status = "accepted" if body.decision == "accept" else "rejected"
     row.decided_by = audit.user_actor(user)
     row.decided_at = utcnow()
@@ -154,3 +169,43 @@ def decide(
     db.commit()
     db.refresh(row)
     return _suggestion_read(row)
+
+
+@router.get("/codebook")
+def codebook(
+    project: Project = Depends(project_access(READ_ROLES)),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """The project's current codebook: live code name -> definition. Renamed-away and merged-away names are
+    not listed here (they stay resolvable in the audit log and the kept, un-dropped `QualCode` rows)."""
+    return {"codes": qual_codebook_store.active_codes(db, project.id)}
+
+
+@router.post("/codebook/rename")
+def rename_code(
+    body: RenameCodeIn,
+    project: Project = Depends(project_access(WRITE_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    try:
+        qual_codebook_store.rename_code(db, project, user, body.old, body.new)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    db.commit()
+    return {"codes": qual_codebook_store.active_codes(db, project.id)}
+
+
+@router.post("/codebook/merge")
+def merge_code(
+    body: MergeCodeIn,
+    project: Project = Depends(project_access(WRITE_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    try:
+        qual_codebook_store.merge_code(db, project, user, body.source, body.target)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    db.commit()
+    return {"codes": qual_codebook_store.active_codes(db, project.id)}

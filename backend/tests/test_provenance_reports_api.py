@@ -84,6 +84,36 @@ def test_manuscript_report_covers_every_section(writer):
     assert sorted(v["title"] for v in body["covered_versions"]) == ["Introduction", "Methods"]
 
 
+def test_manuscript_report_can_be_scoped_to_chosen_sections(writer):
+    body = _report(writer.client, writer.project_id, scope="manuscript", section_ids=[writer.intro]).json()
+
+    assert [v["title"] for v in body["covered_versions"]] == ["Introduction"]
+    assert body["report"]["total_chars"] == len("Remote work changed wages.")
+
+
+def test_manuscript_report_with_no_filter_matches_the_unfiltered_total(writer):
+    filtered = _report(writer.client, writer.project_id, scope="manuscript", section_ids=[writer.intro, writer.methods]).json()
+    unfiltered = _report(writer.client, writer.project_id, scope="manuscript").json()
+
+    assert sorted(v["title"] for v in filtered["covered_versions"]) == sorted(v["title"] for v in unfiltered["covered_versions"])
+    assert filtered["report"]["total_chars"] == unfiltered["report"]["total_chars"]
+
+
+def test_section_ids_must_be_non_empty_when_given(writer):
+    response = _report(writer.client, writer.project_id, scope="manuscript", section_ids=[])
+    assert response.status_code == 422
+
+
+def test_section_ids_must_belong_to_the_project(writer):
+    response = _report(writer.client, writer.project_id, scope="manuscript", section_ids=[str(uuid.uuid4())])
+    assert response.status_code == 404
+
+
+def test_section_report_refuses_section_ids(writer):
+    response = _report(writer.client, writer.project_id, scope="section", document_id=writer.intro, section_ids=[writer.intro])
+    assert response.status_code == 422
+
+
 def test_a_section_without_saved_versions_is_refused(writer):
     empty = _document(writer.project_id, writer.user_id, "Empty", 3)
 

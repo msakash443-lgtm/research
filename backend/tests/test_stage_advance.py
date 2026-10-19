@@ -2,7 +2,7 @@
 
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -12,9 +12,11 @@ from sqlalchemy import select
 from app import stage_machine as sm
 from app.artifacts import StageError
 from app.database import SessionLocal
+from app.extraction_schema import load_schema, schema_version
 from app.main import app
 from app.models import (
-    Artifact, ArtifactStatus, AuditEvent, Gate, GateCode, GateStatus, Project, ProjectMember, ProjectRole, SearchQuery,
+    AnalysisPlan, AnalysisRun, Artifact, ArtifactStatus, AuditEvent, Extraction, Gap, Gate, GateCode, GateStatus, Project, ProjectMember,
+    ProjectRole, SearchQuery, Source,
     ProjectStage as S,
 )
 
@@ -39,7 +41,17 @@ def world():
             db.add(ProjectMember(project_id=uuid.UUID(project_id), user_id=uuid.UUID(uid), role=role))
             db.commit()
         clients[role.value] = client
-    return {"clients": clients, "project": project_id, "pid": uuid.UUID(project_id), "owner_id": owner_id}
+    with SessionLocal() as db:
+        # G4's approval locks `Source` creation (`app.source_gate_guard`); this project's source for
+        # G6's conceptual-model path (M4.8) must be created before the walk reaches G4.
+        source = Source(project_id=uuid.UUID(project_id), title="Smith 2020", source_type="article", created_by="test-setup")
+        db.add(source)
+        db.commit()
+        source_id = str(source.id)
+    return {
+        "clients": clients, "project": project_id, "pid": uuid.UUID(project_id), "owner_id": owner_id,
+        "source_id": source_id,
+    }
 
 
 def _set_stage(world, stage):
@@ -75,7 +87,94 @@ def _lock_a_plan(client, project_id):
     assert client.post(f"/api/projects/{project_id}/analysis-plans/{plan}/lock").status_code == 200
 
 
+def _complete_interpretation(world):
+    """G9 needs a findings-to-literature map with every finding confirmed by a person, not merely
+    AI-computed (M6.9, EC-12.2/EC-12.3). Writes a run against G8's locked plan directly (no Docker
+    sandbox in this test), then generates and confirms the map through the real API."""
+    client = world["clients"]["owner"]
+    with SessionLocal() as db:
+        plan = db.scalar(select(AnalysisPlan).where(AnalysisPlan.project_id == world["pid"], AnalysisPlan.locked_at.is_not(None)))
+        g8 = db.scalar(select(Gate).where(Gate.project_id == world["pid"], Gate.code == GateCode.G8))
+        run = AnalysisRun(
+            project_id=world["pid"], analysis_plan_id=plan.id, dataset_id=plan.dataset_id,
+            plan_sha256=plan.plan_sha256, dataset_sha256="0" * 64, script_sha256="0" * 64,
+            environment_sha256=plan.environment_sha256, image="sandbox:test",
+            output_json={"results": {"mean": 1.0}}, output_sha256="0" * 64, created_by="test-setup",
+            created_at=g8.decided_at + timedelta(days=1),  # explicit: avoids tying G8's and the run's clock to the same second
+        )
+        db.add(run)
+        db.commit()
+    findings = client.post(f"/api/projects/{world['project']}/interpretation/generate").json()
+    for finding in findings:
+        assert client.post(
+            f"/api/projects/{world['project']}/interpretation/findings/{finding['id']}/review", json={"decision": "confirmed"}
+        ).status_code == 200
+
+
+def _approve_a_section(client, project_id, owner_id):
+    """G10 needs every manuscript section approved (M6.11); create, save, report and approve one, as the owner would."""
+    document_id = client.post(f"/api/projects/{project_id}/documents", json={"title": "Introduction", "position": 1}).json()["id"]
+    content = {"type": "doc", "content": [{"type": "paragraph", "content": [{
+        "type": "text", "text": "Advance test section.",
+        "marks": [{"type": "prov", "attrs": {"sid": "s1", "origin": "typed", "by": owner_id, "sug": None, "note": None, "paste": None, "src": None}}],
+    }]}]}
+    assert client.post(
+        f"/api/projects/{project_id}/documents/{document_id}/versions",
+        json={"base_number": 0, "client_save_id": uuid.uuid4().hex, "content_json": content},
+    ).status_code == 201
+    assert client.post(f"/api/projects/{project_id}/provenance-reports", json={"scope": "section", "document_id": document_id}).status_code == 201
+    assert client.post(f"/api/projects/{project_id}/documents/{document_id}/approve").status_code == 201
+
+
+def _complete_framework(world):
+    """G6 needs a research question linked to a selected gap and a conceptual-model path whose
+    constructs each carry a measure (M4.8, EC-8.2/EC-8.3)."""
+    client = world["clients"]["owner"]
+    with SessionLocal() as db:
+        gap = Gap(project_id=world["pid"], type="empirical", statement="A selected evidence-backed gap",
+                   selected=True, created_by="test-setup")
+        db.add(gap)
+        db.commit()
+        gap_id = str(gap.id)
+    question = client.post(f"/api/projects/{world['project']}/research-questions", json={
+        "text": "How does trust affect remote collaboration?", "type": "relational", "gap_ids": [gap_id],
+    })
+    assert question.status_code == 201, question.text
+    from_id = client.post(f"/api/projects/{world['project']}/constructs", json={
+        "name": "Trust", "definition": "Definition", "author": "Smith", "measures": [{"scale": "Trust Index"}],
+    }).json()["id"]
+    to_id = client.post(f"/api/projects/{world['project']}/constructs", json={
+        "name": "Performance", "definition": "Definition", "author": "Smith", "measures": [{"scale": "Perf Index"}],
+    }).json()["id"]
+    path = client.post(f"/api/projects/{world['project']}/conceptual-model/paths", json={
+        "from_construct_id": from_id, "to_construct_id": to_id, "kind": "direct",
+        "source_ids": [world["source_id"]], "rationale": "Prior studies report it.",
+    })
+    assert path.status_code == 201, path.text
+
+
+def _verify_extraction(world):
+    """G4 waits for a human-verified, current-schema extraction of every active source, including the
+    one `world()` creates for G6's conceptual-model path."""
+    with SessionLocal() as db:
+        db.add(Extraction(
+            project_id=world["pid"], source_id=uuid.UUID(world["source_id"]),
+            schema_version=schema_version(load_schema()), fields_json={}, evidence_spans={},
+            verified_by_human=True, verified_by="test-setup", verified_at=datetime.now(timezone.utc),
+            extracted_by="human", extractor="test-setup",
+        ))
+        db.commit()
+
+
 def _approve(world, code):
+    if code == "G4":
+        _verify_extraction(world)
+    if code == "G6":
+        _complete_framework(world)
+    if code == "G9":
+        _complete_interpretation(world)
+    if code == "G10":
+        _approve_a_section(world["clients"]["owner"], world["project"], world["owner_id"])
     if code == "G8":
         _lock_a_plan(world["clients"]["owner"], world["project"])
     return world["clients"]["owner"].post(f"/api/projects/{world['project']}/gates/{code}/approve", json={"note": "ok"})

@@ -1,10 +1,11 @@
 import { $, $$, el, toast, saveOnce, label, formatDate } from "./js/dom.js";
 import { errorCard } from "./js/steps/common.js";
 import { request, projectApi } from "./js/api.js";
-import { STAGES, STEPS, GROUPS, GUIDES, STEP_IDS, stepStatus, setStageChain } from "./js/workflow.js";
+import { STAGES, STEPS, GROUPS, GUIDES, STEP_IDS, stepStatus, setStageChain, stageLabel, stagesWithoutScreen } from "./js/workflow.js";
 import { renderMemory } from "./js/memory.js";
 import { aiLevel } from "./js/aiLevels.js";
 import { renderInbox } from "./js/inbox.js";
+import { parseInboxRoute } from "./js/inboxLogic.js";
 import { enqueueCapture, flushOutbox, pendingCount, registerOfflineSync } from "./js/offlineOutbox.js";
 
 import overview from "./js/steps/overview.js";
@@ -155,7 +156,7 @@ function renderShell() {
   const stageName = state.summary.stage?.stage;
   const idx = STAGES.findIndex(([name]) => name === stageName);
   $("#progress-block").hidden = false;
-  $("#stage-progress-label").textContent = `Stage ${idx + 1} of ${STAGES.length} · ${label(stageName || "")}`;
+  $("#stage-progress-label").textContent = `Stage ${idx + 1} of ${STAGES.length} · ${idx >= 0 ? stageLabel(STAGES[idx]) : label(stageName || "")}`;
   $("#stage-progress").value = idx >= 0 ? idx : 0;
 
   const rail = $("#step-rail");
@@ -167,9 +168,9 @@ function renderShell() {
 
   const laterList = $("#later-stages-list");
   laterList.replaceChildren();
-  const fromIndex = STAGES.findIndex(([name]) => name === "retrieved");
-  STAGES.slice(fromIndex).forEach(([name, gate]) => {
-    laterList.append(el("li", { text: gate ? `${label(name)} (${gate})` : label(name) }));
+  stagesWithoutScreen().forEach((entry) => {
+    const [, gate] = entry;
+    laterList.append(el("li", { text: gate ? `${stageLabel(entry)} (${gate})` : stageLabel(entry) }));
   });
   $("#later-stages").hidden = false;
 }

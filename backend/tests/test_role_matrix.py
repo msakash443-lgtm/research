@@ -24,6 +24,7 @@ from app.models import (
     ClusterRun,
     Claim,
     Extraction,
+    OwnPaperLookup,
     Project,
     ProjectMember,
     ProjectExtractionSchema,
@@ -43,6 +44,7 @@ WRITE = {"owner", "co_author"}
 VERIFY = {"owner", "co_author", "supervisor"}
 MANAGE = {"owner"}
 APPROVE_G1 = {"owner", "supervisor"}  # gate G1; owner-only gates are in test_gate_decisions.py
+APPROVE_SECTION = {"owner", "supervisor"}  # G10's required role (M6.11)
 
 # (method, path template, roles allowed, status for an allowed call)
 MATRIX = [
@@ -60,6 +62,7 @@ MATRIX = [
     ("DELETE", "/api/projects/{p}/ai-locks/source/{s}", WRITE, 200),
     ("POST", "/api/projects/{p}/searches/suggest-synonyms", WRITE, 200),
     ("GET", "/api/projects/{p}/documents", ALL, 200),
+    ("GET", "/api/projects/{p}/documents/numbers", ALL, 200),
     ("POST", "/api/projects/{p}/documents", WRITE, 201),
     ("PATCH", "/api/projects/{p}/documents/{doc}", WRITE, 200),
     ("GET", "/api/projects/{p}/documents/{doc}", ALL, 200),
@@ -71,6 +74,11 @@ MATRIX = [
     ("POST", "/api/projects/{p}/documents/{doc}/versions", WRITE, 201),
     ("POST", "/api/projects/{p}/documents/{doc}/versions/{v}/restore", WRITE, 200),
     ("POST", "/api/projects/{p}/documents/{doc}/paragraph-from-note", WRITE, 200),
+    ("POST", "/api/projects/{p}/documents/{doc}/approve", APPROVE_SECTION, 201),
+    ("GET", "/api/projects/{p}/documents/{doc}/approval", ALL, 200),
+    # Section drafting from the claim outline (X.46.8 / M6.1.a): request queues a task (202). Behaviour is in
+    # test_section_draft_api.py.
+    ("POST", "/api/projects/{p}/documents/{doc}/draft-suggestion", WRITE, 202),
     ("POST", "/api/projects/{p}/similarity-checks", WRITE, 202),
     ("GET", "/api/projects/{p}/similarity-checks", ALL, 200),
     ("GET", "/api/projects/{p}/similarity-providers", ALL, 200),
@@ -89,6 +97,8 @@ MATRIX = [
     ("POST", "/api/projects/{p}/sources/{s}/excerpts", WRITE, 201),
     ("POST", "/api/projects/{p}/sources/import", WRITE, 201),
     ("POST", "/api/projects/{p}/sources/own", WRITE, 201),
+    ("POST", "/api/projects/{p}/sources/own/lookup", WRITE, 202),
+    ("GET", "/api/projects/{p}/sources/own/lookup", ALL, 200),
     ("GET", "/api/projects/{p}/sources/export", ALL, 200),
     ("POST", "/api/projects/{p}/sources/{s}/check", WRITE, 202),
     ("POST", "/api/projects/{p}/sources/{s}/fulltext/fetch", WRITE, 202),  # queues only
@@ -200,7 +210,17 @@ MATRIX = [
     ("POST", "/api/projects/{p}/qual/suggest", WRITE, 503),  # M5.5.2: no local model in the matrix world, so participant text is refused, never sent to the fake third-party endpoint
     ("GET", "/api/projects/{p}/qual/excerpts", ALL, 200),  # M5.5.2
     ("POST", "/api/projects/{p}/qual/decisions", WRITE, 404),  # M5.5.2: no pending suggestion exists in the matrix world; role gate first
+    ("GET", "/api/projects/{p}/qual/codebook", ALL, 200),  # M5.5.2
+    ("POST", "/api/projects/{p}/qual/codebook/rename", WRITE, 409),  # M5.5.2: no such code in the matrix world; role gate first
+    ("POST", "/api/projects/{p}/qual/codebook/merge", WRITE, 409),  # M5.5.2: no such code in the matrix world; role gate first
     ("GET", "/api/projects/{p}/analysis-plans/{ap}/runs", ALL, 200),  # M5.3.3: stored runs only
+    ("POST", "/api/projects/{p}/analysis-plans/{ap}/runs/{run}/robustness", MANAGE, 404),  # M5.4.2: no run exists for the fake id in the matrix world; role gate first
+    ("GET", "/api/projects/{p}/analysis-plans/{ap}/runs/{run}/robustness", ALL, 404),  # M5.4.2
+    ("GET", "/api/projects/{p}/analysis-plans/{ap}/runs/{run}/notebook", ALL, 404),  # M5.4.2
+    ("POST", "/api/projects/{p}/interpretation/generate", WRITE, 409),  # M6.9: no analysis run exists in the matrix world; role gate first
+    ("GET", "/api/projects/{p}/interpretation/findings", ALL, 200),
+    ("POST", "/api/projects/{p}/interpretation/findings/{finding_id}/review", WRITE, 404),  # M6.9: no such finding in the matrix world; role gate first
+    ("POST", "/api/projects/{p}/interpretation/draft", WRITE, 409),  # M6.9: no map generated in the matrix world; role gate first
     ("GET", "/api/projects/{p}/constructs", ALL, 200),
     ("POST", "/api/projects/{p}/constructs", WRITE, 201),
     ("GET", "/api/projects/{p}/theories", ALL, 200),
@@ -237,7 +257,7 @@ MATRIX = [
     ("GET", "/api/projects/{p}/bibliometrics/networks", ALL, 200),
     ("GET", "/api/projects/{p}/bibliometrics/export/vosviewer/co_citation.zip", ALL, 200),
     ("GET", "/api/projects/{p}/bibliometrics/export/citespace.csv", ALL, 200),
-    ("GET", "/api/projects/{p}/export/replication", ALL, 200),
+    ("GET", "/api/projects/{p}/export/replication", MANAGE, 200),  # owner only (2026-10-19 decision): per-reviewer screening decisions
     ("GET", "/api/projects/{p}/clusters/{c}", ALL, 200),
     ("POST", "/api/projects/{p}/clusters", WRITE, 202),  # queues only
     ("PATCH", "/api/projects/{p}/clusters/{c}/clusters/{l}", WRITE, 200),
@@ -271,7 +291,10 @@ MATRIX = [
 
 BODIES = {
     ("POST", "/api/projects/{p}/qual/suggest"): {"excerpt": "A matrix excerpt about trust."},
+    ("POST", "/api/projects/{p}/interpretation/findings/{finding_id}/review"): {"decision": "confirmed"},
     ("POST", "/api/projects/{p}/qual/decisions"): {"suggestion_id": str(uuid.uuid4()), "decision": "accept"},
+    ("POST", "/api/projects/{p}/qual/codebook/rename"): {"old": "matrix-code", "new": "matrix-code-2"},
+    ("POST", "/api/projects/{p}/qual/codebook/merge"): {"source": "matrix-code", "target": "matrix-code-2"},
     ("POST", "/api/projects/{p}/documents"): {"title": "Matrix section", "position": 9},
     ("PATCH", "/api/projects/{p}/documents/{doc}"): {"title": "Matrix title"},
     ("PUT", "/api/projects/{p}/bibliometrics/inputs/{s}"): {"reference_ids": ["10.1234/ref"], "keywords": ["research"]},
@@ -302,6 +325,7 @@ BODIES = {
     ("POST", "/api/projects/{p}/datasets/{ds}/exclusion-rules"): {"column": "a", "op": "equals", "value": "9"},
     ("POST", "/api/projects/{p}/transcripts/anonymise"): {"text": "Ann met Bo.", "terms": ["Ann"]},
     ("POST", "/api/projects/{p}/datasets/{ds}/analysis-plans"): {"tests": ["descriptives"], "variables": ["a"], "seed": 1},
+    ("POST", "/api/projects/{p}/analysis-plans/{ap}/runs/{run}/robustness"): {"kind": "rerun_identity"},
     ("POST", "/api/projects/{p}/research-questions"): {"text": "How does trust affect collaboration?", "type": "relational", "gap_ids": []},
     ("PATCH", "/api/projects/{p}/research-questions/{rq}"): {"type": "exploratory"},
     ("POST", "/api/projects/{p}/hypotheses"): {"research_question_id": "{rq}", "statement": "Trust predicts collaboration.", "direction": "positive", "theoretical_basis": "Theory", "empirical_support": "Evidence"},
@@ -481,6 +505,14 @@ def world(monkeypatch, fake_llm):
                                 decision_id=autoexclude_decision_id, confidence=0.95))
         db.commit()
 
+    own_paper_lookup_task_id = uuid.uuid4()  # a resolved own-paper lookup to read (M2.14.1)
+    with SessionLocal() as db:
+        db.add(OwnPaperLookup(project_id=uuid.UUID(project_id), task_id=own_paper_lookup_task_id,
+                              doi="10.1234/matrix-lookup", status="not_found",
+                              detail="No enabled lookup connector has a matching record for this DOI.",
+                              requested_by="matrix"))
+        db.commit()
+
     # Targets for the member routes: an uninvited user to add, and a removable reviewer.
     _login(f"matrix-invitee-{tag}@example.com")
     _, removable_id = _login(f"matrix-removable-{tag}@example.com")
@@ -506,7 +538,7 @@ def world(monkeypatch, fake_llm):
     assert owner.post(f"/api/projects/{project_id}/datasets/{dataset_id}/exclusion-rules/{rule.json()['id']}/approve").status_code == 200
     return {
         "clients": clients,
-        "ids": {"p": project_id, "s": source_id, "extract_s": extraction_source_id, "ai_s": ai_source["id"], "h": str(claim_id), "gap_id": gap_id, "rq": question_id, "hp": hypothesis_id, "field_key": "research_question", "u": removable_id, "q": str(search_id), "d": str(seed_id), "e": str(extraction_id), "plan_id": str(uuid.uuid4()), "cp": str(uuid.uuid4()), "c": str(clustering_id), "l": str(cluster_id), "n": "lab_schema", "a": str(alert_id), "k": str(audit_id), "g": _fresh_suggestion(project_id, []), "doc": doc_id, "ds": str(dataset_id), "ap": plan.json()["id"], "rule_id": rule.json()["id"], "rep": _seed_report(project_id, owner_id, doc_id), "v": "1", "author": owner_id, "cr": str(removable_member_id)},
+        "ids": {"p": project_id, "s": source_id, "extract_s": extraction_source_id, "ai_s": ai_source["id"], "h": str(claim_id), "gap_id": gap_id, "rq": question_id, "hp": hypothesis_id, "field_key": "research_question", "u": removable_id, "q": str(search_id), "d": str(seed_id), "e": str(extraction_id), "plan_id": str(uuid.uuid4()), "cp": str(uuid.uuid4()), "c": str(clustering_id), "l": str(cluster_id), "n": "lab_schema", "a": str(alert_id), "k": str(audit_id), "g": _fresh_suggestion(project_id, []), "doc": doc_id, "ds": str(dataset_id), "ap": plan.json()["id"], "run": str(uuid.uuid4()), "rule_id": rule.json()["id"], "rep": _seed_report(project_id, owner_id, doc_id), "v": "1", "author": owner_id, "cr": str(removable_member_id), "lo": str(own_paper_lookup_task_id), "finding_id": str(uuid.uuid4())},
         "twin": twin_id,
         "invitee": f"matrix-invitee-{tag}@example.com",
     }
@@ -590,9 +622,14 @@ def _call(world, principal, method, template):
         path += "?span_id=seed"
     if method == "GET" and template.endswith("/similarity-checks"):
         path += f"?document_id={world['ids']['doc']}"
+    if method == "GET" and template == "/api/projects/{p}/sources/own/lookup":
+        path += f"?task_id={world['ids']['lo']}"
     body = BODIES.get((method, template))
     if (method, template) == ("POST", "/api/projects/{p}/datasets/{ds}/exclude"):
         body = {"name": "matrix exclude", "rule_ids": [world["ids"]["rule_id"]]}
+    if (method, template) == ("POST", "/api/projects/{p}/sources/own/lookup"):
+        # A fresh DOI per call, so a success can't 409 the next principal.
+        body = {"doi": f"10.9999/{uuid.uuid4().hex}"}
     if (method, template) == ("POST", "/api/projects/{p}/similarity-checks"):
         body = {"document_id": world["ids"]["doc"]}
     if (method, template) in (("POST", "/api/projects/{p}/ai/suggestions"), ("POST", "/api/projects/{p}/ai/suggestions/preview")):
@@ -853,7 +890,7 @@ def test_role_matrix(world, method, template, allowed, success):
 def test_the_matrix_covers_every_project_scoped_route():
     """A new project route must be added to MATRIX, or this fails."""
     routed = {
-            (method, route.path.replace("{project_id}", "{p}").replace("{source_id}", "{s}").replace("{user_id}", "{u}").replace("{code}", "G1").replace("{search_id}", "{q}").replace("{seed_id}", "{d}").replace("{extraction_id}", "{e}").replace("{evidence_id}", "{e}").replace("{plan_id}", "{plan_id}").replace("{claim_id}", "{h}").replace("{gap_id}", "{gap_id}").replace("{question_id}", "{rq}").replace("{hypothesis_id}", "{hp}").replace("{field_key}", "{field_key}").replace("{clustering_id}", "{c}").replace("{cluster_id}", "{l}").replace("{schema_name}", "{n}").replace("{alert_id}", "{a}").replace("{audit_id}", "{k}").replace("{suggestion_id}", "{g}").replace("{document_id}", "{doc}").replace("{number}", "{v}").replace("{target_kind}", "source").replace("{target_id}", "{s}").replace("{kind}", "co_citation").replace("{report_id}", "{rep}").replace("{path_id}", "{cp}").replace("{dataset_id}", "{ds}").replace("{analysis_plan_id}", "{ap}").replace("{member_id}", "{cr}"))
+            (method, route.path.replace("{project_id}", "{p}").replace("{source_id}", "{s}").replace("{user_id}", "{u}").replace("{code}", "G1").replace("{search_id}", "{q}").replace("{seed_id}", "{d}").replace("{extraction_id}", "{e}").replace("{evidence_id}", "{e}").replace("{plan_id}", "{plan_id}").replace("{claim_id}", "{h}").replace("{gap_id}", "{gap_id}").replace("{question_id}", "{rq}").replace("{hypothesis_id}", "{hp}").replace("{field_key}", "{field_key}").replace("{clustering_id}", "{c}").replace("{cluster_id}", "{l}").replace("{schema_name}", "{n}").replace("{alert_id}", "{a}").replace("{audit_id}", "{k}").replace("{suggestion_id}", "{g}").replace("{document_id}", "{doc}").replace("{number}", "{v}").replace("{target_kind}", "source").replace("{target_id}", "{s}").replace("{kind}", "co_citation").replace("{report_id}", "{rep}").replace("{path_id}", "{cp}").replace("{dataset_id}", "{ds}").replace("{analysis_plan_id}", "{ap}").replace("{run_id}", "{run}").replace("{member_id}", "{cr}"))
         for route in app.routes
         if "{project_id}" in getattr(route, "path", "")
         for method in route.methods

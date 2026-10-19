@@ -5,7 +5,7 @@ from sqlalchemy import select
 
 from app.database import SessionLocal
 from app.main import app
-from app.models import AuditEvent, ExternalIdentity, ProjectMember, User
+from app.models import AuditEvent, ExternalIdentity, Note, NoteRevision, ProjectMember, User
 
 
 def _login(email):
@@ -120,3 +120,44 @@ def test_erased_user_cannot_act_through_the_development_header():
     _erase(client, "header@example.com")
 
     assert TestClient(app).get("/api/projects", headers={"X-User-Id": str(user_id)}).status_code == 401
+
+
+def test_erasure_scrubs_private_unfiled_notes_but_leaves_filed_notes_alone():
+    client, user_id = _login("note-taker@example.com")
+    unfiled = client.post(
+        "/api/notes", json={"client_id": "n1", "body": "my private thought", "quoted_text": "clipped text"}
+    )
+    assert unfiled.status_code == 201
+    unfiled_id = uuid.UUID(unfiled.json()["id"])
+
+    project = client.post("/api/projects", json={"title": "Filed notes stay", "description": "d"})
+    project_id = project.json()["id"]
+    filed = client.post(
+        "/api/notes", json={"client_id": "n2", "body": "filed body", "quoted_text": None}
+    )
+    assert filed.status_code == 201
+    filed_id = uuid.UUID(filed.json()["id"])
+    db = SessionLocal()
+    filed_row = db.get(Note, filed_id)
+    filed_row.project_id = uuid.UUID(project_id)
+    db.commit()
+    db.close()
+
+    response = _erase(client, "note-taker@example.com")
+    assert response.status_code == 204
+
+    db = SessionLocal()
+    scrubbed = db.get(Note, unfiled_id)
+    assert scrubbed.body == ""
+    assert scrubbed.quoted_text is None
+    revisions = db.scalars(select(NoteRevision).where(NoteRevision.note_id == unfiled_id)).all()
+    assert any(r.body == "my private thought" for r in revisions)  # the original revision text is unreachable, not deleted
+    assert revisions[-1].body == ""
+
+    kept = db.get(Note, filed_id)
+    assert kept.body == "filed body"
+
+    events = db.scalars(select(AuditEvent).where(AuditEvent.action == "user.unfiled_notes_scrubbed")).all()
+    assert len(events) == 1
+    assert events[0].payload_json["note_count"] == 1
+    db.close()

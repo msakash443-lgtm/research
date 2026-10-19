@@ -1,0 +1,8 @@
+{
+  "name": "research",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "fake-indexeddb": "^6.2.6"
+  }
+}

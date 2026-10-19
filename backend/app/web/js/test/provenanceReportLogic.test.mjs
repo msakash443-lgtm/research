@@ -6,6 +6,7 @@ import {
   coverageLine,
   exportUrl,
   pastedLines,
+  sectionFilterPayload,
   shareRows,
   staleNotice,
 } from "../provenanceReportLogic.js";
@@ -82,4 +83,20 @@ test("pasted material shows its status, size and source, never its text", () => 
       { status: "Unconfirmed paste", chars: "30 characters", source: "no source linked" },
     ],
   );
+});
+
+test("every section checked sends no filter, same request as before the picker existed", () => {
+  assert.equal(sectionFilterPayload(["d1", "d2", "d3"], ["d1", "d2", "d3"]), null);
+});
+
+test("checking a subset scopes the report to just those sections, in document order", () => {
+  assert.deepEqual(sectionFilterPayload(["d1", "d2", "d3"], ["d3", "d1"]), ["d1", "d3"]);
+});
+
+test("unchecking everything sends an empty filter rather than silently falling back to all", () => {
+  assert.deepEqual(sectionFilterPayload(["d1", "d2"], []), []);
+});
+
+test("no sections at all is treated as no filter", () => {
+  assert.equal(sectionFilterPayload([], []), null);
 });

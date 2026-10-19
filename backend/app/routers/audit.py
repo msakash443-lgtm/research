@@ -7,12 +7,13 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from app import audit
 from app.database import get_db
-from app.dependencies import READ_ROLES, project_access
-from app.models import AuditEvent, Project
+from app.dependencies import READ_ROLES, current_user, project_access, project_role
+from app.models import AuditEvent, Project, ProjectRole, User
 from app.schemas import AuditEventRead
 
 router = APIRouter(prefix="/projects/{project_id}/audit", tags=["audit"])
@@ -21,9 +22,15 @@ router = APIRouter(prefix="/projects/{project_id}/audit", tags=["audit"])
 _FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 CSV_COLUMNS = ["timestamp", "actor", "action", "model_id", "prompt_version", "payload_json", "id"]
 
+SCREENING_PREFIX = "screening."  # owner decision 2026-10-19 (M2.3.2/M2.3.3): non-owners see only their own
 
-def _project_events(project: Project, action: str | None, actor: str | None):
+
+def _project_events(project: Project, action: str | None, actor: str | None, *, viewer_actor: str, is_owner: bool):
     query = select(AuditEvent).where(AuditEvent.project_id == project.id)
+    if not is_owner:
+        # A screening-decision audit event (who decided what, when) is per-reviewer blinded, like the
+        # decision itself; everything else (gates, sources, searches, ...) is unaffected.
+        query = query.where(or_(~AuditEvent.action.like(f"{SCREENING_PREFIX}%"), AuditEvent.actor == viewer_actor))
     if action:
         query = query.where(AuditEvent.action == action)
     if actor:
@@ -43,22 +50,29 @@ def list_audit_events(
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
     project: Project = Depends(project_access(READ_ROLES)),
+    user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    """Newest first. Every member can read the project's audit trail."""
+    """Newest first. Every member can read the project's audit trail, except screening-decision events
+    (`screening.*`), which a non-owner sees only their own (owner decision 2026-10-19, M2.3.2/M2.3.3)."""
     # id breaks timestamp ties so paging is stable. Events written in one transaction share a timestamp.
-    query = _project_events(project, action, actor).order_by(AuditEvent.timestamp.desc(), AuditEvent.id.desc())
-    return db.scalars(query.limit(limit).offset(offset)).all()
+    is_owner = project_role(db, project, user) == ProjectRole.owner
+    query = _project_events(project, action, actor, viewer_actor=audit.user_actor(user), is_owner=is_owner)
+    return db.scalars(query.order_by(AuditEvent.timestamp.desc(), AuditEvent.id.desc()).limit(limit).offset(offset)).all()
 
 
 @router.get("/export")
 def export_audit_events(
     format: Literal["json", "csv"] = "json",
     project: Project = Depends(project_access(READ_ROLES)),
+    user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    """The full trail, oldest first, as a downloadable JSON or CSV file."""
-    events = db.scalars(_project_events(project, None, None).order_by(AuditEvent.timestamp.asc(), AuditEvent.id.asc())).all()
+    """The full trail, oldest first, as a downloadable JSON or CSV file. Screening-decision events
+    (`screening.*`) are a non-owner's own only, same as the list endpoint (2026-10-19 decision)."""
+    is_owner = project_role(db, project, user) == ProjectRole.owner
+    query = _project_events(project, None, None, viewer_actor=audit.user_actor(user), is_owner=is_owner)
+    events = db.scalars(query.order_by(AuditEvent.timestamp.asc(), AuditEvent.id.asc())).all()
     filename = f"audit-{project.id}.{format}"
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
     if format == "json":

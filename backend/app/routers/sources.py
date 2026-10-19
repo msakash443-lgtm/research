@@ -12,30 +12,28 @@ from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app import audit, citation_rank
+from app import audit, citation_rank, own_paper
 from app.config import get_settings
 from app.connectors.access import is_enabled
 from app.connectors.arxiv import normalise_id
 from app.connectors.base import ConnectorError
 from app.arxiv_fulltext import ARXIV_FULLTEXT_FETCH
 from app.database import get_db
+from app.doi import normalize_doi
 from app.lookups import live_source_or_404
 from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_access
 from app.connectors.factory import enabled_lookup_names, unpaywall_unavailable_reason
 from app.fulltext import FullTextError, extract_pdf_text
-from app.artifacts import register_artifact
-from app.models import SOURCE_ORIGIN_RETRIEVED, Project, ProjectStage, ScreeningDecision, Source, SourceExcerpt, Task, TaskStatus, User, excerpt_hash, utcnow
-from app.screening import STAGES, screening_locked
+from app.models import SOURCE_ORIGIN_RETRIEVED, OwnPaperLookup, Project, Source, SourceExcerpt, Task, TaskStatus, User, excerpt_hash, utcnow
+from app.screening import screening_locked
 from app.object_storage import ObjectConflict, ObjectNotFound, ObjectStorageError, fulltext_key, get_object_store
-from app.task_handlers import FULLTEXT_FETCH, SOURCE_CHECK
+from app.task_handlers import FULLTEXT_FETCH, OWN_PAPER_LOOKUP, SOURCE_CHECK
 from app.task_queue import enqueue_task
 from app.refmanager import parse_bibtex, parse_ris, to_bibtex, to_ris
 from app.schemas import SourceCreate, SourceMerge, SourceRead
 from app.source_merge import SourceMergeError, merge_sources
 
 PDF_SIGNATURE = b"%PDF-"
-SCREENING_KIND = "screening_decision"  # same artifact kind as routers/screening.py
-LOCKED_MESSAGE = "Gate G3 is approved for this screening. Reopen the project at the screening stage to add a paper."
 
 _OPEN = {TaskStatus.queued, TaskStatus.running, TaskStatus.blocked, TaskStatus.paused}
 _FULLTEXT_TASK_TYPES = (FULLTEXT_FETCH, ARXIV_FULLTEXT_FETCH)
@@ -542,7 +540,7 @@ def add_own_paper(
     a 409. Refused once G3 is approved. Attach the PDF afterwards with `…/fulltext/upload`.
     """
     if screening_locked(db, project):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=LOCKED_MESSAGE)
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=own_paper.LOCKED_MESSAGE)
     if "bibtex" in payload:
         if len(payload) != 1 or not isinstance(payload["bibtex"], str):
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Give either one BibTeX entry or the paper's fields, not both")
@@ -561,24 +559,87 @@ def add_own_paper(
     if item.doi and db.scalar(select(Source.id).where(Source.project_id == project.id, Source.doi == item.doi, Source.merged_into.is_(None))):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This DOI is already in the project")
     actor = audit.user_actor(user)
-    source = Source(project_id=project.id, created_by=actor, **item.model_dump(mode="json", exclude={"evidence_excerpt", "locator"}))
-    db.add(source)
-    db.flush()
-    for stage in STAGES:
-        row = ScreeningDecision(
-            project_id=project.id, source_id=source.id, stage=stage, seq=1, decision="include",
-            decided_by="human", decider=actor, note="added by researcher",
-        )
-        db.add(row)
-        db.flush()
-        register_artifact(db, project.id, SCREENING_KIND, str(row.id), ProjectStage.screened, actor=actor)
-    audit.record(
-        db, actor=actor, action="source.own_paper_added", project_id=project.id,
-        payload={"source_id": str(source.id), "has_doi": bool(item.doi)},
-    )
-    project.touch()
+    source = own_paper.create_own_paper_source(db, project=project, actor=actor, item=item)
     db.commit()
     return source_response(_load_source(db, source.id))
+
+
+class OwnPaperLookupCreate(BaseModel):
+    model_config = {"extra": "forbid"}
+    doi: str | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=500)
+
+
+class OwnPaperLookupRead(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    task_id: uuid.UUID
+    doi: str | None
+    title: str | None
+    status: str
+    source_id: uuid.UUID | None
+    matched_connector: str | None
+    detail: str | None
+    requested_by: str
+    created_at: datetime
+
+
+def _lookup_read(row: OwnPaperLookup) -> OwnPaperLookupRead:
+    return OwnPaperLookupRead(
+        id=row.id, project_id=row.project_id, task_id=row.task_id, doi=row.doi, title=row.title,
+        status=row.status, source_id=row.source_id, matched_connector=row.matched_connector,
+        detail=row.detail, requested_by=row.requested_by, created_at=row.created_at,
+    )
+
+
+@router.post("/own/lookup", status_code=status.HTTP_202_ACCEPTED)
+def queue_own_paper_lookup(
+    payload: OwnPaperLookupCreate,
+    project: Project = Depends(project_access(WRITE_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Queue a DOI-only or title-only own-paper lookup (M2.14.1): a background task resolves the match
+    through the enabled lookup connectors, then includes it the same way `POST .../sources/own` does.
+    Poll `GET .../sources/own/lookup?task_id=` for the outcome. Refused once G3 is approved."""
+    if screening_locked(db, project):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=own_paper.LOCKED_MESSAGE)
+    if bool(payload.doi) == bool(payload.title):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Give exactly one of doi or title, not both or neither")
+    doi = None
+    if payload.doi:
+        try:
+            doi = normalize_doi(payload.doi)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        if doi and db.scalar(select(Source.id).where(Source.project_id == project.id, Source.doi == doi, Source.merged_into.is_(None))):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This DOI is already in the project")
+    actor = audit.user_actor(user)
+    task = enqueue_task(
+        db, project.id, OWN_PAPER_LOOKUP,
+        payload={"project_id": str(project.id), "doi": doi, "title": payload.title, "actor": actor},
+        actor=actor,
+    )
+    audit.record(
+        db, actor=actor, action="source.own_paper_lookup_queued", project_id=project.id,
+        payload={"task_id": str(task.id), "has_doi": bool(doi)},
+    )
+    db.commit()
+    return {"task_id": str(task.id), "status": "queued"}
+
+
+@router.get("/own/lookup", response_model=OwnPaperLookupRead)
+def get_own_paper_lookup(
+    task_id: uuid.UUID = Query(...),
+    project: Project = Depends(project_access(READ_ROLES)),
+    db: Session = Depends(get_db),
+):
+    """The outcome of a queued own-paper lookup (M2.14.1), once the task has resolved it. 404 while it is
+    still queued or running: poll again."""
+    row = db.scalar(select(OwnPaperLookup).where(OwnPaperLookup.task_id == task_id, OwnPaperLookup.project_id == project.id))
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No resolved lookup for this task yet")
+    return _lookup_read(row)
 
 
 @router.get("/export")

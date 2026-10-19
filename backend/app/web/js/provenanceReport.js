@@ -5,26 +5,37 @@
 import { el, formatDate, toast } from "./dom.js";
 import { projectApi, request } from "./api.js";
 import { errorCard } from "./steps/common.js";
-import { aiLines, coverageLine, exportUrl, pastedLines, shareRows, staleNotice } from "./provenanceReportLogic.js";
+import { aiLines, coverageLine, exportUrl, pastedLines, sectionFilterPayload, shareRows, staleNotice } from "./provenanceReportLogic.js";
 
 const INTRO = "A record of how the saved text was produced: typed, quoted, pasted or AI-edited and accepted. It counts characters from saved versions only.";
 
 export async function renderReport(host, { projectId, section }) {
   host.replaceChildren(el("p", { className: "muted small", text: "Loading reports…" }));
-  let reports;
+  let reports, sections;
   try {
-    reports = await request(projectApi(projectId, "/provenance-reports"));
+    [reports, sections] = await Promise.all([
+      request(projectApi(projectId, "/provenance-reports")),
+      request(projectApi(projectId, "/documents")),
+    ]);
   } catch (error) {
     host.replaceChildren(errorCard(error.message, () => renderReport(host, { projectId, section })));
     return;
   }
 
+  const sectionIds = sections.map((doc) => doc.id);
+  const checked = new Set(sectionIds);
+
   const make = (scope, documentId) => async () => {
+    const filter = scope === "manuscript" ? sectionFilterPayload(sectionIds, checked) : null;
+    if (scope === "manuscript" && filter !== null && filter.length === 0) {
+      toast("Choose at least one section first.");
+      return;
+    }
+    const body = { scope };
+    if (documentId) body.document_id = documentId;
+    if (filter) body.section_ids = filter;
     try {
-      await request(projectApi(projectId, "/provenance-reports"), {
-        method: "POST",
-        body: JSON.stringify(documentId ? { scope, document_id: documentId } : { scope }),
-      });
+      await request(projectApi(projectId, "/provenance-reports"), { method: "POST", body: JSON.stringify(body) });
       toast("Report made");
     } catch (error) {
       toast(error.message);
@@ -35,12 +46,28 @@ export async function renderReport(host, { projectId, section }) {
 
   const sectionButton = el("button", { type: "button", text: "Make report for this section", attrs: section ? {} : { disabled: "disabled", title: "Open a section first" } });
   sectionButton.addEventListener("click", make("section", section?.id));
-  const manuscriptButton = el("button", { type: "button", className: "quiet-button", text: "Make report for all sections" });
+  const manuscriptButton = el("button", { type: "button", className: "quiet-button", text: "Make report for selected sections" });
   manuscriptButton.addEventListener("click", make("manuscript", null));
+
+  const sectionPicker = sections.length
+    ? el("fieldset", { className: "write-report-sections", children: [
+        el("legend", { text: "Sections to include (all-sections report)" }),
+        ...sections.map((doc) => {
+          const box = el("input", { attrs: { type: "checkbox" } });
+          box.checked = true;
+          box.addEventListener("change", () => {
+            if (box.checked) checked.add(doc.id);
+            else checked.delete(doc.id);
+          });
+          return el("label", { className: "write-report-section-pick", children: [box, el("span", { text: doc.title })] });
+        }),
+      ] })
+    : null;
 
   host.replaceChildren(
     el("h3", { text: "Writing record" }),
     el("p", { className: "small", text: INTRO }),
+    ...(sectionPicker ? [sectionPicker] : []),
     el("div", { className: "write-report-actions", children: [sectionButton, manuscriptButton] }),
     ...(reports.length === 0
       ? [el("p", { className: "muted small", text: "No reports yet. Save a section, then make a report." })]

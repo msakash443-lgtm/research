@@ -870,6 +870,28 @@ class AnalysisRun(Timestamped, Base):
     created_by: Mapped[str] = mapped_column(String(100))
 
 
+class RobustnessCheck(Timestamped, Base):
+    """One robustness comparison against a stored `AnalysisRun` (M5.4.2, spec 5.9 bullet 3): the same spec re-run
+    unchanged ("rerun_identity"), with one variable dropped ("alternative_spec"), or against a different, already
+    governed dataset version ("outlier_sensitivity"/"missing_data", e.g. one produced by an approved exclusion
+    rule). Each check runs its own sandboxed script and compares its fingerprint to the base run's; nothing here
+    computes an outlier rule or imputes data itself."""
+
+    __tablename__ = "robustness_checks"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    base_run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("analysis_runs.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(20))  # "rerun_identity", "alternative_spec", "outlier_sensitivity" or "missing_data"
+    label: Mapped[str] = mapped_column(String(200))
+    compare_dataset_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("dataset_versions.id"), nullable=True)
+    compare_plan_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("analysis_plans.id"), nullable=True)
+    compare_run_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("analysis_runs.id"), nullable=True)
+    base_fingerprint: Mapped[str] = mapped_column(String(64))
+    compare_fingerprint: Mapped[str] = mapped_column(String(64))
+    identical: Mapped[bool] = mapped_column(Boolean)
+    created_by: Mapped[str] = mapped_column(String(100))
+
+
 class ExclusionRule(Timestamped, Base):
     """A case-exclusion rule for one dataset version (M5.7.1, spec 5.8 gate). A rule is proposed, then a human with
     approve rights approves it; only approved rules can drop rows, and only through a logged cleaning version."""
@@ -910,6 +932,22 @@ class QualSuggestion(Timestamped, Base):
     status: Mapped[str] = mapped_column(String(12))  # "pending", "accepted" or "rejected"
     decided_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class QualCode(Timestamped, Base):
+    """One name in the project's qualitative codebook (M5.5.2). `redirect_to` is set once the name has been
+    renamed or merged away: the name itself is kept forever (never reused for a different code) but no longer
+    holds a definition. `app/qual_coding.py` is the single source of truth for the accept/rename/merge rules this
+    table persists; `app/qual_codebook_store.py` is the only writer."""
+
+    __tablename__ = "qual_codes"
+    __table_args__ = (UniqueConstraint("project_id", "name", name="uq_qual_code_project_name"),)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    definition: Mapped[str | None] = mapped_column(Text, nullable=True)
+    redirect_to: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    created_by: Mapped[str] = mapped_column(String(100))
 
 
 class ResearchQuestion(Timestamped, Base):
@@ -1207,6 +1245,26 @@ class SimilarityCheck(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class OwnPaperLookup(Base):
+    """The outcome of one DOI-only/title-only own-paper lookup (M2.14.1), resolved through the enabled
+    lookup connectors by the `own_paper_lookup` task. Written once, by the task, with a terminal status
+    (`included`, `not_found`, `failed`) - a retry is a new row, never an edit of this one. `source_id` is
+    set only for `included`; the created source and its screening decisions are the normal M2.14 artifacts."""
+
+    __tablename__ = "own_paper_lookups"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    task_id: Mapped[uuid.UUID] = mapped_column(index=True, unique=True)
+    doi: Mapped[str | None] = mapped_column(String(255))
+    title: Mapped[str | None] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(String(12))
+    source_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("sources.id"))
+    matched_connector: Mapped[str | None] = mapped_column(String(60))
+    detail: Mapped[str | None] = mapped_column(Text)
+    requested_by: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class ProvenanceReport(Base):
     """A frozen writing provenance report (X.31.12). Append-only (enforced by `ledger_guard`): a report is never
     edited, and a regenerated report is a new row. Its Artifact (`kind="provenance_report"`) goes stale when a
@@ -1223,6 +1281,76 @@ class ProvenanceReport(Base):
     statement_template: Mapped[str] = mapped_column(String(60))
     report_hash: Mapped[str] = mapped_column(String(64))
     generated_by: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SectionApproval(Base):
+    """One person's approval of a manuscript section's current text, with the AI-involvement level frozen at
+    that moment (G10, spec 5.11: "Human gate: Scholar approves each section; AI-involvement level is recorded
+    per section."). Append-only (enforced by `ledger_guard`): approving again after a change writes a new row;
+    nothing already written is changed or removed. `ai_share_pct`/`ai_shares` are copied from the section's
+    current, non-stale provenance report (`app/provenance_report.py`) at approval time, never recomputed later.
+    Its Artifact (`kind="section_approval"`) goes stale when the section is saved again."""
+
+    __tablename__ = "section_approvals"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id"), index=True)
+    version_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("document_versions.id"))
+    version_number: Mapped[int]
+    report_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("provenance_reports.id"))
+    ai_share_pct: Mapped[float] = mapped_column(Float)
+    ai_shares: Mapped[dict] = mapped_column(JSON)
+    approved_by: Mapped[str] = mapped_column(String(100))
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class InterpretationFinding(Base):
+    """One computed entry in the findings-to-literature map (M6.9, spec 5.10 and 8): one analysis run's
+    named numeric finding compared against prior literature values reported by this project's
+    human-verified extractions (M3.5's evidence table). `app.interpretation.classify` makes the
+    comparison; nothing here ever asks a model whether a finding agrees with the literature
+    (research-integrity rule: AI never silently decides substantive correctness). Append-only (enforced
+    by `ledger_guard`): regenerating the map writes a new `batch_id` with the next `generation` rather
+    than editing anything, and `app.interpretation_map.current_batch` reads only the highest-`generation`
+    batch for a project. `generation` (not `created_at`) decides "latest": a clock with only
+    second resolution (SQLite's `CURRENT_TIMESTAMP`) could otherwise tie two batches generated inside
+    the same second, the same reason `AiSuggestionEvent` orders by `seq`, not a timestamp."""
+
+    __tablename__ = "interpretation_findings"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    batch_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    generation: Mapped[int] = mapped_column(Integer, index=True)
+    analysis_run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("analysis_runs.id"), index=True)
+    output_key: Mapped[str] = mapped_column(String(200))
+    output_path: Mapped[str] = mapped_column(String(500))
+    value: Mapped[float | None] = mapped_column(Float)
+    classification: Mapped[str] = mapped_column(String(10))  # "agree" | "disagree" | "unclear"
+    literature_source_ids: Mapped[list] = mapped_column(JSON)
+    literature_extraction_ids: Mapped[list] = mapped_column(JSON)
+    rationale: Mapped[str] = mapped_column(Text)
+    generated_by: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class InterpretationReview(Base):
+    """One person's confirmation or dispute of one `InterpretationFinding` row (M6.9, G9). Append-only
+    (enforced by `ledger_guard`): a changed mind writes a new row, never an edit; only the highest-`seq`
+    review for a finding counts (`app.interpretation_map.is_confirmed`), the same `seq`-not-timestamp
+    ordering `AiSuggestionEvent` uses. G9 cannot be approved until every finding in the current batch has
+    a `confirmed` review from a person — an AI-computed classification alone is never enough."""
+
+    __tablename__ = "interpretation_reviews"
+    __table_args__ = (UniqueConstraint("finding_id", "seq", name="uq_interpretation_review_seq"),)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    finding_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("interpretation_findings.id"), index=True)
+    seq: Mapped[int] = mapped_column(Integer)
+    decision: Mapped[str] = mapped_column(String(12))  # "confirmed" | "disputed"
+    note: Mapped[str | None] = mapped_column(Text)
+    reviewed_by: Mapped[str] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

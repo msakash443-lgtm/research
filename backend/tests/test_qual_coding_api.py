@@ -169,3 +169,92 @@ def test_a_blank_or_oversized_excerpt_is_refused_before_any_call(project, monkey
     assert client.post(f"/api/projects/{pid}/qual/suggest", json={"excerpt": "   "}).status_code == 422
     assert client.post(f"/api/projects/{pid}/qual/suggest", json={"excerpt": "x" * 5001}).status_code == 422
     assert http.urls == []
+
+
+def test_accepting_a_suggestion_adds_it_to_the_codebook_with_the_rationale_as_its_definition(project, monkeypatch):
+    client, pid = project
+    _patch(monkeypatch, FakeHttp(_reply("trust")), _settings())
+    excerpt = client.post(f"/api/projects/{pid}/qual/suggest", json={"excerpt": EXCERPT}).json()
+    sid = excerpt["suggestions"][0]["id"]
+    assert client.get(f"/api/projects/{pid}/qual/codebook").json() == {"codes": {}}
+    client.post(f"/api/projects/{pid}/qual/decisions", json={"suggestion_id": sid, "decision": "accept"})
+    book = client.get(f"/api/projects/{pid}/qual/codebook").json()
+    assert book == {"codes": {"trust": "from the excerpt"}}
+
+
+def test_accepting_a_suggestion_for_a_code_already_in_the_codebook_does_not_duplicate_it(project, monkeypatch):
+    client, pid = project
+    _patch(monkeypatch, FakeHttp(_reply("trust")), _settings())
+    first = client.post(f"/api/projects/{pid}/qual/suggest", json={"excerpt": EXCERPT}).json()
+    client.post(f"/api/projects/{pid}/qual/decisions",
+                json={"suggestion_id": first["suggestions"][0]["id"], "decision": "accept"})
+    second = client.post(f"/api/projects/{pid}/qual/suggest", json={"excerpt": EXCERPT}).json()
+    r = client.post(f"/api/projects/{pid}/qual/decisions",
+                     json={"suggestion_id": second["suggestions"][0]["id"], "decision": "accept"})
+    assert r.status_code == 200
+    assert client.get(f"/api/projects/{pid}/qual/codebook").json() == {"codes": {"trust": "from the excerpt"}}
+
+
+def test_a_rejected_suggestion_never_reaches_the_codebook(project, monkeypatch):
+    client, pid = project
+    _patch(monkeypatch, FakeHttp(_reply("trust")), _settings())
+    excerpt = client.post(f"/api/projects/{pid}/qual/suggest", json={"excerpt": EXCERPT}).json()
+    sid = excerpt["suggestions"][0]["id"]
+    client.post(f"/api/projects/{pid}/qual/decisions", json={"suggestion_id": sid, "decision": "reject"})
+    assert client.get(f"/api/projects/{pid}/qual/codebook").json() == {"codes": {}}
+
+
+def test_rename_moves_the_definition_and_the_old_name_is_no_longer_offered(project, monkeypatch):
+    client, pid = project
+    _patch(monkeypatch, FakeHttp(_reply("trust")), _settings())
+    excerpt = client.post(f"/api/projects/{pid}/qual/suggest", json={"excerpt": EXCERPT}).json()
+    client.post(f"/api/projects/{pid}/qual/decisions",
+                json={"suggestion_id": excerpt["suggestions"][0]["id"], "decision": "accept"})
+    r = client.post(f"/api/projects/{pid}/qual/codebook/rename", json={"old": "trust", "new": "distrust-cues"})
+    assert r.status_code == 200
+    assert r.json() == {"codes": {"distrust-cues": "from the excerpt"}}
+    assert client.get(f"/api/projects/{pid}/qual/codebook").json() == {"codes": {"distrust-cues": "from the excerpt"}}
+
+
+def test_merge_drops_the_source_from_the_live_codebook_but_keeps_its_row(project, monkeypatch):
+    client, pid = project
+    http = FakeHttp(_reply("trust"))
+    _patch(monkeypatch, http, _settings())
+    first = client.post(f"/api/projects/{pid}/qual/suggest", json={"excerpt": EXCERPT}).json()
+    client.post(f"/api/projects/{pid}/qual/decisions",
+                json={"suggestion_id": first["suggestions"][0]["id"], "decision": "accept"})
+    http.reply = _reply("silence")
+    second = client.post(f"/api/projects/{pid}/qual/suggest", json={"excerpt": "A different excerpt."}).json()
+    client.post(f"/api/projects/{pid}/qual/decisions",
+                json={"suggestion_id": second["suggestions"][0]["id"], "decision": "accept"})
+    r = client.post(f"/api/projects/{pid}/qual/codebook/merge", json={"source": "trust", "target": "silence"})
+    assert r.status_code == 200
+    assert r.json() == {"codes": {"silence": "from the excerpt"}}
+    with SessionLocal() as db:
+        from app.models import QualCode
+        row = db.scalars(select(QualCode).where(QualCode.project_id == uuid.UUID(pid), QualCode.name == "trust")).one()
+        assert row.definition == "from the excerpt" and row.redirect_to == "silence"
+
+
+def test_renaming_or_merging_an_unknown_code_is_refused(project, monkeypatch):
+    client, pid = project
+    assert client.post(f"/api/projects/{pid}/qual/codebook/rename",
+                        json={"old": "nope", "new": "also-nope"}).status_code == 409
+    assert client.post(f"/api/projects/{pid}/qual/codebook/merge",
+                        json={"source": "nope", "target": "also-nope"}).status_code == 409
+
+
+def test_the_codebook_audit_events_hold_names_not_definitions(project, monkeypatch):
+    client, pid = project
+    _patch(monkeypatch, FakeHttp(_reply("trust")), _settings())
+    excerpt = client.post(f"/api/projects/{pid}/qual/suggest", json={"excerpt": EXCERPT}).json()
+    client.post(f"/api/projects/{pid}/qual/decisions",
+                json={"suggestion_id": excerpt["suggestions"][0]["id"], "decision": "accept"})
+    client.post(f"/api/projects/{pid}/qual/codebook/rename", json={"old": "trust", "new": "distrust-cues"})
+    with SessionLocal() as db:
+        events = db.scalars(select(AuditEvent).where(AuditEvent.action.in_(
+            ["qual.code_added", "qual.code_renamed"]))).all()
+        assert events
+        for event in events:
+            assert "from the excerpt" not in str(event.payload_json)
+

@@ -118,6 +118,10 @@ class Settings(BaseSettings):
     # Total model tokens a project may use before further calls are refused. 0 = no limit (M0.9.1).
     project_token_budget: int = Field(default=0, ge=0)
     research_worker_poll_seconds: float = 2
+    # X.4.7.4: run-snapshot retention. None/unset = kept indefinitely (no purge runs). When set, the worker
+    # clears `ResearchRun.input_snapshot` for finished runs (completed/failed/needs_sources/needs_configuration)
+    # whose `completed_at` is older than this many days. The answer text, status and audit trail are untouched.
+    research_run_snapshot_retention_days: int | None = Field(default=None, ge=1)
     task_lease_seconds: int = 300
     task_retry_base_seconds: int = 5
     task_retry_max_seconds: int = 300

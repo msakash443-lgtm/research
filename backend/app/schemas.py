@@ -205,6 +205,9 @@ class AuditEventRead(BaseModel):
 
 class GateDecision(BaseModel):
     note: str | None = Field(default=None, max_length=4000)
+    # G7 on a research type with no human participants (X.43.8, decision 5): approval needs this
+    # explicit confirmation instead of a full ethics pack. Ignored for every other gate/type.
+    confirm_no_human_participants: bool = False
 
     @field_validator("note")
     @classmethod
@@ -336,6 +339,8 @@ class StageRead(BaseModel):
     next: list[StageOptionRead]
     chain: list[StageChainItem]  # every stage in workflow order, with the gate that completes it (X.49)
     suggestions: list[SuggestionRead]  # unmet, built exit conditions of the next moves, most binding first (X.55)
+    # Whether this project's own research type involves human participants (X.43.6/X.43.8, decision 4b/5).
+    human_participants: bool
 
 
 class DisciplineProfileRead(BaseModel):

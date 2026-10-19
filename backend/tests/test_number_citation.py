@@ -1,4 +1,4 @@
-from app.number_citation import RunFacts, check_section, resolve_number, stat_refs_in_order
+from app.number_citation import RunFacts, check_section, flatten_numbers, resolve_number, stat_refs_in_order
 
 
 def _stat(run_id: str, path: str) -> dict:
@@ -89,3 +89,27 @@ def test_resolve_number_rejects_missing_output_or_empty_path():
 def test_stat_refs_in_order_ignores_malformed_nodes():
     content = _doc(_para({"type": "stat", "attrs": {"analysis_run_id": "", "path": "seed"}}, _stat("r1", "seed")))
     assert stat_refs_in_order(content) == [("r1", "seed")]
+
+
+def test_flatten_numbers_finds_every_real_number_leaf_by_dot_path():
+    pairs = dict(flatten_numbers(OUTPUT))
+    assert pairs["descriptives.age.n"] == 40
+    assert pairs["descriptives.age.mean"] == 35.5
+    assert pairs["correlations.0.r"] == 0.31
+    assert pairs["seed"] == 0
+    assert "correlations.0.a" not in pairs  # "wage" is a string, not a number
+
+
+def test_flatten_numbers_skips_booleans():
+    assert flatten_numbers({"flag": True, "n": 1}) == [("n", 1)]
+
+
+def test_flatten_numbers_of_a_bare_number_returns_the_empty_path():
+    assert flatten_numbers(5) == [("", 5)]
+    assert flatten_numbers("not a number") == []
+    assert flatten_numbers(None) == []
+
+
+def test_every_path_flatten_numbers_returns_is_resolvable_by_resolve_number():
+    for path, value in flatten_numbers(OUTPUT):
+        assert resolve_number(OUTPUT, path) == value

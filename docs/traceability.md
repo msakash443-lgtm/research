@@ -101,11 +101,11 @@
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
 |---|---|---|---|---|---|
 | 5.9 Q1–2 | Scripts from plan; pinned env, seeds; G8 | M5.3 | — | — | `[~]` scripts (M5.3.2) and sandboxed runs (M5.3.3) built `[?]`; G8 precondition M5.3.4 `[ ]`; container path not run (no Docker here) |
-| 5.9 Q3 | Robustness suite | M5.4 | — | — | `[~]` M5.4.1 helpers `[?]`; suite M5.4.2 blocked on M5.3.3 |
-| 5.9 Q4 | **Journal-style tables/figures**; notebooks | M5.4, M5.8 *(new)* | — | — | `[!]` M5.8 blocked (M5.3 not `[x]`) |
+| 5.9 Q3 | Robustness suite | M5.4 | — | — | `[?]` M5.4.1 helpers `[?]`; suite M5.4.2 built `[?]` (alternative specs, outlier/missing-data comparisons via governed dataset versions, re-run identity) |
+| 5.9 Q4 | **Journal-style tables/figures**; notebooks | M5.4, M5.8 *(new)* | — | — | `[?]` M5.4.2 notebook export built; M5.8 (journal-style tables/figures) `[!]` blocked separately |
 | 5.9 Qual | Coding assist, codebook, inter-coder agreement | M5.5 | — | — | `[~]` M5.5.1 logic `[?]`; AI suggestions M5.5.2 blocked on Q4 |
 | 5.9 gate | G9; **pre-registration deviations documented** | M5.8 *(new)*, M6.9 *(new)* | — | — | `[ ]` |
-| 5.9 QC | Re-run gives identical numbers | M5.4 | — | — | `[~]` fingerprint helper `[?]`; re-run check on runs M5.4.2 |
+| 5.9 QC | Re-run gives identical numbers | M5.4 | — | — | `[?]` fingerprint helper (M5.4.1) and re-run identity check (M5.4.2) built, needs review |
 
 ### §5.10 Interpretation and discussion
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
@@ -124,7 +124,7 @@
 | 5.11.5 | Ref-manager sync; CSL | M1.11, M6.5 | `POST …/sources/import`, `GET …/sources/export`, `GET …/zotero`, `POST …/zotero/pull` (G2-gated), `POST …/zotero/push` (verified only); `GET …/manuscript/export?format=md\|docx\|latex\|json\|bibtex` (CSL-style citations/references, `app/csl_styles.py`) | `test_refmanager*.py`, `test_zotero.py`, `test_csl_styles.py`, `test_manuscript_export.py` | M1.11 `[x]` (M1.11.1 `[x]`; M1.11.2, M1.11.3 `[x]` — P3 closures at user request 2026-10-10); M6.5 `[?]` (built 2026-10-18, needs review) |
 | 5.11.6 | **Abstract, keywords, highlights, cover letter**; statements (incl. per-manuscript AI-use statement) | M6.10 *(new)*, M6.5, M6.6 (built 2026-10-18); AI-use statement also covered by X.31.12 (`provenance_report.py`, design doc) | `GET/PUT /projects/{id}/manuscript/statements` (data availability, conflict of interest, ethics — M6.5; generated `ai_use_disclosure` — M6.6); `GET/PUT /projects/{id}/manuscript/credit/{member_id}` (CRediT roles — M6.6); abstract/keywords/highlights/cover letter not built | `test_manuscript_export.py`, `test_ai_disclosure.py`, `test_credit.py` | M6.5 statements `[?]` (built 2026-10-18, needs review); M6.6 `[~]` (built 2026-10-18, needs review); rest `[ ]` |
 | 5.11.7 | Similarity pre-check | M6.7; project-source similarity also covered by X.31.14 (`[?]`: API `POST/GET /projects/{id}/similarity-checks`; "Similarity" tab in the write step; tests `test_similarity.py`, `test_similarity_api.py`, `similarityLogic.test.mjs`), institutional integration point by X.31.15 (design doc) | — | — | `[ ]` |
-| 5.11 gate | **G10 approve each section + AI-involvement level** | M6.1, M6.11 *(new)* | — | — | `[ ]` |
+| 5.11 gate | **G10 approve each section + AI-involvement level** | M6.1, M6.11 | `POST/GET …/documents/{doc}/approve`, `GET …/documents/{doc}/approval` (freezes AI-share from a current section provenance report); `routers/gates.py::decide_gate` refuses G10 approval while any section is unapproved or the manuscript has no sections | `test_section_approval.py`, role-matrix rows | `[?]` (built 2026-10-19, needs review) |
 | 5.11 QC | Zero unresolved citations / orphan claims | M6.2 `[?]` (report only); M6.4 export block not built | `GET …/link-check` | `test_claim_linker.py`, `test_claim_link_check.py` | `[ ]` |
 
 ### §5.12 Revision
@@ -181,7 +181,7 @@
 | G7 | Before data collection | M4.5 | ″ | — | `[ ]` |
 | G8 | Before analysis | M5.3 | ″ | — | `[ ]` |
 | G9 | After analysis | M6.9 *(new)* | ″ | — | `[ ]` |
-| G10 | Per manuscript section | M6.11 *(new)* | ″ | — | `[ ]` |
+| G10 | Per manuscript section | M6.11 | ″; plus per-section `POST …/documents/{doc}/approve` | `test_section_approval.py` | `[?]` (built 2026-10-19, needs review) |
 | G11 | Before submission | M7.5 | ″ | — | `[ ]` |
 | all | Who may approve (role matrix) | M0.3.2, M0.3.4 | `project_access` role sets | `test_project_access.py`, `test_role_matrix.py` | `[x]` (human sign-off X.30 "Access control" area **approved 2026-10-09**) |
 | all | Gates decided in order; reopen before the stage is reached | M0.5.10, M0.5.11, M0.5.13 | `decide_gate` 409 with `waiting_for`; `POST …/gates/{code}/reopen` | `test_gate_reopen.py` | `[x]` (M0.5.10, M0.5.11, M0.5.13 all closed) |
@@ -216,7 +216,7 @@
 | Screening κ ≥ 0.8; false exclusion < 2% | M2.4.2, M2.9, X.15 | `[ ]` |
 | Extraction ≥ 90% on critical fields | X.5, X.15 | `[ ]` |
 | Citation verification 100% before export | M1.10, M6.4 | `[ ]` |
-| Analysis re-run diff = 0 | M5.4 | `[~]` helper built; live check waits on M5.3.3 |
+| Analysis re-run diff = 0 | M5.4 | `[?]` re-run identity check (M5.4.2) built, needs review |
 | **Scholar outcomes** (time saved, corrections per 100 AI outputs, readiness) | X.20 *(new)* | `[ ]` |
 
 ### §13 Acceptance criteria (project definition of done)

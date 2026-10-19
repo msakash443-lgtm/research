@@ -147,7 +147,7 @@ export function provenancePlugin({ actor, newSidFn = newSid }) {
     appendTransaction(transactions, oldState, newState) {
       if (!transactions.some((tr) => tr.docChanged)) return null;
       const aiInsert = transactions.map((tr) => tr.getMeta(AI_INSERT_META)).find(Boolean);
-      if (aiInsert) return markAiInserted(newState, insertedRanges(transactions, newState.doc), { actor, suggestionId: aiInsert.suggestionId, newSidFn });
+      if (aiInsert) return markAiInserted(newState, insertedRanges(transactions, newState.doc), { actor, suggestionId: aiInsert.suggestionId, origin: aiInsert.origin, newSidFn });
       if (transactions.some((tr) => tr.getMeta(PROVENANCE_META))) return null;
       const inserted = insertedRanges(transactions, newState.doc);
       return assignTypedProvenance(newState, oldState, actor, inserted, newSidFn);
@@ -155,14 +155,16 @@ export function provenancePlugin({ actor, newSidFn = newSid }) {
   });
 }
 
-// Labels inserted text as AI wording the researcher chose: origin ai_edited, tied to the accepted suggestion. The
-// server checks the tie (ai_text_without_accept, ai_text_mismatch), so an unaccepted or altered suggestion is refused.
-export function markAiInserted(newState, inserted, { actor, suggestionId, newSidFn = newSid }) {
+// Labels inserted text as AI wording the researcher chose: origin ai_edited by default, tied to the accepted
+// suggestion. A whole AI-drafted passage inserted at the cursor (not replacing a selection) passes origin
+// "ai_suggested" instead (X.46.8), the distinct origin `app/ledger.py`'s AI_ORIGINS already defines for that case.
+// The server checks the tie (ai_text_without_accept, ai_text_mismatch) the same way for both origins.
+export function markAiInserted(newState, inserted, { actor, suggestionId, origin = "ai_edited", newSidFn = newSid }) {
   if (inserted.length === 0) return null;
   const tr = newState.tr;
   for (const [from, to] of inserted) {
     tr.removeMark(from, to, PROV_TYPE);
-    tr.addMark(from, to, PROV_TYPE.create({ sid: newSidFn(), origin: "ai_edited", by: actor, sug: suggestionId, note: null, paste: null, src: null }));
+    tr.addMark(from, to, PROV_TYPE.create({ sid: newSidFn(), origin, by: actor, sug: suggestionId, note: null, paste: null, src: null }));
   }
   return tr;
 }

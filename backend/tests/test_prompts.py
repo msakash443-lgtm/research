@@ -25,6 +25,7 @@ PUBLISHED_CHECKSUMS = {
     "workspace_argument_check.v1.toml": "74da76d32ec0125e38de0857ed884ef71f42873f9cab48909000978bb735802e",
     "workspace_clearer_sentence.v1.toml": "8cee2698fdfabb1406a9605dc20ff1eef832f42aee65babe8113453478c75e45",
     "workspace_find_evidence.v1.toml": "ac78ecc5cad03ddd7e291e924c48a5726936f587afae6e7b1395a955634ade12",
+    "section_draft.v1.toml": "b6f71b13824d34588dafac6f31b0d44617e05935c2a38fd6e2e484b002b418d1",
 }
 
 

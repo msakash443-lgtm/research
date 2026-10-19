@@ -50,6 +50,15 @@ services:
       db:
         condition: service_healthy
 
+  # X.9 (optional): ARC sandbox image for co-located dev. Enabled only with `--profile arc`.
+  # This is the Dockerfile.generic sandbox (runs main.py, no HTTP server), not the retrieval service.
+  arc:
+    profiles: ["arc"]
+    build:
+      context: ${ARC_REPO_PATH:?set ARC_REPO_PATH in .env (see .env.example)}/researchclaw/docker
+      dockerfile: Dockerfile.generic
+    image: researchclaw/sandbox-generic:latest
+
 volumes:
   postgres_data:
   object_data:

@@ -16,7 +16,7 @@ from app.config import get_settings
 from app.database import get_db
 from app.lookups import live_source_or_404
 from app.dependencies import APPROVE_ROLES, MANAGE_ROLES, READ_ROLES, WRITE_ROLES, current_user, project_access, project_role
-from app.models import AiSuggestion, AutoExcludeAudit, Project, ProjectStage, ScreeningDecision, SeedCheckRun, Source, Task, TaskStatus, User
+from app.models import AiSuggestion, AutoExcludeAudit, Project, ProjectRole, ProjectStage, ScreeningDecision, SeedCheckRun, Source, Task, TaskStatus, User
 from app.task_handlers import SCREENING_PRESCREEN, SEED_FALSE_EXCLUSION_CHECK
 from app.task_queue import enqueue_task
 from app.screening import (
@@ -691,15 +691,17 @@ class AgreementScope(BaseModel):
 
 class AgreementRead(BaseModel):
     stage: str
-    n: int  # items compared (exactly two reviewers)
-    agreed: int
+    # Aggregate figures: owner only (owner decision 2026-10-19, M2.3.2/M2.3.3). A dual-screen reviewer or
+    # supervisor sees `null` here, never the project-wide kappa/counts.
+    n: int | None  # items compared (exactly two reviewers)
+    agreed: int | None
     percent_agreement: float | None
     kappa: float | None
     band: str | None
-    categories: list[str]
-    matrix: dict[str, dict[str, int]]
+    categories: list[str] | None
+    matrix: dict[str, dict[str, int]] | None
     note: str | None
-    scope: AgreementScope
+    scope: AgreementScope | None
     conflicts: list[ConflictItem]  # every source where the current reviewers don't all agree, oldest first
 
 
@@ -716,19 +718,30 @@ def get_agreement(
     reviewers (kappa is a two-rater statistic); a source with only one reviewer so far, or more than
     two (e.g. a project with two owners), isn't counted in kappa but a 3+-reviewer disagreement still
     shows in `conflicts`. Works whether or not dual-screen mode (M2.4.1) is on. In dual-screen mode a
-    conflict on a record is listed only to a caller who has decided that record too (M2.3.3).
+    conflict on a record is listed only to a caller who has decided that record too (M2.3.3). The
+    aggregate figures (`n`/`agreed`/`kappa`/`band`/`categories`/`matrix`/`scope`) are owner only (owner
+    decision 2026-10-19); everyone else gets `null` for those and only the (already blinded) `conflicts`.
     """
     if stage not in STAGES:
         raise HTTPException(status_code=422, detail=STAGE_MESSAGE)
+    role = project_role(db, project, user)
     # Blinding protects people who can still screen. Someone who cannot screen (a supervisor, a reviewer) is not
     # biased by seeing a conflict, and a supervisor needs to see it to rule on it (M2.4.3; owner decision 2026-10-12).
-    can_screen = project_role(db, project, user) in WRITE_ROLES
+    can_screen = role in WRITE_ROLES
+    is_owner = role == ProjectRole.owner
     result = stage_agreement(db, project, stage, viewer_decider=audit.user_actor(user) if can_screen else None)
     a = result.agreement
     return AgreementRead(
-        stage=stage, n=a.n, agreed=a.agreed, percent_agreement=a.percent_agreement,
-        kappa=a.kappa, band=a.band, categories=list(a.categories), matrix=a.matrix, note=a.note,
-        scope=AgreementScope(**result.scope),
+        stage=stage,
+        n=a.n if is_owner else None,
+        agreed=a.agreed if is_owner else None,
+        percent_agreement=a.percent_agreement if is_owner else None,
+        kappa=a.kappa if is_owner else None,
+        band=a.band if is_owner else None,
+        categories=list(a.categories) if is_owner else None,
+        matrix=a.matrix if is_owner else None,
+        note=a.note if is_owner else None,
+        scope=AgreementScope(**result.scope) if is_owner else None,
         conflicts=[
             ConflictItem(
                 source_id=c["source_id"], title=c["title"], decisions=[ReviewerDecisionRead(**d) for d in c["decisions"]],

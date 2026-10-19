@@ -1,6 +1,6 @@
 import { $, el, label, toast, saveOnce, formatDate } from "../dom.js";
 import { request, projectApi } from "../api.js";
-import { STAGES } from "../workflow.js";
+import { STAGES, stageLabel } from "../workflow.js";
 import { actorName } from "../provenance.js";
 import { gateCard } from "./common.js";
 
@@ -50,11 +50,12 @@ function stageTrack(ctx) {
   const stage = ctx.summary.stage?.stage;
   const currentIndex = STAGES.findIndex(([name]) => name === stage);
   const track = el("ol", { className: "stage-track", attrs: { "aria-label": "Workflow stages" } });
-  STAGES.forEach(([name, gate], index) => {
+  STAGES.forEach((entry, index) => {
+    const [, gate] = entry;
     const kind = index < currentIndex ? "done" : index === currentIndex ? "current" : "upcoming";
     const item = el("li", { className: `stage-step ${kind}` });
     if (kind === "current") item.setAttribute("aria-current", "step");
-    item.append(el("span", { className: "stage-name", text: label(name) }));
+    item.append(el("span", { className: "stage-name", text: stageLabel(entry) }));
     if (gate) item.append(el("span", { className: "stage-gate", text: gate }));
     track.append(item);
   });
@@ -96,7 +97,7 @@ export function openReenterDialog(ctx) {
   const select = form.elements.stage;
   select.replaceChildren();
   const currentIndex = STAGES.findIndex(([name]) => name === ctx.summary.stage?.stage);
-  STAGES.slice(0, currentIndex + 1).forEach(([name]) => select.append(el("option", { text: label(name), attrs: { value: name } })));
+  STAGES.slice(0, currentIndex + 1).forEach((entry) => select.append(el("option", { text: stageLabel(entry), attrs: { value: entry[0] } })));
   select.value = ctx.summary.stage?.stage;
   form.onsubmit = (event) => {
     event.preventDefault();

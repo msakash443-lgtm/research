@@ -6,9 +6,10 @@ import logging
 import uuid
 from datetime import datetime
 
+from pydantic import ValidationError
 from sqlalchemy import select
 
-from app import audit
+from app import audit, own_paper
 from app.agent.executor import execute_research_run
 from app.ai_extraction import AiExtractionError, run_ai_extraction
 from app import extraction_suggestions  # noqa: F401  (registers the extraction suggestion handler)
@@ -18,11 +19,12 @@ from app.connectors.factory import (
     build_core_oa, build_openalex_oa, build_unpaywall, enabled_lookup_names, oa_source_enabled, unpaywall_unavailable_reason,
 )
 from app.connector_breaker_store import build_connector
-from app.models import GateCode, Project, ResearchRun, ResearchRunStatus, SearchAlert, SearchQuery, SnowballRun, Source, utcnow
+from app.models import GateCode, OwnPaperLookup, Project, ResearchRun, ResearchRunStatus, SearchAlert, SearchQuery, SnowballRun, Source, utcnow
 from app.agent.llm import LLMConfigurationError, LLMResponseError, OpenAICompatibleLLM
 from app.ai_controls import AIOffError, ensure_embeddings_allowed, llm_for_project
 from app.llm_usage import ProjectMeter
 from app.config import get_settings
+from app.own_paper_lookup import record_to_source_fields, resolve_by_doi, resolve_by_title
 from app.prescreen import PrescreenError, run_prescreen
 from app.agent.embeddings import OpenAICompatibleEmbeddings
 from app.models import ClusterRun, SeedCheckRun
@@ -34,12 +36,14 @@ from app.safe_fetch import FetchRefused, fetch_pdf
 from app.search_query import BooleanQuery, QueryError
 from app.source_verification import verify_source
 from app.search_runner import SearchError, SearchFailed, rerun_search, run_search
+from app.schemas import SourceCreate
 from app.screening import screening_locked
 from app.snowball import SnowballError, SnowballFailed, run_snowball
 from app.query_alerts import QUERY_ALERT, _aware, latest_search, record_alert_run
 from app.zotero import ZoteroError, build_zotero_client, sync_pull, sync_push
 from app.task_registry import ClaimedTask, PermanentTaskError, TaskOwnershipLost, register
 from app.similarity_task import run_similarity_check
+from app.section_draft_task import run_section_draft, scrub_draft_payload
 from app.workspace_ai_task import run_workspace_ai_action, scrub_action_payload
 
 logger = logging.getLogger(__name__)
@@ -55,6 +59,8 @@ AI_EXTRACTION = "ai_extraction"
 SNOWBALL_RUN = "snowball_run"
 SEED_FALSE_EXCLUSION_CHECK = "seed_false_exclusion_check"
 SIMILARITY_CHECK = "similarity_check"
+OWN_PAPER_LOOKUP = "own_paper_lookup"
+SECTION_DRAFT = "section_draft"
 
 
 def _research_run_abandoned(task: ClaimedTask) -> None:
@@ -516,7 +522,115 @@ def handle_workspace_ai_action(task: ClaimedTask) -> None:
     run_workspace_ai_action(task.payload or {})
 
 
+@register(SECTION_DRAFT, scrub_payload=scrub_draft_payload)
+def handle_section_draft(task: ClaimedTask) -> None:
+    """Draft one section's opening prose from its bound claims (X.46.8 / M6.1.a). No gate: it only proposes a
+    suggestion; a person must accept it and press Insert before anything reaches the document (Q27)."""
+    run_section_draft(task.payload or {})
+
+
 @register(SIMILARITY_CHECK)
 def handle_similarity_check(task: ClaimedTask) -> None:
     """One similarity check of a saved section version against the project's sources (X.31.14). No gate: nothing leaves the server."""
     run_similarity_check(task.payload or {})
+
+
+def _own_paper_lookup_write_terminal(db, project_id: uuid.UUID, payload: dict, task_id: uuid.UUID, *, status: str, reason: str, detail: str) -> None:
+    """Record a terminal own-paper lookup outcome that is not `included`: `not_found` (every enabled
+    connector cleanly answered "no match") or `failed` (refused outright: locked, misconfigured, a
+    duplicate once resolved, or bad matched metadata). Separate from `had_error` retries, which leave
+    no row so the next attempt can still resolve it."""
+    row = OwnPaperLookup(
+        project_id=project_id, task_id=task_id, doi=payload.get("doi"), title=payload.get("title"),
+        status=status, requested_by=str(payload.get("actor") or audit.SYSTEM_WORKER), detail=detail,
+    )
+    db.add(row)
+    audit.record(
+        db, actor=audit.SYSTEM_WORKER, action=f"source.own_paper_lookup_{status}", project_id=project_id,
+        payload={"task_id": str(task_id), "reason": reason},
+    )
+
+
+@register(OWN_PAPER_LOOKUP)
+def handle_own_paper_lookup(task: ClaimedTask) -> None:
+    """Resolve a queued DOI-only/title-only own-paper lookup (M2.14.1) through the enabled lookup
+    connectors, then include it the same way `POST .../sources/own` does (`app/own_paper.py`).
+
+    No gate: adding one's own paper is never blocked by G2 (it is not a database search), only by G3
+    being approved (checked here, since it may have been approved after this task was queued). Writes
+    one `OwnPaperLookup` row with a terminal status; a transient connector failure raises instead, so
+    the queue retries with backoff, and no row is written until there is a real outcome to report.
+    """
+    payload = task.payload or {}
+    try:
+        project_id = uuid.UUID(str(payload["project_id"]))
+    except (KeyError, ValueError, TypeError) as exc:
+        raise PermanentTaskError("An own_paper_lookup task needs a project_id.") from exc
+    doi, title = payload.get("doi"), payload.get("title")
+    if bool(doi) == bool(title):
+        raise PermanentTaskError("An own_paper_lookup task needs exactly one of doi or title.")
+
+    db = SessionLocal()
+    try:
+        if db.scalar(select(OwnPaperLookup.id).where(OwnPaperLookup.task_id == task.id)) is not None:
+            return  # an earlier attempt already wrote the outcome; never write it twice
+        project = db.get(Project, project_id)
+        if project is None:
+            raise PermanentTaskError("The project for this lookup no longer exists.")
+        if screening_locked(db, project):
+            _own_paper_lookup_write_terminal(db, project.id, payload, task.id, status="failed", reason="screening_locked", detail=own_paper.LOCKED_MESSAGE)
+            task.ensure_owned(db)
+            db.commit()
+            return
+        names = enabled_lookup_names()
+        if not names:
+            _own_paper_lookup_write_terminal(
+                db, project.id, payload, task.id, status="failed", reason="no_connector",
+                detail="No lookup connector (crossref, semantic_scholar, openalex) is enabled on this server.",
+            )
+            task.ensure_owned(db)
+            db.commit()
+            raise PermanentTaskError("No lookup connector is enabled; the lookup cannot be retried until one is.")
+        connectors = [build_connector(n) for n in names]
+        result = resolve_by_doi(doi, connectors) if doi else resolve_by_title(title, connectors)
+        if result.record is None:
+            if result.had_error:
+                raise ConnectorError("Every enabled lookup connector failed for this request; retrying.")
+            _own_paper_lookup_write_terminal(
+                db, project.id, payload, task.id, status="not_found", reason="not_found",
+                detail="No enabled lookup connector has a matching record for this " + ("DOI." if doi else "title."),
+            )
+            task.ensure_owned(db)
+            db.commit()
+            return
+        if result.record.doi and db.scalar(
+            select(Source.id).where(Source.project_id == project.id, Source.doi == result.record.doi, Source.merged_into.is_(None))
+        ):
+            _own_paper_lookup_write_terminal(db, project.id, payload, task.id, status="failed", reason="duplicate_doi", detail="This DOI is already in the project.")
+            task.ensure_owned(db)
+            db.commit()
+            return
+        try:
+            item = SourceCreate(**record_to_source_fields(result.record))
+        except (ValidationError, ValueError) as exc:
+            _own_paper_lookup_write_terminal(db, project.id, payload, task.id, status="failed", reason="bad_metadata", detail=f"The matched record's metadata was invalid: {exc}")
+            task.ensure_owned(db)
+            db.commit()
+            return
+        actor = str(payload.get("actor") or audit.SYSTEM_WORKER)
+        source = own_paper.create_own_paper_source(
+            db, project=project, actor=actor, item=item, note=f"added by researcher; resolved via {result.connector}",
+        )
+        row = OwnPaperLookup(
+            project_id=project.id, task_id=task.id, doi=doi, title=title, status="included",
+            source_id=source.id, matched_connector=result.connector, requested_by=actor,
+        )
+        db.add(row)
+        audit.record(
+            db, actor=actor, action="source.own_paper_lookup_resolved", project_id=project.id,
+            payload={"task_id": str(task.id), "source_id": str(source.id), "connector": result.connector},
+        )
+        task.ensure_owned(db)
+        db.commit()
+    finally:
+        db.close()

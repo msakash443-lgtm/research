@@ -18,14 +18,18 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import audit, ledger, manuscript_guard, provenance_store, suggestions
+from app import audit, ledger, manuscript_guard, number_citation, provenance_store, section_approval, section_draft_task, suggestions
 from app.database import get_db
 from app.lookups import project_document_or_404
 from app.similarity_task import latest_version
-from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_access
+from app.task_handlers import SECTION_DRAFT
+from app.task_queue import enqueue_task
+from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_access, project_role
+from app.gates import GateCode, required_roles
 from app.models import (
     AiSuggestion,
     AnalysisRun,
+    ArtifactStatus,
     AuthorshipEvent,
     AuthorshipKind,
     Claim,
@@ -33,6 +37,7 @@ from app.models import (
     DocumentVersion,
     Note,
     Project,
+    SectionApproval,
     Source,
     SourceExcerpt,
     SpanOrigin,
@@ -95,6 +100,13 @@ class DocumentRead(BaseModel):
     created_by: str
     created_at: datetime
     updated_at: datetime
+
+
+class NumberOption(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    analysis_run_id: str
+    path: str
+    value: float
 
 
 class VersionSave(BaseModel):
@@ -313,6 +325,7 @@ def _store(
         ))
     document.current_version_id = version.id
     provenance_store.mark_covering_reports_stale(db, project.id, document.id)
+    section_approval.mark_stale(db, project.id, document.id)
 
     detected = [
         DetectedSource(span_id=sid, source_id=cid if kind == "source" else None, document_id=cid if kind == "document" else None)
@@ -355,6 +368,19 @@ def create_document(
     db.commit()
     db.refresh(document)
     return document
+
+
+@router.get("/numbers", response_model=list[NumberOption])
+def list_insertable_numbers(project: Project = Depends(project_access(READ_ROLES)), db: Session = Depends(get_db)):
+    """Every real number in this project's analysis-run outputs, flattened to the dot-paths a `stat` node can name
+    (M6.3.1): what the Write step's number panel offers to insert. A static path, so it must stay registered before
+    `GET /{document_id}` below or it would be swallowed as a (non-UUID) document id."""
+    outputs = _number_run_outputs(db, project)
+    return [
+        {"analysis_run_id": run_id, "path": path, "value": value}
+        for run_id, output in outputs.items()
+        for path, value in number_citation.flatten_numbers(output)
+    ]
 
 
 @router.patch("/{document_id}", response_model=DocumentRead)
@@ -521,6 +547,40 @@ def section_outline(document_id: uuid.UUID, project: Project = Depends(project_a
                          evidence_count=len(claim.evidence)) for claim in claims]
 
 
+class DraftSuggestionQueued(BaseModel):
+    task_id: uuid.UUID
+    status: str
+
+
+@router.post("/{document_id}/draft-suggestion", status_code=status.HTTP_202_ACCEPTED, response_model=DraftSuggestionQueued)
+def request_section_draft(
+    document_id: uuid.UUID,
+    project: Project = Depends(project_access(WRITE_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Queue an LLM draft of this section's opening prose from its bound claim outline (X.46.8 / M6.1.a). Refused
+    before queueing if the project's AI is off or the section is marked 'never send to AI'. Per Q27 the result is
+    always a suggestion under the shared `/suggestions` endpoints: nothing is written to the section unless a
+    person accepts it and presses Insert."""
+    try:
+        section_draft_task.check_draft_request(db, project, document_id)
+    except section_draft_task.Refused as exc:
+        raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
+    actor = audit.user_actor(user)
+    task = enqueue_task(
+        db, project.id, SECTION_DRAFT,
+        payload={"project_id": str(project.id), "document_id": str(document_id), "actor": actor},
+        actor=actor,
+    )
+    audit.record(
+        db, actor=actor, action="ai.requested", project_id=project.id,
+        payload={"task_id": str(task.id), "action": "draft", "target_kind": AI_TARGET_KIND, "target_id": str(document_id)},
+    )
+    db.commit()
+    return DraftSuggestionQueued(task_id=task.id, status=task.status.value)
+
+
 class LinkFinding(BaseModel):
     kind: str
     subject: str
@@ -561,3 +621,80 @@ def section_link_check(document_id: uuid.UUID, project: Project = Depends(projec
         cited_source_ids=report.cited_source_ids, reference_source_ids=report.reference_source_ids,
         orphan_claim_ids=report.orphan_claim_ids,
     )
+
+
+class SectionApprovalCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    note: str | None = None
+
+
+class SectionApprovalRead(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    document_id: uuid.UUID
+    version_id: uuid.UUID
+    version_number: int
+    report_id: uuid.UUID
+    ai_share_pct: float
+    ai_shares: dict[str, float]
+    approved_by: str
+    note: str | None
+    created_at: datetime
+    stale: bool
+    stale_reason: str | None
+
+
+def _approval_read(db: Session, row: SectionApproval) -> SectionApprovalRead:
+    artifact = section_approval.artifact_for(db, row)
+    stale = artifact is None or artifact.status == ArtifactStatus.stale
+    return SectionApprovalRead(
+        id=row.id, project_id=row.project_id, document_id=row.document_id, version_id=row.version_id,
+        version_number=row.version_number, report_id=row.report_id, ai_share_pct=row.ai_share_pct,
+        ai_shares=row.ai_shares, approved_by=row.approved_by, note=row.note, created_at=row.created_at,
+        stale=stale, stale_reason=artifact.stale_reason if artifact is not None else None,
+    )
+
+
+@router.post("/{document_id}/approve", response_model=SectionApprovalRead, status_code=status.HTTP_201_CREATED)
+def approve_section(
+    document_id: uuid.UUID,
+    payload: SectionApprovalCreate | None = None,
+    project: Project = Depends(project_access(READ_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Approve this section's current saved text and freeze its AI-involvement level (G10, spec 5.11).
+
+    Only an owner or supervisor (G10's required role) may approve. The section needs a current, non-stale
+    section provenance report (`POST .../provenance-reports`, scope `section`) covering its current saved
+    version first: the AI-involvement numbers are copied from that report, never computed here."""
+    document = project_document_or_404(db, project, document_id)
+    role = project_role(db, project, user)
+    if role not in required_roles(GateCode.G10):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Approving a section needs an owner or supervisor role")
+    if document.current_version_id is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="Save this section before approving it")
+    try:
+        row = section_approval.approve(db, project, document, user=user, note=payload.note if payload else None)
+    except section_approval.NoCurrentReport:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "no_current_report",
+                "message": "Generate a provenance report for this section's current version before approving",
+            },
+        ) from None
+    db.commit()
+    return _approval_read(db, row)
+
+
+@router.get("/{document_id}/approval", response_model=SectionApprovalRead | None)
+def section_approval_status(
+    document_id: uuid.UUID,
+    project: Project = Depends(project_access(READ_ROLES)),
+    db: Session = Depends(get_db),
+):
+    """This section's current approval (G10), or null if it has none or its approval has gone stale."""
+    document = project_document_or_404(db, project, document_id)
+    row = section_approval.current_approval(db, document)
+    return _approval_read(db, row) if row is not None else None

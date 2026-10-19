@@ -54,3 +54,12 @@ export function pastedLines(items) {
     source: item.source_id ? `source ${item.source_id}` : "no source linked",
   }));
 }
+
+// The "all sections" report defaults to covering every section (section_ids omitted, same request the server has
+// always accepted). Unchecking a section in the picker scopes the next report to just what is still checked. All
+// checked collapses back to "no filter" so an untouched picker never changes the request's shape.
+export function sectionFilterPayload(allSectionIds, checkedIds) {
+  const checked = new Set(checkedIds);
+  if (allSectionIds.length === 0 || allSectionIds.every((id) => checked.has(id))) return null;
+  return allSectionIds.filter((id) => checked.has(id));
+}

@@ -29,6 +29,19 @@ export function gateCard(ctx, code) {
   }
   if (gate.can_decide && gate.status !== "approved") {
     const approve = el("button", { text: "Approve" });
+    // G7 on a research type with no human participants (X.43.8, decision 5): approval needs an explicit
+    // confirmation instead of a full ethics pack, so the button stays disabled until it is checked.
+    const needsConfirm = gate.code === "G7" && ctx.summary.stage?.human_participants === false;
+    if (needsConfirm) {
+      const confirmLabel = el("label", { className: "checkbox-label" });
+      const checkbox = el("input", { attrs: { type: "checkbox" } });
+      confirmLabel.append(checkbox, document.createTextNode(" Confirm: this study has no human participants"));
+      row.append(confirmLabel);
+      approve.disabled = true;
+      checkbox.addEventListener("change", () => {
+        approve.disabled = !checkbox.checked;
+      });
+    }
     approve.addEventListener("click", async () => {
       const ok = await confirmAction(
         `Approve ${gate.code} (${GATE_NAMES[gate.code]})?`,
@@ -38,11 +51,11 @@ export function gateCard(ctx, code) {
       if (!ok) return;
       approve.disabled = true;
       try {
-        await request(projectApi(ctx.project.id, `/gates/${gate.code}/approve`), { method: "POST", body: "{}" });
+        const body = needsConfirm ? { confirm_no_human_participants: true } : {};
+        await request(projectApi(ctx.project.id, `/gates/${gate.code}/approve`), { method: "POST", body: JSON.stringify(body) });
         await ctx.refresh();
       } catch (error) {
         toast(error.message);
-      } finally {
         approve.disabled = false;
       }
     });

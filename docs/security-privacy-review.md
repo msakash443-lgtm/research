@@ -14,7 +14,7 @@ owner are Q23 and Q24 in `plan.md` §4.
 | Encryption at rest | Not handled by the app | Depends entirely on hosting; nothing states or checks it |
 | Secrets | Env vars, `SecretStr`, never logged | No vault; dev compose exposes Postgres with a default password |
 | Access control | Strong (per-request role checks, role-matrix test) | Sessions can't be revoked server-side |
-| Retention / erasure | Absent | No project or account deletion, no retention periods; audit log is append-only by design |
+| Retention / erasure | Partly built | Account pseudonymisation + unfiled-note scrub + configurable (opt-in) run-snapshot purge exist; no project/file deletion yet, audit log retention still undone (append-only by design) |
 | GDPR/DPDP configurability | Absent | No policy settings; third-party processors not listed |
 
 No finding is exploitable without a misconfigured or stolen credential, but the retention/erasure gap
@@ -109,19 +109,34 @@ hardening.
   retention period for anything.** Only members and seeds have DELETE routes. Object storage is
   write-once with no delete (deliberately, pending a retention decision — M0.10.2). Research runs keep
   their full `input_snapshot` (`models.py:472`) indefinitely.
+  *Status 2026-10-19 (X.4.7.4):* a run-snapshot retention period is now configurable
+  (`RESEARCH_RUN_SNAPSHOT_RETENTION_DAYS`, `app/retention.py`, applied by the worker). Default is still
+  unset/indefinite — nothing purges until the owner sets a real period. Audit-note retention remains
+  undone: `audit_events` is append-only at the DB-trigger level (`app/audit_guard.py`), so no row can be
+  redacted in place; a compliant purge needs a separate design (e.g. a retained, re-attributed summary
+  written outside the ordinary append-only path), not a setting that silently does nothing.
 - **5b (High, decision) Erasure conflicts with the immutable audit log.** `audit_events` is append-only
   (triggers) and records actors by user id plus free-text notes and reasons that may contain personal
   data. GDPR Art. 17 / DPDP s.12 erasure therefore needs a defined approach. The usual one, which keeps
   research integrity: pseudonymise the person (blank email/name on `users`, keep the UUID so the audit
   trail stays intact) and state that audit notes are retained under the research-integrity exemption
-  for a fixed period. That is a policy choice for the owner/university. → **Q23**, then **X.4.7**.
-  *Status 2026-10-14 (X.4.7.1, built on a provisional Q23 basis; the DPO has not answered):* a signed-in
-  person can pseudonymise their own account (`POST /api/auth/erase-account`, typing their email to
-  confirm). The email becomes `erased-<id>@erased.invalid`, the name and Google identity links are removed,
-  all sessions end, and the account can never sign in again; the user id and every audit row are kept.
-  Refused while the person is the only owner of a project that has other members. Not yet covered: audit
-  notes/reasons are not rewritten (append-only) and have no retention period yet (X.4.7.4); private notes
-  and AI-suggestion text of the person remain (X.4.7.5); project and file deletion are X.4.7.2/.3.
+  for a fixed period. That was a policy choice for the owner/university. → **Q23**, then **X.4.7**.
+  *Status 2026-10-19: Q23 answered (owner via chat, no DPO review — she signs off alone).* The
+  pseudonymise-and-keep-audit-trail build is no longer provisional.
+  *Status 2026-10-14 (X.4.7.1):* a signed-in person can pseudonymise their own account
+  (`POST /api/auth/erase-account`, typing their email to confirm). The email becomes
+  `erased-<id>@erased.invalid`, the name and Google identity links are removed, all sessions end, and
+  the account can never sign in again; the user id and every audit row are kept. Refused while the
+  person is the only owner of a project that has other members.
+  *Status 2026-10-19 (X.4.7.5):* the person's private, never-filed notes are now scrubbed on erasure
+  too (`app/erasure.py::_scrub_unfiled_notes`): current body/quoted text/source URL blanked, attachments
+  deleted from storage, a final blank revision recorded — older `NoteRevision` rows keep their text
+  because `note_revisions` is append-only like the audit log (`app/note_guard.py`), so literal deletion
+  of a note is not possible. No AI-suggestion text leftover exists to scrub: `AiSuggestion.project_id`
+  is `NOT NULL` and `workspace_ai_task.check_request` refuses a note whose `project_id` doesn't match
+  the project, so an unfiled note can never carry one. An admin-initiated erasure path remains out of
+  scope — there is no platform-admin role today. Audit notes/reasons are still not rewritten
+  (append-only, see 5a); project and file deletion are X.4.7.2/.3.
 - **5c (Medium) No data export for a person** (access/portability request). The per-project audit
   export exists, but nothing gathers what the platform holds about one user. → **X.4.8**.
 

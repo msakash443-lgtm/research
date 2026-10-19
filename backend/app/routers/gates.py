@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from app import audit, exit_conditions, prisma
+from app import audit, exit_conditions, prisma, section_approval
 from app.database import get_db
 from app.extraction_verification import g4_problem
 from app.dependencies import READ_ROLES, current_user, project_access, project_role
@@ -13,14 +13,18 @@ from app.gates import (
     GATE_STAGES, approved_later_gates, ensure_gates, pending_earlier_gates, reblock_tasks_for_gate, release_tasks_for_gate,
     required_roles,
 )
-from app.models import AnalysisPlan, Gate, GateCode, GateStatus, MetaAnalysisPlan, Project, ProjectRole, User, utcnow
+from app.models import AnalysisPlan, Document, Gate, GateCode, GateStatus, MetaAnalysisPlan, Project, ProjectRole, User, utcnow
 from app.stage_order import StageNotInChain, require_stage
 from app.schemas import GateDecision, GateRead, GateReopen
 
 router = APIRouter(prefix="/projects/{project_id}/gates", tags=["gates"])
 
-# The gate row for G3/G4 approval itself is excluded from the Required check below: it is unmet until this approval.
-_OWN_GATE_ROW = {GateCode.G3: "EC-4.1", GateCode.G4: "EC-5.1"}
+# The gate row for G3/G4/G6/G9 approval itself is excluded from the Required check below: it is unmet
+# until this approval. For G6 this makes EC-8.2 (research question linked to a selected gap, M4.8) and
+# EC-8.3 (conceptual-model path with construct-measure alignment, M4.8) real blockers on approving G6, not
+# just on advancing past it. For G9 this makes EC-12.2 (analysis runs post-date G8) and EC-12.3
+# (findings-to-literature map confirmed by a person, M6.9) real blockers on approving G9, likewise.
+_OWN_GATE_ROW = {GateCode.G3: "EC-4.1", GateCode.G4: "EC-5.1", GateCode.G6: "EC-8.1", GateCode.G9: "EC-12.1"}
 
 
 def has_locked_analysis_plan(db: Session, project_id) -> bool:
@@ -79,7 +83,8 @@ def list_gates(
 
 
 def decide_gate(
-    db: Session, project: Project, user: User, code: GateCode, outcome: GateStatus, note: str | None
+    db: Session, project: Project, user: User, code: GateCode, outcome: GateStatus, note: str | None,
+    confirm_no_human_participants: bool = False,
 ) -> GateRead:
     """Record a person's decision on a gate.
 
@@ -118,6 +123,17 @@ def decide_gate(
         )
     if outcome == GateStatus.rejected and not note:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Rejecting a gate needs a note explaining why")
+    if code == GateCode.G7 and outcome == GateStatus.approved:
+        from app.research_types import human_participants  # local: research_types imports GATE_STAGES from this module's sibling
+
+        if not human_participants(project):
+            if not confirm_no_human_participants:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="This research type has no human participants. Approving G7 needs an explicit "
+                    "'no human participants' confirmation instead of a full ethics pack.",
+                )
+            note = note or "No human participants in this study (confirmed at G7 approval)."
     if outcome == GateStatus.approved and code in _OWN_GATE_ROW:
         unmet = [
             c
@@ -152,6 +168,23 @@ def decide_gate(
             status_code=status.HTTP_409_CONFLICT,
             detail="Gate G8 cannot be approved until an analysis plan is locked. Create the plan and lock it first.",
         )
+    if code == GateCode.G10 and outcome == GateStatus.approved:
+        # M6.11, spec 5.11: a human gate per section; the project-wide gate needs every section approved.
+        sections = db.scalars(select(Document.id).where(Document.project_id == project.id)).all()
+        if not sections:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Gate G10 cannot be approved until the manuscript has at least one section",
+            )
+        unapproved = section_approval.unapproved_documents(db, project)
+        if unapproved:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "message": f"Gate G10 cannot be approved while {len(unapproved)} section(s) are unapproved",
+                    "documents": [{"document_id": str(u.document_id), "title": u.title, "reason": u.reason} for u in unapproved],
+                },
+            )
 
     # Conditional write: another request may have approved this gate since we read it.
     # The WHERE clause is re-checked by the database at write time, so an approval can't be
@@ -170,7 +203,10 @@ def decide_gate(
         actor=audit.user_actor(user),
         action=f"gate.{outcome.value}",
         project_id=project.id,
-        payload={"gate": code.value, "role": role.value, "note": note},
+        payload={
+            "gate": code.value, "role": role.value, "note": note,
+            **({"no_human_participants_confirmed": True} if code == GateCode.G7 and confirm_no_human_participants else {}),
+        },
     )
     if outcome == GateStatus.approved:
         release_tasks_for_gate(db, project.id, code, audit.user_actor(user))
@@ -188,7 +224,11 @@ def approve_gate(
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    return decide_gate(db, project, user, code, GateStatus.approved, payload.note if payload else None)
+    return decide_gate(
+        db, project, user, code, GateStatus.approved,
+        payload.note if payload else None,
+        payload.confirm_no_human_participants if payload else False,
+    )
 
 
 @router.post("/{code}/reject", response_model=GateRead)

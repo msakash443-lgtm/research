@@ -7,9 +7,11 @@ import { AI_INSERT_META, PROVENANCE_META, newSid, provenancePlugin, resolvePaste
 import { aiLevel } from "../aiLevels.js";
 import { suggestionPanel } from "../suggestion.js";
 import { clearDraft, loadDraft, saveDraft } from "../editor/draft.js";
+import { planConflictResolution, textOf } from "../editor/conflictLogic.js";
 import { flagsFor, institutionalCheck, summaryLine } from "../similarityLogic.js";
 import { sourceFlagsPlugin, unlinkedRanges } from "../editor/sourceFlags.js";
 import { citableSources, citedIdsIn, pickerMatches, sourceLabel } from "../sourcePanelLogic.js";
+import { matchingNumbers, numberLabel, runLabel, statAttrs } from "../numberPanelLogic.js";
 import { renderReport } from "../provenanceReport.js";
 import { manuscriptExportItems } from "../manuscriptExportLogic.js";
 import { readOriginColors, writeOriginColors } from "../originColorsLogic.js";
@@ -125,6 +127,9 @@ async function openSection(root, ctx, section) {
   const status = el("p", { className: "write-status", attrs: { role: "status", "aria-live": "polite" } });
   const banner = el("div", { className: "write-banner", attrs: { role: "status" } });
   banner.hidden = true;
+  // Version-conflict compare view (X.31.16): shown when a save's base_number is behind the server's latest.
+  const conflictBanner = el("div", { className: "write-banner write-conflict-banner", attrs: { role: "status" } });
+  conflictBanner.hidden = true;
   const editorEl = el("div", { className: "write-editor" });
   const panelBody = el("div", { className: "write-panel-body" });
   const tabs = {
@@ -133,6 +138,7 @@ async function openSection(root, ctx, section) {
     assistant: el("button", { type: "button", className: "quiet-button write-tab", text: "Assistant", attrs: { role: "tab", "aria-selected": "false" } }),
     similarity: el("button", { type: "button", className: "quiet-button write-tab", text: "Similarity", attrs: { role: "tab", "aria-selected": "false" } }),
     sources: el("button", { type: "button", className: "quiet-button write-tab", text: "Sources", attrs: { role: "tab", "aria-selected": "false" } }),
+    numbers: el("button", { type: "button", className: "quiet-button write-tab", text: "Numbers", attrs: { role: "tab", "aria-selected": "false" } }),
     report: el("button", { type: "button", className: "quiet-button write-tab", text: "Report", attrs: { role: "tab", "aria-selected": "false" } }),
   };
   const focusButton = el("button", { type: "button", className: "quiet-button", text: "Focus mode", attrs: { "aria-pressed": "false" } });
@@ -144,9 +150,9 @@ async function openSection(root, ctx, section) {
   exportMenu.addEventListener("click", (event) => { if (event.target.closest("a")) exportMenu.open = false; });
   const toolbar = el("div", { className: "write-toolbar", attrs: { role: "toolbar", "aria-label": "Formatting" } });
   const layout = el("div", { className: "write-layout", children: [
-    el("div", { className: "write-main", children: [toolbar, status, banner, editorEl] }),
+    el("div", { className: "write-main", children: [toolbar, status, banner, conflictBanner, editorEl] }),
     el("aside", { className: "write-panel", attrs: { "aria-label": "Section record, versions and AI assistant" }, children: [
-      el("div", { className: "write-tabs", attrs: { role: "tablist" }, children: [tabs.record, tabs.versions, tabs.assistant, tabs.similarity, tabs.sources, tabs.report] }),
+      el("div", { className: "write-tabs", attrs: { role: "tablist" }, children: [tabs.record, tabs.versions, tabs.assistant, tabs.similarity, tabs.sources, tabs.numbers, tabs.report] }),
       panelBody,
     ] }),
   ] });
@@ -217,7 +223,12 @@ async function openSection(root, ctx, section) {
     } catch (error) {
       if (error.status === 409) {
         s.paused = true;
-        setStatus("Saved elsewhere: this section has a newer version. Reload the section to continue; your text stays in this browser.", true);
+        const theirsVersion = error.detail?.current;
+        if (theirsVersion) {
+          showConflict(content, theirsVersion);
+        } else {
+          setStatus("Saved elsewhere: this section has a newer version. Reload the section to continue; your text stays in this browser.", true);
+        }
       } else if (error.status === 422) {
         s.refusedSnapshot = snapshot;
         setStatus(`Not saved: ${error.message}. Fix it and keep writing, or see Record.`, true);
@@ -234,6 +245,62 @@ async function openSection(root, ctx, section) {
     const tr = s.view.state.tr.replaceWith(0, s.view.state.doc.content.size, newDoc.content).setMeta(PROVENANCE_META, "load");
     s.view.dispatch(tr);
     if (dirty) markDirty();
+  };
+
+  // Version-conflict compare view (X.31.16): the server's 409 `version_conflict` carries the current saved version
+  // (`theirsVersion`). `mineJson` is the content this browser tried and failed to save. Shows both in full, plain
+  // text, and lets the researcher choose instead of silently losing either side.
+  const showConflict = (mineJson, theirsVersion) => {
+    const mineText = textOf(mineJson);
+    const theirsText = textOf(theirsVersion.content_json);
+    const keepMine = el("button", { type: "button", text: "Keep mine" });
+    const keepTheirs = el("button", { type: "button", className: "quiet-button", text: "Keep theirs" });
+    const keepBoth = el("button", { type: "button", className: "quiet-button", text: "Keep both" });
+    conflictBanner.replaceChildren(
+      el("p", { text: `This section has a newer version (version ${theirsVersion.number}), saved elsewhere while you were writing. Compare the two and choose what to keep.` }),
+      el("div", { className: "write-conflict-compare", children: [
+        el("div", { className: "write-conflict-col", children: [el("h4", { text: "Your unsaved text" }), el("pre", { text: mineText || "(empty)" })] }),
+        el("div", { className: "write-conflict-col", children: [el("h4", { text: `Saved on the server · version ${theirsVersion.number}` }), el("pre", { text: theirsText || "(empty)" })] }),
+      ] }),
+      el("div", { className: "write-conflict-actions", children: [keepMine, keepTheirs, keepBoth] }),
+    );
+    conflictBanner.hidden = false;
+    setStatus("Saved elsewhere: this section has a newer version. Compare below and choose what to keep; your text stays in this browser until you decide.", true);
+    keepMine.addEventListener("click", () => resolveVersionConflict(mineJson, theirsVersion, "mine"));
+    keepTheirs.addEventListener("click", () => resolveVersionConflict(mineJson, theirsVersion, "theirs"));
+    keepBoth.addEventListener("click", () => resolveVersionConflict(mineJson, theirsVersion, "both"));
+  };
+
+  // Applies the researcher's keep-mine/keep-theirs/keep-both choice (`editor/conflictLogic.js`, reusing
+  // `offlineOutbox.js`'s generic `resolveConflict` from X.31.5 — the first real caller it gets). "theirs" shows the
+  // server's text and stops; "mine"/"both" put the resulting text in the editor and immediately retry the save
+  // against the server's new base_number.
+  const resolveVersionConflict = async (mineJson, theirsVersion, choice) => {
+    const plan = planConflictResolution(mineJson, theirsVersion.content_json, choice);
+    s.base = theirsVersion.number;
+    conflictBanner.hidden = true;
+    conflictBanner.replaceChildren();
+    if (plan.action === "drop") {
+      const theirsDoc = safeDoc(plan.content_json);
+      if (theirsDoc) replaceText(theirsDoc, { dirty: false });
+      s.latestId = theirsVersion.id;
+      s.latestText = theirsVersion.content_text;
+      s.paused = false;
+      s.dirty = false;
+      s.firstDirtyAt = 0;
+      await clearDraft(section.id);
+      setStatus(`Kept the saved version · version ${s.base}`);
+      renderPanel();
+      return;
+    }
+    if (choice === "both") {
+      const mergedDoc = safeDoc(plan.content_json);
+      if (mergedDoc) replaceText(mergedDoc, { dirty: true });
+    } else {
+      markDirty();
+    }
+    s.paused = false;
+    await save();
   };
 
   const tick = () => {
@@ -357,6 +424,7 @@ async function openSection(root, ctx, section) {
   tabs.assistant.addEventListener("click", () => setTab("assistant"));
   tabs.similarity.addEventListener("click", () => setTab("similarity"));
   tabs.sources.addEventListener("click", () => setTab("sources"));
+  tabs.numbers.addEventListener("click", () => setTab("numbers"));
   tabs.report.addEventListener("click", () => setTab("report"));
   layout.addEventListener("keydown", (event) => {
     if (event.altKey && event.key.toLowerCase() === "s") {
@@ -373,6 +441,7 @@ async function openSection(root, ctx, section) {
     if (s.tab === "versions") return renderVersions();
     if (s.tab === "similarity") return renderSimilarity();
     if (s.tab === "sources") return renderSources();
+    if (s.tab === "numbers") return renderNumbers();
     if (s.tab === "report") return renderReportTab();
     return renderAssistant();
   };
@@ -467,6 +536,58 @@ async function openSection(root, ctx, section) {
     }
     s.atPicker = false;
     tr = tr.replaceSelectionWith(schema.nodes.cite.create({ source_id: source.id }), false).scrollIntoView();
+    s.view.dispatch(tr);
+    s.view.focus();
+  }
+
+  // The Numbers tab (M6.3.1). Lists this project's AnalysisRun outputs, flattened to dot-paths (app/number_citation.py
+  // ::flatten_numbers, via GET .../documents/numbers), so a number is always chosen from a real computed value, never
+  // typed. "Insert" places a `stat` node at the cursor, the only way a number enters a section (app/ledger.py enforces
+  // this at save time: an unresolvable path is refused as `unresolved_number`).
+  async function renderNumbers() {
+    panelBody.replaceChildren(el("p", { className: "muted small", text: "Loading numbers…" }));
+    let options;
+    try {
+      options = await request(api("/numbers"));
+    } catch (error) {
+      panelBody.replaceChildren(el("p", { className: "small", text: error.message }));
+      return;
+    }
+    if (!s.view || s.tab !== "numbers") return;
+
+    const multipleRuns = new Set(options.map((o) => o.analysis_run_id)).size > 1;
+    const search = el("input", { attrs: { type: "search", "aria-label": "Search analysis numbers", placeholder: "Search numbers (e.g. age.mean)" } });
+    const list = el("ul", { className: "write-number-list" });
+    const fill = () => {
+      const matches = matchingNumbers(options, search.value);
+      list.replaceChildren(...(matches.length
+        ? matches.map((option) => el("li", { children: [
+          el("p", { className: "small", text: multipleRuns ? `${numberLabel(option)} (run ${runLabel(option.analysis_run_id)})` : numberLabel(option) }),
+          numberButton(option),
+        ] }))
+        : [el("li", { className: "muted small", text: options.length ? "No number matches." : "No analysis run outputs in this project yet." })]));
+    };
+    search.addEventListener("input", fill);
+    fill();
+
+    panelBody.replaceChildren(
+      el("h3", { text: "Numbers" }),
+      el("p", { className: "small", text: "Only numbers from this project's analysis runs can be inserted; typed digits are never verified." }),
+      search,
+      list,
+    );
+  }
+
+  function numberButton(option) {
+    const button = el("button", { type: "button", className: "quiet-button", text: "Insert" });
+    if (!ctx.canWrite) button.disabled = true;
+    button.addEventListener("click", () => insertStat(option));
+    return button;
+  }
+
+  function insertStat(option) {
+    if (!ctx.canWrite || !s.view) return;
+    const tr = s.view.state.tr.replaceSelectionWith(schema.nodes.stat.create(statAttrs(option)), false).scrollIntoView();
     s.view.dispatch(tr);
     s.view.focus();
   }
@@ -683,6 +804,13 @@ async function openSection(root, ctx, section) {
       return node;
     });
     const reasons = [...new Set(ASSISTANT_ACTIONS.map(reasonFor).filter(Boolean))];
+    const draftReason = () => {
+      if (!ctx.canWrite) return "Read only for your role.";
+      if (involvement === "off") return "AI is off for this project.";
+      return "";
+    };
+    const draftButton = el("button", { type: "button", className: "quiet-button", text: "Draft this section from its claims", attrs: draftReason() ? { disabled: "disabled", title: draftReason() } : {} });
+    draftButton.addEventListener("click", requestDraft);
     const resultsEl = el("div", { className: "write-assistant-results" });
     s.resultsEl = resultsEl;
     panelBody.replaceChildren(
@@ -691,6 +819,9 @@ async function openSection(root, ctx, section) {
       el("p", { className: "muted small", text: selected ? `Selected: “${excerpt(selected, 120)}”` : "Select a sentence or passage in the section to use the assistant." }),
       el("div", { className: "write-assistant-actions", children: buttons }),
       reasons.length ? el("p", { className: "muted small", text: reasons.join(" ") }) : el("span"),
+      el("h4", { text: "Draft this section" }),
+      el("p", { className: "muted small", text: "Drafts a starting paragraph from this section's claim outline (X.46.8). It is a rough starting point, not finished wording: it appears below as a suggestion, and nothing is added to your text unless you accept it and press Insert." }),
+      el("div", { className: "write-assistant-actions", children: [draftButton] }),
       previewEl,
       el("h4", { text: "Proposals" }),
       el("p", { className: "muted small", text: "Proposals are not yours until you accept them. Nothing from them is added to your text unless you press Insert." }),
@@ -740,6 +871,19 @@ async function openSection(root, ctx, section) {
     pollResults();
   }
 
+  // Drafting (X.46.8 / M6.1.a): no text is selected, the input is the section's claim outline (app/section_draft.py).
+  async function requestDraft() {
+    const previewEl = panelBody.querySelector(".write-assistant-preview");
+    try {
+      await request(`${documentPath}/draft-suggestion`, { method: "POST" });
+    } catch (error) {
+      if (previewEl) previewEl.replaceChildren(el("p", { className: "small", text: error.message }));
+      return;
+    }
+    if (previewEl) previewEl.replaceChildren(el("p", { className: "small", text: "Asked for a draft. It will appear below as a suggestion when ready." }));
+    pollResults();
+  }
+
   // The task runs in the background, so the proposals are fetched again a few times after a request.
   function pollResults() {
     window.clearInterval(s.pollTimer);
@@ -764,10 +908,18 @@ async function openSection(root, ctx, section) {
   }
 
   function insertActions(suggestion) {
-    if (!ctx.canWrite || suggestion.action !== "clearer_sentence" || suggestion.state !== "accepted") return [];
-    const insert = el("button", { type: "button", className: "quiet-button", text: "Insert in place of selection" });
-    insert.addEventListener("click", () => insertAccepted(suggestion));
-    return [insert];
+    if (!ctx.canWrite || suggestion.state !== "accepted") return [];
+    if (suggestion.action === "clearer_sentence") {
+      const insert = el("button", { type: "button", className: "quiet-button", text: "Insert in place of selection" });
+      insert.addEventListener("click", () => insertAccepted(suggestion));
+      return [insert];
+    }
+    if (suggestion.action === "draft") {
+      const insert = el("button", { type: "button", className: "quiet-button", text: "Insert at cursor" });
+      insert.addEventListener("click", () => insertDraftAccepted(suggestion));
+      return [insert];
+    }
+    return [];
   }
 
   // Replaces the selected text with the accepted wording. The text is labelled ai_edited (editor/provenance.js) and
@@ -782,6 +934,20 @@ async function openSection(root, ctx, section) {
     s.view.dispatch(tr);
     s.view.focus();
     toast("Inserted. Saved automatically; the old wording stays in the previous version.");
+  }
+
+  // Inserts the accepted draft as a new paragraph at the cursor: there is no existing passage to replace. The text
+  // is labelled ai_suggested (editor/provenance.js), not ai_edited, because it is AI wording inserted whole, not an
+  // edit of the researcher's own words (Q27: the researcher must still choose to keep it, same as any suggestion).
+  function insertDraftAccepted(suggestion) {
+    const pos = s.view.state.selection.to;
+    const paragraph = schema.nodes.paragraph.create(null, schema.text(suggestion.accepted_text));
+    const tr = s.view.state.tr
+      .insert(pos, paragraph)
+      .setMeta(AI_INSERT_META, { suggestionId: suggestion.id, origin: "ai_suggested" });
+    s.view.dispatch(tr);
+    s.view.focus();
+    toast("Inserted as a new paragraph. Saved automatically.");
   }
 
   function historyButton(sid) {

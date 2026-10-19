@@ -113,3 +113,14 @@ def load_research_type(name: str) -> ResearchType:
 
 def available_research_types() -> list[str]:
     return sorted(path.stem for path in TYPE_DIR.glob("*.toml"))
+
+
+def human_participants(project) -> bool:
+    """Whether the project's own research type involves human participants (X.43.8, decision 5).
+
+    A project with no frozen snapshot yet (should not happen after the X.43.2 backfill, but
+    kept defensive like `stage_order.chain`) is treated as `full_journey`, which does.
+    """
+    if not getattr(project, "stage_plan_json", None):
+        return True
+    return ResearchType(**project.stage_plan_json).human_participants

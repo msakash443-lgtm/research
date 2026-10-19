@@ -24,7 +24,7 @@ class ResearchQuestionIn(BaseModel):
 
     text: str = Field(min_length=1, max_length=20_000)
     type: str = Field(min_length=1, max_length=30)
-    gap_ids: list[uuid.UUID] = Field(min_length=1, max_length=100)
+    gap_ids: list[uuid.UUID] = Field(default_factory=list, max_length=100)
 
     @field_validator("text", "type")
     @classmethod
@@ -39,7 +39,7 @@ class ResearchQuestionPatch(BaseModel):
 
     text: str | None = Field(default=None, min_length=1, max_length=20_000)
     type: str | None = Field(default=None, min_length=1, max_length=30)
-    gap_ids: list[uuid.UUID] | None = Field(default=None, min_length=1, max_length=100)
+    gap_ids: list[uuid.UUID] | None = Field(default=None, max_length=100)
 
     @field_validator("text", "type")
     @classmethod

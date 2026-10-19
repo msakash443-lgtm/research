@@ -22,7 +22,7 @@ from typing import Any
 
 from app.claim_linker import Finding
 
-__all__ = ["RunFacts", "NumberReport", "stat_refs_in_order", "resolve_number", "check_section"]
+__all__ = ["RunFacts", "NumberReport", "stat_refs_in_order", "resolve_number", "check_section", "flatten_numbers"]
 
 
 @dataclass(frozen=True)
@@ -81,6 +81,24 @@ def resolve_number(output: Any, path: str) -> int | float | None:
     if isinstance(node, bool) or not isinstance(node, (int, float)):
         return None
     return node
+
+
+def flatten_numbers(output: Any, prefix: str = "") -> list[tuple[str, int | float]]:
+    """Every (dot-path, value) pair reachable in `output` whose leaf is a real int/float (not bool) — the same set
+    of leaves `resolve_number` can resolve a path to. Dict keys and list indices walk in their stored order (M6.3.1:
+    what the Write step's number panel offers, so a listed path always resolves)."""
+    results: list[tuple[str, int | float]] = []
+    if isinstance(output, dict):
+        for key, value in output.items():
+            path = f"{prefix}.{key}" if prefix else str(key)
+            results.extend(flatten_numbers(value, path))
+    elif isinstance(output, list):
+        for index, value in enumerate(output):
+            path = f"{prefix}.{index}" if prefix else str(index)
+            results.extend(flatten_numbers(value, path))
+    elif isinstance(output, (int, float)) and not isinstance(output, bool):
+        results.append((prefix, output))
+    return results
 
 
 def check_section(content: dict[str, Any], runs: dict[str, RunFacts]) -> NumberReport:

@@ -18,3 +18,10 @@ venv/
 
 # Scratch pytest dirs (M3 work)
 .pytest-m3-*/
+.pytest-*/
+
+# Node dev dependencies (JS tests)
+node_modules/
+
+# Local notes objects (runtime data)
+/backend/data/objects/notes/

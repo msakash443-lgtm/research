@@ -15,7 +15,9 @@ import time
 from app.config import get_settings
 from app.database import SessionLocal
 from app.gates import release_tasks_for_approved_gates
+from app.models import utcnow
 from app.query_alerts import sweep_due_alerts
+from app.retention import purge_expired_run_snapshots
 from app.task_queue import reap_expired_tasks
 from app.task_runner import run_one_task
 
@@ -52,6 +54,23 @@ def sweep_due_query_alerts() -> int:
     finally:
         db.close()
 
+def sweep_run_snapshot_retention() -> int:
+    """Clear expired research-run input snapshots (X.4.7.4). No-op while the setting is unset."""
+    settings = get_settings()
+    if settings.research_run_snapshot_retention_days is None:
+        return 0
+    db = SessionLocal()
+    try:
+        cleared = purge_expired_run_snapshots(db, utcnow(), settings.research_run_snapshot_retention_days)
+        db.commit()
+        return cleared
+    except Exception:
+        db.rollback()
+        logger.exception("Unable to purge expired run snapshots")
+        return 0
+    finally:
+        db.close()
+
 
 def run_forever() -> None:
     settings = get_settings()
@@ -60,6 +79,7 @@ def run_forever() -> None:
         reap_expired_tasks()
         release_gated_tasks()
         sweep_due_query_alerts()
+        sweep_run_snapshot_retention()
         if not run_one_task():
             time.sleep(settings.research_worker_poll_seconds)
 

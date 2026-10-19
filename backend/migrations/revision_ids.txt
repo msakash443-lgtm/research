@@ -82,3 +82,8 @@
 20261018_0075 qual_suggestions
 20261018_0076 manuscript_statements
 20261018_0077 credit_roles
+20261019_0078 own_paper_lookups
+20261019_0079 qual_codes
+20261019_0080 robustness_checks
+20261019_0081 section_approvals
+20261019_0082 interpretation_findings

@@ -123,7 +123,18 @@ def test_the_export_is_audited_and_repeatable(world):
     assert "project.replication_exported" in {e["action"] for e in data(second, "audit_events")}  # the first export is in the second
 
 
-def test_a_reviewer_may_export_but_a_stranger_may_not(world):
+def test_only_the_owner_may_export_a_co_author_and_a_stranger_may_not(world):
+    """Owner decision 2026-10-19 (M2.3.2/M2.3.3): the replication package includes per-reviewer
+    screening decisions, so only the owner may download it."""
+    from app.models import ProjectMember, ProjectRole
+
+    co_author = _login(f"co-author-{uuid.uuid4().hex[:8]}@example.com")
+    me = co_author.get("/api/auth/me").json()["id"]
+    with SessionLocal() as db:
+        db.add(ProjectMember(project_id=uuid.UUID(world["pid"]), user_id=uuid.UUID(me), role=ProjectRole.co_author))
+        db.commit()
+    assert co_author.get(f"/api/projects/{world['pid']}/export/replication").status_code == 403
+
     stranger = _login(f"stranger-{uuid.uuid4().hex[:8]}@example.com")
     assert stranger.get(f"/api/projects/{world['pid']}/export/replication").status_code in (403, 404)
 

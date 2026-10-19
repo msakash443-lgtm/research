@@ -74,6 +74,29 @@ def test_question_requires_selected_project_gap_and_hypothesis_requires_project_
     }).status_code == 404
 
 
+def test_research_question_is_creatable_without_any_gap_link_when_no_gap_analysis_exists_yet(world):
+    client, project_id, _ = world
+    question = client.post(f"/api/projects/{project_id}/research-questions", json={
+        "text": "Researcher-written question with no prior gap analysis", "type": "descriptive", "gap_ids": [],
+    })
+    assert question.status_code == 201, question.text
+    assert question.json()["gap_ids"] == []
+
+    omitted = client.post(f"/api/projects/{project_id}/research-questions", json={
+        "text": "Researcher-written question, gap_ids omitted entirely", "type": "descriptive",
+    })
+    assert omitted.status_code == 201, omitted.text
+    assert omitted.json()["gap_ids"] == []
+
+    critique = client.get(f"/api/projects/{project_id}/research-questions/{question.json()['id']}/finer")
+    assert critique.json()["linked_gap_count"] == 0
+    assert critique.json()["items"][2]["status"] == "missing_gap_link"
+
+    unlink = client.patch(f"/api/projects/{project_id}/research-questions/{question.json()['id']}", json={"gap_ids": []})
+    assert unlink.status_code == 200
+    assert unlink.json()["gap_ids"] == []
+
+
 def test_required_draft_fields_reject_whitespace_only_values(world):
     client, project_id, gap_id = world
     assert client.post(f"/api/projects/{project_id}/research-questions", json={

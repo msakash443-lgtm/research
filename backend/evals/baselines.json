@@ -31,5 +31,9 @@
   "workspace_argument_check@1": {
     "eval": "none",
     "reason": "Side-panel argument-structure checks on the researcher's own passage. No gold set exists for this task; every reply is schema-checked and leak-checked in code."
+  },
+  "section_draft@1": {
+    "eval": "none",
+    "reason": "Section-drafting proposals from a claim outline (X.46.8/M6.1.a, Q27 suggestions-only). No gold dataset type exists for draft prose; every draft is a shared AiSuggestion the researcher must explicitly accept, and the reply is schema- and leak-checked in code before it is ever stored."
   }
 }

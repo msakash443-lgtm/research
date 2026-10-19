@@ -77,16 +77,12 @@ function renderConflicts(box, agreement, names, ruler) {
     box.append(el("p", { className: "muted small", text: `Not available: ${agreement.error}` }));
     return;
   }
-  const kappa = agreement.kappa == null ? "not defined yet" : agreement.kappa.toFixed(2);
-  box.append(
-    el("p", {
-      className: "muted small",
-      text:
-        agreement.n === 0
-          ? "No record has been decided by two reviewers yet, so there is no agreement figure."
-          : `Agreement on ${agreement.n} records two reviewers both decided: ${Math.round(agreement.percent_agreement * 100)}%, Cohen's kappa ${kappa}${agreement.band ? ` (${agreement.band})` : ""}.`,
-    })
-  );
+  const text = agreement.n == null
+    ? "Agreement figures (kappa, percent agreement) are visible to the project owner only."
+    : agreement.n === 0
+      ? "No record has been decided by two reviewers yet, so there is no agreement figure."
+      : `Agreement on ${agreement.n} records two reviewers both decided: ${Math.round(agreement.percent_agreement * 100)}%, Cohen's kappa ${agreement.kappa == null ? "not defined yet" : agreement.kappa.toFixed(2)}${agreement.band ? ` (${agreement.band})` : ""}.`;
+  box.append(el("p", { className: "muted small", text }));
   if (agreement.note) box.append(el("p", { className: "muted small", text: agreement.note }));
   if (!agreement.conflicts.length) {
     box.append(el("p", { text: "No disagreements." }));

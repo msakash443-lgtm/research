@@ -14,7 +14,8 @@ from app import artifacts as art
 from app.config import get_settings
 from app.database import SessionLocal
 from app.main import app
-from app.models import GateStatus, Project, ProjectStage, Task, TaskStatus
+from app.models import GateStatus, OwnPaperLookup, Project, ProjectStage, Task, TaskStatus
+
 
 STAGES = list(ProjectStage)
 PREFIX = "/api/projects/{project_id}"
@@ -61,7 +62,12 @@ def world():
     client = TestClient(app)
     client.post("/api/auth/development/login", json={"email": f"nolock-{tag}@example.com", "display_name": "N"})
     project_id = client.post("/api/projects", json={"title": "Never lock"}).json()["id"]
-    return client, project_id, uuid.UUID(project_id)
+    lookup_task_id = uuid.uuid4()  # a resolved own-paper lookup so GET .../sources/own/lookup?task_id= has something to read
+    with SessionLocal() as db:
+        db.add(OwnPaperLookup(project_id=uuid.UUID(project_id), task_id=lookup_task_id, status="not_found",
+                              detail="No enabled lookup connector has a matching record.", requested_by="n"))
+        db.commit()
+    return client, project_id, uuid.UUID(project_id), lookup_task_id
 
 
 def _at_stage_with_gates_pending(pid: uuid.UUID, stage: ProjectStage) -> None:
@@ -81,12 +87,12 @@ def test_the_route_table_yields_a_meaningful_set_of_read_endpoints():
 
 @pytest.mark.parametrize("stage", STAGES, ids=lambda s: s.value)
 def test_every_read_endpoint_works_at_every_stage_with_gates_pending(world, monkeypatch, stage):
-    client, project_id, pid = world
+    client, project_id, pid, lookup_task_id = world
     monkeypatch.setattr(get_settings(), "obsidian_export_enabled", True)  # a deployment flag, not a stage lock
     _at_stage_with_gates_pending(pid, stage)
     failures = []
     for pattern, rest in READ_PATHS:
-        query = REQUIRED_QUERY.get(pattern)
+        query = f"task_id={lookup_task_id}" if pattern == "/sources/own/lookup" else REQUIRED_QUERY.get(pattern)
         url = f"/api/projects/{project_id}{rest}" + (f"?{query}" if query else "")
         response = client.get(url)
         if response.status_code != 200:
@@ -96,7 +102,7 @@ def test_every_read_endpoint_works_at_every_stage_with_gates_pending(world, monk
 
 @pytest.mark.parametrize("stage", STAGES, ids=lambda s: s.value)
 def test_quick_capture_works_at_every_stage_with_gates_pending(world, stage):
-    client, project_id, pid = world
+    client, project_id, pid, _ = world
     _at_stage_with_gates_pending(pid, stage)
     response = client.post("/api/notes", json={"client_id": f"cap-{stage.value}", "body": "an idea at the bus stop"})
     assert response.status_code == 201, response.text
@@ -107,7 +113,7 @@ def test_quick_capture_works_at_every_stage_with_gates_pending(world, stage):
 
 @pytest.mark.parametrize("stage", STAGES[1:], ids=lambda s: s.value)
 def test_the_owner_can_always_go_back_with_gates_pending(world, stage):
-    client, project_id, pid = world
+    client, project_id, pid, _ = world
     _at_stage_with_gates_pending(pid, stage)
     response = client.post(
         f"/api/projects/{project_id}/stage/reenter", json={"stage": STAGES[0].value, "reason": "rethinking the question"}
@@ -118,7 +124,7 @@ def test_the_owner_can_always_go_back_with_gates_pending(world, stage):
 
 @pytest.mark.parametrize("stage", STAGES, ids=lambda s: s.value)
 def test_an_exploratory_ask_is_accepted_and_never_held_at_a_gate(world, fake_llm, stage):
-    client, project_id, pid = world
+    client, project_id, pid, _ = world
     _at_stage_with_gates_pending(pid, stage)
     response = client.post(
         f"/api/projects/{project_id}/research-runs", json={"question": "What is known about sleep and memory?"}

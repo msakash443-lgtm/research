@@ -15,7 +15,7 @@ from app.stage_order import StageNotInChain
 from app.config import get_settings
 from app.middleware import ContentLengthLimitMiddleware
 from app.routers import ai_locks, ai_settings, audit, provenance_reports, workspace_ai, auth, bibliometrics, claims, clusters, connectors, coverage, criteria, design_tools, evidence_matrix, exports, extraction_schemas, extractions, gates, guide, integrity, members, notes, documents, prisma, profile, projects, replication, research_runs, scholar_metrics, screening, searches, alerts, seeds, snowball, sources, stage, suggestions, usage, zotero
-from app.routers import analysis_plan, brief, conceptual_model, constructs, datasets, ethics_pack, gaps, idea_brief, instrument, meta_analysis, preregistration, qual_coding, research_questions, transcripts
+from app.routers import analysis_plan, brief, conceptual_model, constructs, datasets, ethics_pack, gaps, idea_brief, instrument, interpretation, meta_analysis, preregistration, qual_coding, research_questions, transcripts
 
 # Production settings (session secret, HTTPS, Postgres, ...) are validated in Settings.
 settings = get_settings()
@@ -123,6 +123,7 @@ app.include_router(workspace_ai.router, prefix="/api")
 app.include_router(alerts.router, prefix="/api")
 app.include_router(zotero.router, prefix="/api")
 app.include_router(scholar_metrics.router, prefix="/api")
+app.include_router(interpretation.router, prefix="/api")
 
 
 @app.middleware("http")

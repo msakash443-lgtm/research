@@ -417,3 +417,62 @@ def test_quoted_text_is_never_put_in_the_paragraph():
     assert refused.json()["detail"]["code"] == "note_has_no_text"
     assert kept.status_code == 200
     assert [p["content"][0]["text"] for p in kept.json()["content"]] == ["My reading of it."]
+
+
+# --- Version-conflict compare view (X.31.16): keep mine / keep theirs / keep both ----------------
+# When two browser tabs (or two people) save the same section from the same base version, the loser gets a 409
+# `version_conflict` with the server's current version (`routers/documents.py::_conflict`). The editor's compare
+# view offers three choices; each resolves through the same `POST .../versions` endpoint, just with a different
+# `base_number`/`content_json` (the decision itself is `editor/conflictLogic.js`, unit-tested there).
+
+
+def test_version_conflict_409_is_resolved_by_keeping_mine():
+    owner, owner_id, project_id, document_id = _setup("conflict-mine")
+    _save(owner, project_id, document_id, _doc(_para(_run("Saved from tab A.", "s-a", owner_id))), base=0)
+    mine = _doc(_para(_run("Written in tab B before it saw tab A's save.", "s-b", owner_id)))
+
+    conflict = _save(owner, project_id, document_id, mine, base=0)
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"]["code"] == "version_conflict"
+    current_number = conflict.json()["detail"]["current"]["number"]
+
+    resolved = _save(owner, project_id, document_id, mine, base=current_number)
+    assert resolved.status_code == 201, resolved.text
+    assert resolved.json()["version"]["content_text"] == "Written in tab B before it saw tab A's save."
+    assert _version_count(document_id) == 2
+
+
+def test_version_conflict_409_is_resolved_by_keeping_theirs():
+    owner, owner_id, project_id, document_id = _setup("conflict-theirs")
+    _save(owner, project_id, document_id, _doc(_para(_run("Saved from tab A.", "s-a", owner_id))), base=0)
+    mine = _doc(_para(_run("Written in tab B before it saw tab A's save.", "s-b", owner_id)))
+
+    conflict = _save(owner, project_id, document_id, mine, base=0)
+    assert conflict.status_code == 409
+    current = conflict.json()["detail"]["current"]
+
+    # Keeping theirs writes nothing new: the researcher just accepts the version already on the server.
+    assert current["content_text"] == "Saved from tab A."
+    assert _version_count(document_id) == 1
+
+
+def test_version_conflict_409_is_resolved_by_keeping_both():
+    owner, owner_id, project_id, document_id = _setup("conflict-both")
+    _save(owner, project_id, document_id, _doc(_para(_run("Saved from tab A.", "s-a", owner_id))), base=0)
+    mine = _doc(_para(_run("Written in tab B before it saw tab A's save.", "s-b", owner_id)))
+
+    conflict = _save(owner, project_id, document_id, mine, base=0)
+    current_number = conflict.json()["detail"]["current"]["number"]
+    current_text = conflict.json()["detail"]["current"]["content_text"]
+
+    merged = _doc(
+        _para(_run("Written in tab B before it saw tab A's save.", "s-merge-1", owner_id)),
+        _para(_run("[Server copy]", "s-merge-2", owner_id)),
+        _para(_run(current_text, "s-merge-3", owner_id)),
+    )
+    resolved = _save(owner, project_id, document_id, merged, base=current_number)
+    assert resolved.status_code == 201, resolved.text
+    merged_text = resolved.json()["version"]["content_text"]
+    assert "Written in tab B before it saw tab A's save." in merged_text
+    assert "Saved from tab A." in merged_text
+    assert _version_count(document_id) == 2

@@ -5,7 +5,8 @@ from sqlalchemy import select
 
 from app.database import SessionLocal
 from app.main import app
-from app.models import Gate, GateCode, GateStatus, Project, ProjectMember, ProjectRole, ProjectStage
+from app import research_types
+from app.models import AuditEvent, Gate, GateCode, GateStatus, Project, ProjectMember, ProjectRole, ProjectStage
 
 
 def _login(email: str):
@@ -79,3 +80,127 @@ def test_stage_response_exposes_the_project_snapshot_with_labels_and_gates():
     assert "plan_locked" not in names
     assert next(step for step in stages if step["stage"] == "design_approved")["gate"] == "G7"
     assert all("label" in step for step in stages)
+
+
+def test_stage_response_exposes_whether_the_project_has_human_participants():
+    world = _project()
+    assert world["owner"].get(f"/api/projects/{world['project']}/stage").json()["human_participants"] is True
+    assert world["owner"].put(f"/api/projects/{world['project']}/research-type", json={"name": "literature_review"}).status_code == 200
+    assert world["owner"].get(f"/api/projects/{world['project']}/stage").json()["human_participants"] is False
+    assert world["owner"].put(f"/api/projects/{world['project']}/research-type", json={"name": "qualitative"}).status_code == 200
+    assert world["owner"].get(f"/api/projects/{world['project']}/stage").json()["human_participants"] is True
+
+
+def _advance_to_g7(world, research_type: str):
+    """A project on `research_type`, with every gate before G7 in its own order approved, so G7 can be decided."""
+    assert world["owner"].put(f"/api/projects/{world['project']}/research-type", json={"name": research_type}).status_code == 200
+    earlier = research_types.load_research_type(research_type).gates
+    earlier = earlier[: earlier.index(GateCode.G7)]
+    with SessionLocal() as db:
+        project = db.get(Project, uuid.UUID(world["project"]))
+        project.stage = ProjectStage.scoped
+        for code in earlier:
+            gate = db.scalar(select(Gate).where(Gate.project_id == project.id, Gate.code == code))
+            gate.status = GateStatus.approved
+        db.commit()
+
+
+def test_g7_for_a_no_participants_type_is_refused_without_the_confirmation_and_the_note_records_it():
+    world = _project()
+    _advance_to_g7(world, "literature_review")
+    refused = world["owner"].post(f"/api/projects/{world['project']}/gates/G7/approve", json={})
+    assert refused.status_code == 422
+    assert "no human participants" in refused.json()["detail"].lower()
+    with SessionLocal() as db:
+        gate = db.scalar(
+            select(Gate).where(Gate.project_id == uuid.UUID(world["project"]), Gate.code == GateCode.G7)
+        )
+        assert gate.status == GateStatus.pending
+    approved = world["owner"].post(
+        f"/api/projects/{world['project']}/gates/G7/approve", json={"confirm_no_human_participants": True}
+    )
+    assert approved.status_code == 200
+    body = approved.json()
+    assert body["status"] == "approved"
+    assert "no human participants" in body["note"].lower()
+
+
+def test_g7_for_a_participants_type_needs_no_confirmation():
+    world = _project()
+    _advance_to_g7(world, "qualitative")
+    approved = world["owner"].post(f"/api/projects/{world['project']}/gates/G7/approve", json={})
+    assert approved.status_code == 200
+    assert approved.json()["note"] is None
+
+
+def test_literature_review_requires_its_own_gate_order_not_full_journeys():
+    """X.43.7: literature_review puts G7 (design/ethics) right after G1, before G2 (unlike full_journey,
+    where G7 comes much later) -- a real approve call, not just the pure gate_order() function, must
+    enforce that order."""
+    world = _project()
+    assert world["owner"].put(
+        f"/api/projects/{world['project']}/research-type", json={"name": "literature_review"}
+    ).status_code == 200
+
+    refused = world["owner"].post(f"/api/projects/{world['project']}/gates/G2/approve", json={"note": "too early"})
+    assert refused.status_code == 409
+    assert refused.json()["detail"]["waiting_for"] == ["G1", "G7"]
+
+    assert world["owner"].post(f"/api/projects/{world['project']}/gates/G1/approve", json={"note": "ok"}).status_code == 200
+
+    # G1 is done, but G7 still stands between G1 and G2 for this type (unlike full_journey).
+    refused = world["owner"].post(f"/api/projects/{world['project']}/gates/G2/approve", json={"note": "still too early"})
+    assert refused.status_code == 409
+    assert refused.json()["detail"]["waiting_for"] == ["G7"]
+
+    approved_g7 = world["owner"].post(
+        f"/api/projects/{world['project']}/gates/G7/approve", json={"confirm_no_human_participants": True}
+    )
+    assert approved_g7.status_code == 200
+
+    # Now G2 goes through, proving the type's own order -- not full_journey's -- is what's enforced.
+    assert world["owner"].post(f"/api/projects/{world['project']}/gates/G2/approve", json={"note": "ok"}).status_code == 200
+
+
+def test_reentry_resets_only_the_qualitative_chains_own_gates_leaving_the_dropped_g8_alone():
+    """X.43.7: qualitative drops only G8 (plan_locked). Re-entering must reset the gates that are actually
+    in its chain and never touch (or error on) G8's row, which still exists from project creation but is
+    outside this project's chain."""
+    world = _project()
+    owner = world["owner"]
+    assert owner.put(f"/api/projects/{world['project']}/research-type", json={"name": "qualitative"}).status_code == 200
+
+    for code in ("G1", "G2", "G3", "G4", "G5", "G6"):
+        assert owner.post(f"/api/projects/{world['project']}/gates/{code}/approve", json={"note": "ok"}).status_code == 200
+    assert owner.post(f"/api/projects/{world['project']}/gates/G7/approve", json={}).status_code == 200  # qualitative has participants: no confirmation needed
+
+    with SessionLocal() as db:
+        project = db.get(Project, uuid.UUID(world["project"]))
+        project.stage = ProjectStage.design_approved
+        db.commit()
+
+    reentered = owner.post(
+        f"/api/projects/{world['project']}/stage/reenter",
+        json={"stage": "search_planned", "reason": "Rethink the search"},
+    )
+    assert reentered.status_code == 200
+    assert reentered.json()["gates_reset"] == ["G2", "G3", "G4", "G5", "G6", "G7"]
+
+    with SessionLocal() as db:
+        gates = {g.code: g for g in db.scalars(select(Gate).where(Gate.project_id == uuid.UUID(world["project"])))}
+    assert gates[GateCode.G1].status == GateStatus.approved  # before the re-entry target: untouched
+    for code in (GateCode.G2, GateCode.G3, GateCode.G4, GateCode.G5, GateCode.G6, GateCode.G7):
+        assert gates[code].status == GateStatus.pending
+    # G8 is not part of qualitative's chain: the reset must never touch it and never error on it either
+    # (the 200 above already proves no error; this also proves the row itself is untouched).
+    assert gates[GateCode.G8].status == GateStatus.pending
+    assert gates[GateCode.G8].decided_by is None
+
+    with SessionLocal() as db:
+        reset_events = db.scalars(
+            select(AuditEvent).where(
+                AuditEvent.project_id == uuid.UUID(world["project"]), AuditEvent.action == "gate.reset"
+            )
+        ).all()
+    assert {e.payload_json["gate"] for e in reset_events} == {"G2", "G3", "G4", "G5", "G6", "G7"}
+

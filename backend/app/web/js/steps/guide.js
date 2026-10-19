@@ -25,10 +25,11 @@ function journey(ctx, guide) {
   chain.forEach((item, index) => {
     const stage = guide.stages[item.stage];
     if (!stage) return;
+    const title = item.label || stage.title;
     const position = index < currentIndex ? "done" : index === currentIndex ? "current" : "upcoming";
     const li = el("li", { className: `journey-stage ${position}` });
     if (position === "current") li.setAttribute("aria-current", "step");
-    const heading = el("h3", { text: index === currentIndex ? `${stage.title} (you are here) ` : `${stage.title} ` });
+    const heading = el("h3", { text: index === currentIndex ? `${title} (you are here) ` : `${title} ` });
     if (item.gate) heading.append(el("span", { className: "stage-gate", text: item.gate }));
     const details = el("details");
     details.append(el("summary", { text: "What is advisable" }), el("p", { text: stage.advice }));

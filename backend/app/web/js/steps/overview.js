@@ -1,6 +1,6 @@
 import { el, label } from "../dom.js";
 import { request } from "../api.js";
-import { STAGES, STEPS, GATE_NAMES, stepStatus, loadGuide } from "../workflow.js";
+import { STAGES, STEPS, GATE_NAMES, stepStatus, loadGuide, stageLabel } from "../workflow.js";
 import { errorCard } from "./common.js";
 import { renderFrame, LEVEL_LABEL } from "./frame.js";
 
@@ -10,7 +10,7 @@ const STATUS_LABEL = { done: "Done", attention: "Needs attention", todo: "Not st
 function progressLine(ctx) {
   const stage = ctx.summary.stage?.stage;
   const idx = STAGES.findIndex(([name]) => name === stage);
-  return `Stage ${idx + 1} of ${STAGES.length} · ${label(stage || "")}`;
+  return `Stage ${idx + 1} of ${STAGES.length} · ${idx >= 0 ? stageLabel(STAGES[idx]) : label(stage || "")}`;
 }
 
 async function whereYouAre(ctx) {

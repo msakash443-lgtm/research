@@ -10,12 +10,25 @@ from __future__ import annotations
 
 from sqlalchemy import DDL, event
 
-from app.models import AuthorshipEvent, DocumentVersion, ProvenanceReport, SimilarityCheck
+from app.models import (
+    AuthorshipEvent,
+    DocumentVersion,
+    InterpretationFinding,
+    InterpretationReview,
+    OwnPaperLookup,
+    ProvenanceReport,
+    SectionApproval,
+    SimilarityCheck,
+)
 
 VERSIONS_MESSAGE = "document_versions is append-only: rows cannot be updated or deleted"
 EVENTS_MESSAGE = "authorship_events is append-only: rows cannot be updated or deleted"
 SIMILARITY_MESSAGE = "similarity_checks is append-only: rows cannot be updated or deleted"
 PROVENANCE_MESSAGE = "provenance_reports is append-only: rows cannot be updated or deleted"
+OWN_PAPER_LOOKUPS_MESSAGE = "own_paper_lookups is append-only: rows cannot be updated or deleted"
+SECTION_APPROVALS_MESSAGE = "section_approvals is append-only: rows cannot be updated or deleted"
+INTERPRETATION_FINDINGS_MESSAGE = "interpretation_findings is append-only: rows cannot be updated or deleted"
+INTERPRETATION_REVIEWS_MESSAGE = "interpretation_reviews is append-only: rows cannot be updated or deleted"
 
 
 def _sqlite_triggers(table: str, message: str) -> list[str]:
@@ -61,6 +74,10 @@ APPEND_ONLY_TABLES = {
     "authorship_events": (AuthorshipEvent, EVENTS_MESSAGE),
     "similarity_checks": (SimilarityCheck, SIMILARITY_MESSAGE),
     "provenance_reports": (ProvenanceReport, PROVENANCE_MESSAGE),
+    "own_paper_lookups": (OwnPaperLookup, OWN_PAPER_LOOKUPS_MESSAGE),
+    "section_approvals": (SectionApproval, SECTION_APPROVALS_MESSAGE),
+    "interpretation_findings": (InterpretationFinding, INTERPRETATION_FINDINGS_MESSAGE),
+    "interpretation_reviews": (InterpretationReview, INTERPRETATION_REVIEWS_MESSAGE),
 }
 
 SQLITE_TRIGGERS = {name: _sqlite_triggers(name, msg) for name, (_, msg) in APPEND_ONLY_TABLES.items()}

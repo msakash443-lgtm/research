@@ -1,12 +1,40 @@
 import { $, el, label, toast, formatDate, emptyCard, confirmAction } from "../dom.js";
 import { request, projectApi } from "../api.js";
 import { actorName, provenanceBadge } from "../provenance.js";
+import { filterByCitations, rankByCitations } from "../citationSortFilterLogic.js";
 import { renderFrame } from "./frame.js";
+import {
+  buildBibtexOwnPaperPayload,
+  buildManualOwnPaperPayload,
+  buildOwnPaperLookupPayload,
+  describeOwnPaperLookup,
+  isLookupPending,
+} from "../ownPaperLogic.js";
 
 // Selection survives re-renders within this step but resets on project switch (module state).
 let selected = new Set();
 let filter = "all"; // "all" | "unverified" | "verified"
+// Citation sort/filter (M2.13.2): citationSort ranks by `citation_count` (highest first, unknown
+// counts last); minCitations hides known counts below it (unknown counts are never hidden, per
+// citationSortFilterLogic.js). citationStatsRef is the hidden/unknown counts line, updated in place
+// by sourcesList() so it stays correct across both a full render() and a toolbar-only update.
+let citationSort = false;
+let minCitations = null;
+let citationStatsRef = null;
 let currentProjectId = null;
+
+// "Add my own paper" panel state (M2.14.2): survives re-renders, resets on project switch.
+let ownPaperMode = "lookup"; // "lookup" | "manual" | "bibtex"
+let ownPaperLookup = null; // { taskId, kind: "pending"|"included"|"not_found"|"failed", text } | null
+let ownPaperLookupTimer = null;
+
+function resetOwnPaperLookup() {
+  if (ownPaperLookupTimer) {
+    window.clearTimeout(ownPaperLookupTimer);
+    ownPaperLookupTimer = null;
+  }
+  ownPaperLookup = null;
+}
 
 
 // EC-3.3 (search_planned -> retrieved, Information level) counts auto-retrieved sources not yet
@@ -142,6 +170,42 @@ function fulltextFetchButton(ctx, source) {
   return button;
 }
 
+// Attach a PDF directly for a source with no stored full text yet (M2.14.2): mainly for own papers,
+// which often have no DOI to run the open-access fetch above. Raw bytes, not multipart (matches the
+// server's `.../fulltext/upload`, which reads `request.stream()`), so this bypasses `request()`'s
+// default JSON content type.
+function attachPdfButton(ctx, source) {
+  const wrap = el("div", { className: "source-actions" });
+  const file = el("input", { attrs: { type: "file", accept: "application/pdf", "aria-label": "PDF file to attach" } });
+  const upload = el("button", { className: "quiet-button", text: "Attach PDF" });
+  const error = el("p", { className: "own-paper-error small" });
+  upload.addEventListener("click", async () => {
+    error.textContent = "";
+    const picked = file.files && file.files[0];
+    if (!picked) {
+      error.textContent = "Choose a PDF file first.";
+      return;
+    }
+    upload.disabled = true;
+    try {
+      const bytes = await picked.arrayBuffer();
+      await request(projectApi(ctx.project.id, `/sources/${source.id}/fulltext/upload`), {
+        method: "POST",
+        headers: { "Content-Type": "application/pdf" },
+        body: bytes,
+      });
+      toast("PDF attached.");
+      await ctx.refresh();
+    } catch (uploadError) {
+      error.textContent = uploadError.message;
+    } finally {
+      upload.disabled = false;
+    }
+  });
+  wrap.append(file, upload);
+  return el("div", { children: [wrap, error] });
+}
+
 function fulltextSection(ctx, source) {
   const section = el("div", { className: "source-fulltext" });
   const text = fulltextText(source);
@@ -152,8 +216,9 @@ function fulltextSection(ctx, source) {
   if (source.oa_url && /^https?:\/\//i.test(source.oa_url)) {
     section.append(el("a", { className: "small", text: "Open-access copy", href: source.oa_url, target: "_blank", rel: "noopener noreferrer" }));
   }
-  if (ctx.canWrite && source.doi && !source.fulltext_path) {
-    section.append(el("div", { className: "source-actions", children: [fulltextFetchButton(ctx, source)] }));
+  if (ctx.canWrite && !source.fulltext_path) {
+    if (source.doi) section.append(el("div", { className: "source-actions", children: [fulltextFetchButton(ctx, source)] }));
+    section.append(attachPdfButton(ctx, source));
   }
   if (ctx.canWrite && source.fulltext_path) section.append(highlightCapture(ctx, source));
   return section.childElementCount ? section : null;
@@ -227,6 +292,14 @@ function foundViaText(via) {
   return `Found via snowballing (round ${via.round}): it ${how} “${from}”`;
 }
 
+// How many times a source has been cited, per a third-party service (M2.13); a missing count is
+// "unknown", never shown as 0.
+function citationText(source) {
+  if (source.citation_count == null) return "Citations: unknown";
+  const via = source.citation_count_source ? ` (${label(source.citation_count_source)})` : "";
+  return `Citations: ${source.citation_count}${via}`;
+}
+
 function sourceCard(ctx, source) {
   const card = el("article", { className: "source-card" });
   const meta = [label(source.source_type), source.year].filter(Boolean).join(" · ");
@@ -239,6 +312,7 @@ function sourceCard(ctx, source) {
     card.append(el("h3", { text: source.title }));
   }
   card.append(el("p", { className: "verification-status small", text: verificationText(source) }));
+  card.append(el("p", { className: "source-locator", text: citationText(source) }));
   const via = foundViaText(source.found_via);
   if (via) card.append(el("p", { className: "source-locator", text: via }));
   // Agent-retrieved sources carry a provenance badge (X.17); retrieval uses no language model, and the
@@ -292,25 +366,251 @@ function toolbarButtons() {
 function sourcesList(root, ctx) {
   const list = root.querySelector("#source-list") || el("div", { className: "source-list", attrs: { id: "source-list" } });
   const all = ctx.summary.sources || [];
-  const filtered = all.filter((s) => {
+  const statusFiltered = all.filter((s) => {
     if (filter === "unverified") return !s.metadata_verified;
     if (filter === "verified") return s.metadata_verified;
     return true;
   });
+  const ranked = citationSort
+    ? rankByCitations(statusFiltered, (s) => s.citation_count, minCitations)
+    : filterByCitations(statusFiltered, (s) => s.citation_count, minCitations);
+  const filtered = ranked.shown.map((row) => row.item);
+  if (citationStatsRef) {
+    citationStatsRef.textContent = statusFiltered.length
+      ? `${ranked.hiddenBelowThreshold} hidden below the citation threshold · ${ranked.unknownCount} unknown citation count`
+      : "";
+  }
   if (all.length === 0) {
     list.replaceChildren(emptyCard("No evidence sources yet", "Add a primary source and a short excerpt, statistic, or data note before asking the agent for a synthesis."));
   } else if (filtered.length === 0) {
-    list.replaceChildren(emptyCard("No sources match this filter", "Try a different filter."));
+    list.replaceChildren(emptyCard("No sources match this filter", "Try a different filter or citation threshold."));
   } else {
     list.replaceChildren(...filtered.map((source) => sourceCard(ctx, source)));
   }
   return list;
 }
 
+// --- "Add my own paper" panel (M2.14.2) ---------------------------------------------------------
+
+function ownPaperErrorNode(message) {
+  return el("p", { className: "own-paper-error small", text: message });
+}
+
+function ownPaperLookupStatusNode() {
+  if (!ownPaperLookup) return null;
+  return el("p", { className: `own-paper-lookup-status own-paper-lookup-${ownPaperLookup.kind} small`, text: ownPaperLookup.text });
+}
+
+const OWN_PAPER_LOOKUP_POLL_MS = 2500;
+const OWN_PAPER_LOOKUP_MAX_ATTEMPTS = 40; // ~100s before telling the person to check back later
+
+function pollOwnPaperLookup(ctx, taskId, statusSlot, onIncluded, attempt = 0) {
+  ownPaperLookupTimer = window.setTimeout(async () => {
+    try {
+      const row = await request(projectApi(ctx.project.id, `/sources/own/lookup?task_id=${taskId}`));
+      const outcome = describeOwnPaperLookup(row);
+      ownPaperLookup = { taskId, ...outcome };
+      statusSlot.replaceChildren(ownPaperLookupStatusNode());
+      if (outcome.kind === "included") {
+        toast("Your paper was added.");
+        await onIncluded();
+      }
+    } catch (error) {
+      if (isLookupPending(error) && attempt < OWN_PAPER_LOOKUP_MAX_ATTEMPTS) {
+        pollOwnPaperLookup(ctx, taskId, statusSlot, onIncluded, attempt + 1);
+        return;
+      }
+      ownPaperLookup = {
+        taskId, kind: "failed",
+        text: isLookupPending(error) ? "Still looking after a while; check back later." : error.message,
+      };
+      statusSlot.replaceChildren(ownPaperLookupStatusNode());
+    }
+  }, OWN_PAPER_LOOKUP_POLL_MS);
+}
+
+function ownPaperLookupForm(ctx, errorSlot, statusSlot, onSaved) {
+  const form = el("div");
+  const doiInput = el("input", { attrs: { placeholder: "DOI, e.g. 10.1234/example", maxlength: "300", "aria-label": "DOI" } });
+  const titleInput = el("input", { attrs: { placeholder: "Exact title", maxlength: "500", "aria-label": "Title" } });
+  const grid = el("div", { className: "form-grid" });
+  grid.append(
+    el("label", { children: [document.createTextNode("DOI"), doiInput] }),
+    el("label", { children: [document.createTextNode("or title"), titleInput] })
+  );
+  const submit = el("button", { text: "Look it up" });
+  submit.addEventListener("click", async () => {
+    errorSlot.replaceChildren();
+    let payload;
+    try {
+      payload = buildOwnPaperLookupPayload({ doi: doiInput.value, title: titleInput.value });
+    } catch (error) {
+      errorSlot.replaceChildren(ownPaperErrorNode(error.message));
+      return;
+    }
+    resetOwnPaperLookup();
+    submit.disabled = true;
+    try {
+      const queued = await request(projectApi(ctx.project.id, "/sources/own/lookup"), { method: "POST", body: JSON.stringify(payload) });
+      ownPaperLookup = { taskId: queued.task_id, ...describeOwnPaperLookup(null) };
+      statusSlot.replaceChildren(ownPaperLookupStatusNode());
+      pollOwnPaperLookup(ctx, queued.task_id, statusSlot, onSaved);
+    } catch (error) {
+      errorSlot.replaceChildren(ownPaperErrorNode(error.message));
+    } finally {
+      submit.disabled = false;
+    }
+  });
+  form.append(grid, el("div", { className: "form-actions", children: [submit] }));
+  return form;
+}
+
+function ownPaperManualForm(ctx, errorSlot, onSaved) {
+  const form = el("form", { className: "form-grid" });
+  const input = (name, placeholder, attrs = {}) => el("input", { attrs: { name, placeholder, ...attrs } });
+  const field = (className, labelText, optional, control) => {
+    const children = [document.createTextNode(labelText)];
+    if (optional) children.push(document.createTextNode(" "), el("span", { className: "optional", text: "Optional" }));
+    children.push(control);
+    return el("label", { className, children });
+  };
+  const typeSelect = el("select", { attrs: { name: "source_type" } });
+  ["article", "dataset", "report", "webpage", "book", "other"].forEach((value) => {
+    typeSelect.append(el("option", { attrs: { value }, text: label(value) }));
+  });
+  form.append(
+    field("full-width", "Title", false, input("title", "Paper title", { required: "", maxlength: "500" })),
+    field("full-width", "Authors", true, input("authors", "Jane Doe, John Smith")),
+    field("", "Year", true, input("year", "2024", { type: "number", min: "1000", max: "3000" })),
+    field("", "DOI", true, input("doi", "10.1234/example", { maxlength: "300" })),
+    field("", "URL", true, input("url", "https://…", { type: "url" })),
+    field("", "Venue", true, input("venue", "Journal or conference")),
+    field("", "Source type", false, typeSelect),
+    field("full-width", "Abstract", true, el("textarea", { attrs: { name: "abstract", maxlength: "20000" } })),
+    field("full-width", "Open-access URL", true, input("oa_url", "https://…", { type: "url" }))
+  );
+  const submit = el("button", { attrs: { type: "submit" }, text: "Add paper" });
+  form.append(el("div", { className: "form-actions full-width", children: [submit] }));
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    errorSlot.replaceChildren();
+    const data = Object.fromEntries(new FormData(form));
+    let payload;
+    try {
+      payload = buildManualOwnPaperPayload(data);
+    } catch (error) {
+      errorSlot.replaceChildren(ownPaperErrorNode(error.message));
+      return;
+    }
+    submit.disabled = true;
+    try {
+      await request(projectApi(ctx.project.id, "/sources/own"), { method: "POST", body: JSON.stringify(payload) });
+      form.reset();
+      toast("Your paper was added.");
+      await onSaved();
+    } catch (error) {
+      errorSlot.replaceChildren(ownPaperErrorNode(error.message));
+    } finally {
+      submit.disabled = false;
+    }
+  });
+  return form;
+}
+
+function ownPaperBibtexForm(ctx, errorSlot, onSaved) {
+  const form = el("div");
+  const textarea = el("textarea", { attrs: { rows: "6", maxlength: "2000000", placeholder: "@article{key, title={...}, author={...}, year={...}, doi={...}}" } });
+  const submit = el("button", { text: "Add from BibTeX" });
+  submit.addEventListener("click", async () => {
+    errorSlot.replaceChildren();
+    let payload;
+    try {
+      payload = buildBibtexOwnPaperPayload(textarea.value);
+    } catch (error) {
+      errorSlot.replaceChildren(ownPaperErrorNode(error.message));
+      return;
+    }
+    submit.disabled = true;
+    try {
+      await request(projectApi(ctx.project.id, "/sources/own"), { method: "POST", body: JSON.stringify(payload) });
+      textarea.value = "";
+      toast("Your paper was added.");
+      await onSaved();
+    } catch (error) {
+      errorSlot.replaceChildren(ownPaperErrorNode(error.message));
+    } finally {
+      submit.disabled = false;
+    }
+  });
+  form.append(textarea, el("div", { className: "form-actions", children: [submit] }));
+  return form;
+}
+
+const OWN_PAPER_MODES = [
+  ["lookup", "Look up by DOI or title"],
+  ["manual", "Enter details myself"],
+  ["bibtex", "Paste BibTeX"],
+];
+
+// Form/panel for M2.14: the researcher adds a paper they already have, without going through
+// search/screening. Three ways in (lookup, manual entry, BibTeX), one at a time; PDF attachment is
+// a separate step on the resulting source card (`attachPdfButton`), since the source must exist first.
+function ownPaperSection(ctx) {
+  if (!ctx.canWrite) return null;
+  const panel = el("div", { className: "panel" });
+  panel.append(el("h2", { text: "Add my own paper" }));
+  panel.append(
+    el("p", {
+      className: "helper",
+      text: "Add a paper you already have, outside search and screening: look it up by DOI or exact title, enter its details yourself, or paste one BibTeX entry. It is added to your sources unverified; attach its PDF afterwards from the source's card below.",
+    })
+  );
+  const tabs = el("div", { className: "source-actions" });
+  const statusSlot = el("div");
+  const errorSlot = el("div");
+  const bodySlot = el("div");
+  const onSaved = async () => {
+    resetOwnPaperLookup();
+    errorSlot.replaceChildren();
+    statusSlot.replaceChildren();
+    await ctx.refresh();
+  };
+  const renderBody = () => {
+    errorSlot.replaceChildren();
+    Array.from(tabs.children).forEach((button, index) => {
+      button.setAttribute("aria-pressed", String(OWN_PAPER_MODES[index][0] === ownPaperMode));
+    });
+    if (ownPaperMode === "lookup") {
+      const status = ownPaperLookupStatusNode();
+      statusSlot.replaceChildren(...(status ? [status] : []));
+      bodySlot.replaceChildren(ownPaperLookupForm(ctx, errorSlot, statusSlot, onSaved));
+    } else if (ownPaperMode === "manual") {
+      statusSlot.replaceChildren();
+      bodySlot.replaceChildren(ownPaperManualForm(ctx, errorSlot, onSaved));
+    } else {
+      statusSlot.replaceChildren();
+      bodySlot.replaceChildren(ownPaperBibtexForm(ctx, errorSlot, onSaved));
+    }
+  };
+  OWN_PAPER_MODES.forEach(([key, text]) => {
+    const button = el("button", { className: "quiet-button", text, attrs: { type: "button", "aria-pressed": String(ownPaperMode === key) } });
+    button.addEventListener("click", () => {
+      ownPaperMode = key;
+      renderBody();
+    });
+    tabs.append(button);
+  });
+  panel.append(tabs, statusSlot, bodySlot, errorSlot);
+  renderBody();
+  return panel;
+}
+
 function render(root, ctx) {
   if (currentProjectId !== ctx.project.id) {
     selected = new Set();
     currentProjectId = ctx.project.id;
+    ownPaperMode = "lookup";
+    resetOwnPaperLookup();
   }
   const panel = el("div", { className: "panel" });
   const title = el("div", { className: "section-title" });
@@ -324,6 +624,27 @@ function render(root, ctx) {
     });
     toolbar.append(button);
   });
+  const sortButton = el("button", {
+    className: "quiet-button",
+    text: "Sort by citations",
+    attrs: { "aria-pressed": String(citationSort) },
+  });
+  sortButton.addEventListener("click", () => {
+    citationSort = !citationSort;
+    sortButton.setAttribute("aria-pressed", String(citationSort));
+    sourcesList(root, ctx);
+  });
+  toolbar.append(sortButton);
+  const minCitationsInput = el("input", {
+    attrs: { type: "number", min: "0", placeholder: "Min citations", "aria-label": "Minimum citations" },
+  });
+  if (minCitations != null) minCitationsInput.value = String(minCitations);
+  minCitationsInput.addEventListener("change", () => {
+    const value = minCitationsInput.value.trim();
+    minCitations = value === "" ? null : Math.max(0, Math.trunc(Number(value)) || 0);
+    sourcesList(root, ctx);
+  });
+  toolbar.append(minCitationsInput);
   if (ctx.canWrite) {
     const add = el("button", { text: "Add source" });
     add.addEventListener("click", openSourceDialog);
@@ -336,12 +657,15 @@ function render(root, ctx) {
   }
   title.append(toolbar);
   panel.append(title);
+  citationStatsRef = el("p", { className: "muted small", attrs: { id: "source-citation-stats" } });
+  panel.append(citationStatsRef);
   panel.append(sourcesList(root, ctx));
 
   const sections = [];
   sections.push(panel);
+  const ownPaper = ownPaperSection(ctx);
+  if (ownPaper) sections.push(ownPaper);
   const hint = verificationHint(ctx);
-  if (hint) sections.push(hint);
   renderFrame(root, ctx, { stepId: "sources", work: sections, next: [], stepNext: "ask" });
 }
 

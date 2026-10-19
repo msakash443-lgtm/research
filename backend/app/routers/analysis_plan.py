@@ -16,12 +16,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import analysis_plan as rules
-from app import analysis_runner, audit, datasets
+from app import analysis_runner, audit, datasets, notebook_export, robustness
+from app import robustness_suite as suite
 from app.config import get_settings
 from app.database import get_db
 from app.dependencies import MANAGE_ROLES, READ_ROLES, WRITE_ROLES, current_user, project_access
 from app.gates import gate_is_approved
-from app.models import AnalysisPlan, AnalysisRun, DatasetVersion, GateCode, Project, User
+from app.models import AnalysisPlan, AnalysisRun, DatasetVersion, GateCode, Project, RobustnessCheck, User
 from app.models import utcnow
 
 router = APIRouter(prefix="/projects/{project_id}", tags=["analysis-plans"])
@@ -248,4 +249,194 @@ def list_runs(
     row = _plan(db, project, analysis_plan_id)
     runs = db.scalars(select(AnalysisRun).where(AnalysisRun.analysis_plan_id == row.id).order_by(AnalysisRun.created_at)).all()
     return [_run_read(run) for run in runs]
+
+
+def _run(db: Session, project: Project, analysis_plan_id: uuid.UUID, run_id: uuid.UUID) -> AnalysisRun:
+    row = db.scalar(
+        select(AnalysisRun).where(AnalysisRun.id == run_id, AnalysisRun.analysis_plan_id == analysis_plan_id,
+                                   AnalysisRun.project_id == project.id)
+    )
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Analysis run not found for this plan.")
+    return row
+
+
+def _robustness_read(row: RobustnessCheck) -> dict[str, Any]:
+    return {
+        "id": str(row.id),
+        "base_run_id": str(row.base_run_id),
+        "kind": row.kind,
+        "label": row.label,
+        "compare_dataset_id": str(row.compare_dataset_id) if row.compare_dataset_id else None,
+        "compare_plan_id": str(row.compare_plan_id) if row.compare_plan_id else None,
+        "compare_run_id": str(row.compare_run_id) if row.compare_run_id else None,
+        "base_fingerprint": row.base_fingerprint,
+        "compare_fingerprint": row.compare_fingerprint,
+        "identical": row.identical,
+        "created_by": row.created_by,
+        "created_at": row.created_at.isoformat() if isinstance(row.created_at, datetime) else None,
+    }
+
+
+def _run_variant(
+    db: Session, project: Project, user: User, settings: Any, dataset: DatasetVersion, spec: dict[str, Any],
+) -> tuple[AnalysisPlan, AnalysisRun]:
+    """Create, lock and run a new plan with `spec` against `dataset`, the same three steps as the single-purpose
+    routes above but in one call. Raises `HTTPException` on any failure; nothing is left half-written because the
+    caller commits once, after this returns."""
+    plan = AnalysisPlan(
+        project_id=project.id, dataset_id=dataset.id, spec_json=spec,
+        plan_sha256=rules.plan_hash(spec, dataset.sha256), environment_sha256=rules.environment_hash(),
+        created_by=str(user.id),
+    )
+    db.add(plan)
+    db.flush()
+    plan.locked_at = utcnow()
+    plan.locked_by = audit.user_actor(user)
+    audit.record(db, actor=audit.user_actor(user), action="analysis_plan.created", project_id=project.id,
+                 payload={"plan_id": str(plan.id), "dataset_id": str(dataset.id), "plan_sha256": plan.plan_sha256})
+    audit.record(db, actor=audit.user_actor(user), action="analysis_plan.locked", project_id=project.id,
+                 payload={"plan_id": str(plan.id), "plan_sha256": plan.plan_sha256})
+    try:
+        image = analysis_runner.check_image(settings.analysis_sandbox_image or "")
+    except analysis_runner.RunnerError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    script = rules.generate_script(spec, dataset.name, dataset.sha256)
+    try:
+        result = analysis_runner.run_script(
+            script, dataset.content, dataset_sha256=dataset.sha256, plan_sha256=plan.plan_sha256,
+            image=image, timeout=settings.analysis_sandbox_timeout_seconds,
+        )
+    except analysis_runner.RunnerError as exc:
+        audit.record(db, actor=audit.user_actor(user), action="analysis.run_failed", project_id=project.id,
+                     payload={"plan_id": str(plan.id), "reason": str(exc)[:300]})
+        db.commit()
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    run = AnalysisRun(
+        project_id=project.id, analysis_plan_id=plan.id, dataset_id=dataset.id,
+        plan_sha256=plan.plan_sha256, dataset_sha256=dataset.sha256, script_sha256=result["script_sha256"],
+        environment_sha256=plan.environment_sha256, image=result["image"], output_json=result["outputs"],
+        output_sha256=result["output_sha256"], created_by=str(user.id),
+    )
+    db.add(run)
+    db.flush()
+    audit.record(db, actor=audit.user_actor(user), action="analysis.run_completed", project_id=project.id,
+                 payload={"run_id": str(run.id), "plan_id": str(plan.id), "output_sha256": run.output_sha256})
+    return plan, run
+
+
+class RobustnessIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["rerun_identity", "alternative_spec", "outlier_sensitivity", "missing_data"]
+    drop_variable: str | None = Field(default=None, max_length=200)
+    compare_dataset_id: uuid.UUID | None = None
+
+
+@router.post("/analysis-plans/{analysis_plan_id}/runs/{run_id}/robustness", status_code=status.HTTP_201_CREATED)
+def create_robustness_check(
+    analysis_plan_id: uuid.UUID,
+    run_id: uuid.UUID,
+    body: RobustnessIn,
+    project: Project = Depends(project_access(MANAGE_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Robustness suite over a stored run (M5.4.2, spec 5.9 bullet 3): re-run the same spec unchanged, a variant
+    with one variable dropped, or the same spec against a different, already governed dataset version (e.g. one an
+    approved exclusion rule produced). Each variant is its own locked plan and sandboxed run; the two outputs are
+    compared by fingerprint (`app.robustness.fingerprint_results`), never by eye. Owner-only: it creates and locks
+    new analysis plans, the same gate as `lock_plan`."""
+    db.refresh(project, with_for_update=True)
+    if gate_is_approved(db, project.id, GateCode.G8):
+        raise HTTPException(status.HTTP_409_CONFLICT, "G8 has locked the analysis plan")
+    base_plan = _plan(db, project, analysis_plan_id)
+    base_run = _run(db, project, analysis_plan_id, run_id)
+    base_dataset = db.get(DatasetVersion, base_run.dataset_id)
+    settings = get_settings()
+
+    if body.kind == "rerun_identity":
+        compare_dataset, spec, label = base_dataset, base_plan.spec_json, "unchanged re-run"
+    elif body.kind == "alternative_spec":
+        if not body.drop_variable:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Name the variable to drop.")
+        label = f"drop {body.drop_variable}"
+        alternatives = {alt["label"]: alt["spec"] for alt in suite.leave_one_out_specs(base_plan.spec_json)}
+        if label not in alternatives:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                 f"{body.drop_variable!r} is not a variable this plan can drop and still run a test.")
+        compare_dataset, spec = base_dataset, alternatives[label]
+    else:
+        if body.compare_dataset_id is None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Name the dataset version to compare against.")
+        compare_dataset = _dataset(db, project, body.compare_dataset_id)
+        if compare_dataset.id == base_dataset.id:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                 "Compare against a different dataset version than the run's own.")
+        missing = [v for v in base_plan.spec_json["variables"] if v not in compare_dataset.column_names]
+        if missing:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                 f"The comparison dataset is missing column(s): {', '.join(missing)}.")
+        spec = base_plan.spec_json
+        kind_label = "outlier" if body.kind == "outlier_sensitivity" else "missing-data"
+        label = f"{kind_label} comparison: dataset {compare_dataset.id}"
+
+    if datasets.sha256_hex(compare_dataset.content) != compare_dataset.sha256:
+        raise HTTPException(status.HTTP_409_CONFLICT, "The comparison dataset no longer matches its hash.")
+    compare_plan, compare_run = _run_variant(db, project, user, settings, compare_dataset, spec)
+
+    base_fingerprint = robustness.fingerprint_results(base_run.output_json)
+    compare_fingerprint = robustness.fingerprint_results(compare_run.output_json)
+    check = RobustnessCheck(
+        project_id=project.id, base_run_id=base_run.id, kind=body.kind, label=label,
+        compare_dataset_id=compare_dataset.id, compare_plan_id=compare_plan.id, compare_run_id=compare_run.id,
+        base_fingerprint=base_fingerprint, compare_fingerprint=compare_fingerprint,
+        identical=base_fingerprint == compare_fingerprint, created_by=str(user.id),
+    )
+    db.add(check)
+    db.flush()
+    audit.record(db, actor=audit.user_actor(user), action="robustness.checked", project_id=project.id,
+                 payload={"check_id": str(check.id), "base_run_id": str(base_run.id), "kind": body.kind,
+                          "identical": check.identical})
+    db.commit()
+    db.refresh(check)
+    return _robustness_read(check)
+
+
+@router.get("/analysis-plans/{analysis_plan_id}/runs/{run_id}/robustness")
+def list_robustness_checks(
+    analysis_plan_id: uuid.UUID,
+    run_id: uuid.UUID,
+    project: Project = Depends(project_access(READ_ROLES)),
+    db: Session = Depends(get_db),
+) -> list[dict[str, Any]]:
+    base_run = _run(db, project, analysis_plan_id, run_id)
+    rows = db.scalars(
+        select(RobustnessCheck).where(RobustnessCheck.base_run_id == base_run.id).order_by(RobustnessCheck.created_at.asc())
+    ).all()
+    return [_robustness_read(row) for row in rows]
+
+
+@router.get("/analysis-plans/{analysis_plan_id}/runs/{run_id}/notebook")
+def get_notebook(
+    analysis_plan_id: uuid.UUID,
+    run_id: uuid.UUID,
+    project: Project = Depends(project_access(READ_ROLES)),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Reproducible notebook for a stored run (M5.4.2, spec 5.9 bullet 4). Nothing executes here; this packages
+    the locked script, the dataset it ran over and the recorded output so the run can be reproduced outside the
+    platform, at the same read visibility as the script and dataset-content routes above."""
+    plan = _plan(db, project, analysis_plan_id)
+    run = _run(db, project, analysis_plan_id, run_id)
+    dataset = db.get(DatasetVersion, run.dataset_id)
+    notebook = notebook_export.build_notebook(
+        plan_id=str(plan.id), run_id=str(run.id), dataset_name=dataset.name, dataset_csv=dataset.content,
+        plan_sha256=run.plan_sha256, dataset_sha256=run.dataset_sha256, environment_sha256=run.environment_sha256,
+        image=run.image, script=rules.generate_script(plan.spec_json, dataset.name, dataset.sha256),
+        output=run.output_json, output_sha256=run.output_sha256,
+        run_created_at=run.created_at.isoformat() if isinstance(run.created_at, datetime) else "",
+    )
+    return {"plan_id": str(plan.id), "run_id": str(run.id),
+            "filename": f"analysis_{str(run.id)[:8]}_notebook.ipynb", "notebook": notebook}
 

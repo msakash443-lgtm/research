@@ -65,7 +65,7 @@ def test_next_steps_put_required_first_skip_met_and_not_built_and_list_shared_co
                 Condition("EC-1.2", Level.recommended, False, "no research question", 'Scope: "Add question"'),
                 stale,
                 Condition("EC-1.3", Level.information, True, "no captured ideas left", None),
-                Condition("EC-5.2", Level.information, False, "not built yet (needs M3.4)", None),
+                Condition("EC-10.1", Level.information, False, "not built yet (needs M4.1)", None),
             ],
         ),
         (ProjectStage.search_planned, [stale]),

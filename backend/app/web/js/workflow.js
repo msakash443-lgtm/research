@@ -1,8 +1,20 @@
 // Pure data and status logic, no DOM. The stage order comes from the server (GET /stage `chain`,
 // app/stage_order.py), so it is filled in by setStageChain(); nothing here hard-codes the workflow.
+import { label } from "./dom.js";
+
 export const STAGES = [];
 export function setStageChain(chain) {
-  STAGES.splice(0, STAGES.length, ...chain.map((item) => (item.gate ? [item.stage, item.gate] : [item.stage])));
+  STAGES.splice(
+    0,
+    STAGES.length,
+    ...chain.map((item) => (item.gate ? [item.stage, item.gate, item.label || null] : [item.stage, undefined, item.label || null]))
+  );
+}
+// `[stage, gate, label]`; `label` is the research type's own override (e.g. qualitative's design_approved is
+// "Design, interview guide & ethics"), falling back to the generic snake_case -> Title Case conversion.
+export function stageLabel(entry) {
+  if (!entry) return "";
+  return entry[2] || label(entry[0]);
 }
 export const GATE_NAMES = {
   G1: "Scope", G2: "Search plan", G3: "Screening", G4: "Extraction", G5: "Gap selection",
@@ -20,10 +32,26 @@ export const FRAMEWORK_ELEMENTS = {
   custom: [],
 };
 
+// ProjectStage ids (app/models.py) with no dedicated built screen today: there is no STEPS entry whose work is
+// locked behind reaching exactly that stage. Mirrors the current screen coverage (frontend constant, not backend
+// data, same pattern as GATE_NAMES/FRAMEWORK_ELEMENTS) — re-derive by reading STEPS below if screens change.
+// NOT "screened"/"extracted"/"drafted": the Screening, Evidence table/Verify extraction and Write screens below
+// cover that work now, even though an older version of this file had no screen past "retrieved".
+export const NO_SCREEN_STAGES = new Set([
+  "retrieved", "synthesized", "gaps_selected", "framework", "design_approved",
+  "data_collected", "plan_locked", "analyzed", "revised", "submission_ready",
+  "submitted", "revision_loop", "accepted",
+]);
+// `STAGES` entries (order preserved) that have no dedicated screen yet; used for the "Later stages" disclosure.
+// Order-independent: membership-tested against NO_SCREEN_STAGES, never index-sliced from a named anchor stage
+// (decision 4a forbids hard-coding the 19-stage order at call sites).
+export function stagesWithoutScreen(stages = STAGES) {
+  return stages.filter(([name]) => NO_SCREEN_STAGES.has(name));
+}
+
 // Every screen the workspace builds. Steps without a group ("overview", "guide") sit above the groups; everything
-// else is grouped in the left rail. Later spec stages (screening onward) have no screen yet (rule 32) —
-// they only appear, locked, in the "Later stages" disclosure built from STAGES.
-// Mirrored by app/guidance.py UI_STEPS (a guide entry may only point at a screen listed here).
+// else is grouped in the left rail. Mirrored by app/guidance.py UI_STEPS (a guide entry may only point at a screen
+// listed here).
 export const STEPS = [
   { id: "overview", title: "Overview" },
   { id: "guide", title: "Research path" },

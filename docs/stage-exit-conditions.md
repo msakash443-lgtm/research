@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| Date | 2026-10-10 |
+| Date | 2026-10-10 (status line updated 2026-10-19) |
 | Author | claude (AI session) |
-| Status | **Draft — awaiting owner approval; nothing implemented.** Owner reviewed and approved the level rubric 2026-10-11 (Q25): "Required only if it protects evidence, ethics or authorship; convenience/quality is Recommended or Information." See the note under EC-4.7 and EC-0.4 below. |
+| Status | **Approved, partially implemented.** Owner approved the level rubric 2026-10-11 (Q25): "Required only if it protects evidence, ethics or authorship; convenience/quality is Recommended or Information." Owner also approved (2026-10-12) that an unbuilt Required row reports as Information, not a block, until its task lands — see the note under EC-4.7 and EC-0.4. `app/exit_conditions.py` (X.48.1) implements this document; most per-transition rows are built (see the "Today" column per row). 2026-10-19 (X.72): EC-5.2, EC-5.3, EC-5.5, EC-6.2, EC-6.3, EC-6.4, EC-7.2, EC-13.2, EC-13.3 and EC-15.2 moved from "needs/not built" to real, built checks — see the G4 note below for EC-5.2/EC-5.3's effect on G4. |
 | Plan task | `plan.md` **X.45** / **X.53** (this document) · **X.48** (code that implements it) |
 
 ## How to read this
@@ -68,30 +68,32 @@ steps in parallel, navigating back to any earlier screen, and the owner's re-ent
 | EC-4.6 | retrieved → screened | Excluded records carry a reason code | Information | already enforced on save by `screening.check_reason`; shown here as a count for transparency | built | — |
 | EC-4.7 | retrieved → screened | PRISMA numbers computed from stored decisions | Recommended *(downgraded from Required 2026-10-11, Q25: a reporting-completeness condition, not direct evidence/ethics/authorship protection)* | `prisma.flow_counts` screening/exclusion counts are non-null | needs M2.8 | Results check: PRISMA |
 | EC-5.1 | screened → extracted | G4 approved | Required | EC-0.1 with G4 | built | Extraction review: approve G4 |
-| EC-5.2 | screened → extracted | Every extracted quote is found word-for-word in the stored full text | Required | every `Extraction.evidence_spans[*].quote` passes `FullText.find_quote()` (M3.4.1) | needs M3.4 — Information until built, does **not** block G4 | Extraction review: rejected-fields list |
-| EC-5.3 | screened → extracted | Every critical field checked side-by-side by a person | Required | every `Extraction` whose schema marks a field `critical` (`extraction_schema.FieldSpec.critical`) has `verified_by_human == true` | needs M3.6 — Information until built, does **not** block G4 | Side-by-side review (M3.6.1) |
+| EC-5.2 | screened → extracted | Every extracted quote is found word-for-word in the stored full text | Required | every current `Extraction.fields_json`/`evidence_spans` re-checked against the stored source PDF with `extraction_spans.check_evidence_spans`/`FullText.find_quote()` | built | Extraction review: rejected-fields list |
+| EC-5.3 | screened → extracted | Every critical field checked side-by-side by a person | Required | every current `Extraction` whose schema marks a field `critical` (`extraction_schema.FieldSpec.critical`) has `verified_by_human == true` | built | Side-by-side review |
 | EC-5.4 | screened → extracted | Every included study has an extraction | Recommended | every source whose full-text `final_decision.decision == "include"` has ≥ 1 `Extraction` | built | Extraction: "Start extraction" |
-| EC-5.5 | screened → extracted | AI said "not enough evidence" for some fields | Information | count of fields the AI marked insufficient (M3.3.2) | needs M3.3 | Extraction: show fields |
+| EC-5.5 | screened → extracted | AI said "not enough evidence" for some fields | Information | count of `null`-valued fields on current `extracted_by == "ai"` extractions | built | Extraction: show fields |
 | EC-6.1 | extracted → synthesized | At least one synthesis result exists | Recommended | ≥ 1 `ResearchRun.status == "completed"` or ≥ 1 `ClusterRun` | built | Ask / Themes |
-| EC-6.2 | extracted → synthesized | No claim marked verified without evidence | Required | DB check + API invariant from M3.11.2 (always true once built; shown here for transparency) | needs M3.11 | — |
-| EC-6.3 | extracted → synthesized | Cited sentences without a verified supporting quote | Recommended | count of citations flagged "support not checked" by M3.14 and not yet confirmed by a person | needs M3.14 | Ask: confirm or fix the citation |
-| EC-6.4 | extracted → synthesized | AI answers not yet accepted by a person | Information | count of research-run `AiSuggestion` rows with no accept event | needs X.46 | Ask: suggestion list |
+| EC-6.2 | extracted → synthesized | No claim marked verified without evidence | Required | DB trigger + API invariant (`app/claim_guard.py`, `routers/claims.py::verify_claim`); checked here for transparency, always 0 | built | — |
+| EC-6.3 | extracted → synthesized | Cited sentences without a verified supporting quote | Recommended | count of `ClaimEvidence` on a research-run claim with `support_confirmed_by IS NULL` | built | Ask: confirm or fix the citation |
+| EC-6.4 | extracted → synthesized | AI answers not yet accepted by a person | Information | count of `AiSuggestion` rows with `target_kind == "research_run"` and no `accepted`/`edited_and_accepted` event | built | Ask: suggestion list |
 | EC-7.1 | synthesized → gaps_selected | G5 approved | Required | EC-0.1 with G5 | built (gate only) | Gaps: approve G5 |
-| EC-7.2 | synthesized → gaps_selected | Every selected gap cites ≥ 2 papers or matrix cells | Required | M3.9.2 rule | not built (M3.9) | — |
+| EC-7.2 | synthesized → gaps_selected | Every selected gap cites ≥ 2 papers or matrix cells | Required | `gap_miner.validate_gap_evidence` rule, re-checked here for transparency (enforced at creation, `Gap` evidence is immutable after) | built | — |
 | EC-8.1 | gaps_selected → framework | G6 approved | Required | EC-0.1 with G6 | built (gate only) | Approvals |
-| EC-8.2 | gaps_selected → framework | Research questions/hypotheses linked to selected gaps | Recommended | M4.1 models | not built (M4.1) | — |
+| EC-8.2 | gaps_selected → framework | At least one research question is linked to a selected gap (FINER novelty/relevance) | Required | `ResearchQuestion.gap_links` non-empty for at least one project `ResearchQuestion` (M4.1) | built | Approvals: G6 refuses while unmet |
+| EC-8.3 | gaps_selected → framework | At least one conceptual-model path has a recorded measure for every construct it uses | Required | `ConceptualPath` + `Construct.measures` (M4.2) | built | Approvals: G6 refuses while unmet |
 | EC-9.1 | framework → design_approved | G7 approved by the owner (ethics; for a no-participants research type, a "no human participants" confirmation) | Required | EC-0.1 with G7 | built (gate only) | Approvals |
 | EC-10.1 | design_approved → data_collected | Data collection may only use a local model if participant data is sensitive | Required | M0.8.4 switch + Q4 | not built (M5.1, Q4 open) | — |
 | EC-11.1 | data_collected → plan_locked | G8 approved by the owner (analysis plan locked) | Required | EC-0.1 with G8 | built (gate only) | Approvals |
 | EC-11.2 | data_collected → plan_locked | Raw dataset stored immutably with a hash | Required | M5.1 | not built | — |
 | EC-12.1 | plan_locked → analyzed | G9 approved | Required | EC-0.1 with G9 | built (gate only) | Approvals |
-| EC-12.2 | plan_locked → analyzed | Every analysis run executed after the plan was locked | Required | `AnalysisRun.created_at > G8.decided_at` (M5.3) | not built | — |
+| EC-12.2 | plan_locked → analyzed | Every analysis run executed after the plan was locked | Required | `AnalysisRun.created_at > G8.decided_at` (M5.3) | built | Approvals: G9 refuses while unmet |
+| EC-12.3 | plan_locked → analyzed | The findings-to-literature map exists and every finding is confirmed by a person | Required | `interpretation_map.g9_readiness` (M6.9): current `InterpretationFinding` batch non-empty, every row has a `confirmed` `InterpretationReview` | built | Approvals: G9 refuses while unmet |
 | EC-13.1 | analyzed → drafted | G10 approved | Required | EC-0.1 with G10 | built (gate only) | Approvals |
-| EC-13.2 | analyzed → drafted | Every number in the draft links to an analysis run | Required | M6.3 | not built | — |
-| EC-13.3 | analyzed → drafted | Every citation in the draft is a verified reference | Required | M6.2 + `citation_verifier` | not built for drafts (already built for research answers, M1.10) | — |
+| EC-13.2 | analyzed → drafted | Every number in the draft links to an analysis run | Required | `manuscript_guard.section_report` (`number_citation.check_section`) over every saved `Document`, filtered to `unknown_run`/`unresolved_number` | built | Write: link-check |
+| EC-13.3 | analyzed → drafted | Every citation in the draft is a verified reference | Required | `manuscript_guard.section_report` (`claim_linker.check_section`) over every saved `Document`, filtered to `unknown_source`/`unverified_citation` | built | Write: link-check |
 | EC-14.1 | drafted → revised | Open reviewer comments | Information | M7.1 | not built | — |
 | EC-15.1 | revised → submission_ready | G11 approved by the owner | Required | EC-0.1 with G11 | built (gate only) | Approvals |
-| EC-15.2 | revised → submission_ready | Zero orphan claims; in-text citations match the reference list | Required | M6.2 | not built | — |
+| EC-15.2 | revised → submission_ready | Zero orphan claims; in-text citations match the reference list | Required | `manuscript_guard.section_report` over every saved `Document`: `orphan_claim_ids` plus `unknown_source`/`unverified_citation`/`evidence_not_cited` findings | built | Write: link-check |
 | EC-16.1 | submission_ready → submitted | Submission recorded | Information | M7 | not built | — |
 | EC-17.1 | submitted → revision_loop / accepted | None (re-entry is the way back to redo work) | Information | `stage_machine.allowed_next` | built | — |
 
@@ -104,10 +106,8 @@ steps in parallel, navigating back to any earlier screen, and the owner's re-ent
 Gate-approve for **G3** and **G4** also refuses while that stage's *reported-as-Required* rows are
 unmet (X.48.3). For G3 that includes an unresolved conflict (EC-4.2).
 
-**Known gap — G4 today:** EC-5.2 (quotes found word-for-word) and EC-5.3 (critical fields checked
-by a person) are reported as Information until M3.4 and M3.6 are built, so they do not block. G4
-can be approved now with no quote check and no critical-field check. The owner chose this on
-2026-10-12 (rather than blocking G4 until M3.4/M3.6 exist). Nothing has been extracted or
-verified in the app yet, so the approval covers no verified extraction evidence; treat a G4
-approval made before M3.4 and M3.6 land as an approval of the process, not of verified
-extractions. The same applies to every other "needs/not built" Required row above.
+**G4 note:** EC-5.2 (quotes found word-for-word) and EC-5.3 (critical fields checked by a person)
+were Information-only (not built) until 2026-10-19 (X.72); both are now real, Required checks and
+block G4 approval like any other unmet Required row. A G4 approved before 2026-10-19 under the old
+Information behavior was an approval of the process, not of verified extractions; re-open and
+re-approve G4 to get the real check's coverage on an older project.

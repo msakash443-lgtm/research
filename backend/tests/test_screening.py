@@ -399,6 +399,49 @@ def test_agreement_is_readable_by_every_project_role(world):
     assert world["supervisor"].get(f"/api/projects/{p}/screening/agreement").status_code == 200
 
 
+def test_aggregate_agreement_figures_are_owner_only(world):
+    # owner decision 2026-10-19 (M2.3.2/M2.3.3): the project-wide kappa/counts are owner only, so a
+    # co-author/supervisor/reviewer never learns how often reviewers agree, even outside dual-screen.
+    p, ids = world["pid"], world["ids"]
+    decide(world["owner"], p, ids[0], "include")
+    decide(world["co_author"], p, ids[0], "exclude", reason_code="E1")
+    owner_view = agreement(world["owner"], p)
+    assert owner_view["n"] == 1 and owner_view["kappa"] is not None and owner_view["scope"] is not None
+    for who in ("co_author", "supervisor", "reviewer"):
+        data = agreement(world[who], p)
+        assert data["n"] is None and data["agreed"] is None and data["percent_agreement"] is None
+        assert data["kappa"] is None and data["band"] is None and data["categories"] is None
+        assert data["matrix"] is None and data["note"] is None and data["scope"] is None, who
+        assert data["conflicts"] == owner_view["conflicts"]  # the conflict list itself is unaffected (M2.4.3)
+
+
+def test_screening_audit_events_are_each_reviewers_own_except_for_the_owner(world):
+    # owner decision 2026-10-19 (M2.3.2/M2.3.3): a non-owner's view of the audit trail shows only their
+    # own screening-decision events; the owner still sees every reviewer's.
+    p, ids = world["pid"], world["ids"]
+    decide(world["owner"], p, ids[0], "include")
+    decide(world["co_author"], p, ids[1], "exclude", reason_code="E1")
+
+    owner_events = world["owner"].get(f"/api/projects/{p}/audit").json()
+    owner_screening = [e for e in owner_events if e["action"].startswith("screening.")]
+    assert {e["actor"] for e in owner_screening} == {world["owner_id"], world["co_author"].get("/api/auth/me").json()["id"]}
+
+    co_author_events = world["co_author"].get(f"/api/projects/{p}/audit").json()
+    co_author_screening = [e for e in co_author_events if e["action"].startswith("screening.")]
+    co_author_id = world["co_author"].get("/api/auth/me").json()["id"]
+    assert co_author_screening and all(e["actor"] == co_author_id for e in co_author_screening)
+
+    # non-screening events (e.g. the project/source creation) are unaffected for everyone
+    assert "project.created" in {e["action"] for e in co_author_events}
+
+    supervisor_events = world["supervisor"].get(f"/api/projects/{p}/audit").json()
+    assert not any(e["action"].startswith("screening.") for e in supervisor_events)  # decided nothing themselves
+
+    # the export endpoint applies the same scoping
+    exported = world["co_author"].get(f"/api/projects/{p}/audit/export", params={"format": "json"}).json()
+    assert all(e["actor"] == co_author_id for e in exported if e["action"].startswith("screening."))
+
+
 def test_dual_screen_agreement_hides_a_conflict_from_a_screener_who_has_not_decided_it_but_not_from_one_who_cannot_screen(world):
     # spec 5.3.3 blinding protects people who can still screen; a supervisor cannot, and needs to see a conflict to
     # rule on it (owner decision 2026-10-12, M2.4.3)
@@ -412,10 +455,14 @@ def test_dual_screen_agreement_hides_a_conflict_from_a_screener_who_has_not_deci
     assert agreement(world["owner"], p)["conflicts"] == []  # can still screen this record: blinded
     assert agreement(world["co_author"], p)["conflicts"] == []
     # the aggregates must not reveal the two decisions on a record the screener has not decided either
-    for who in ("owner", "co_author"):
+    data = agreement(world["owner"], p)  # owner: the only role that sees aggregate figures (2026-10-19 decision)
+    assert data["scope"]["two_reviewers"] == 0 and data["n"] == 0 and data["matrix"] == {}
+    # co-author, supervisor and reviewer are not the owner: aggregate figures are null for all of them,
+    # regardless of whether they themselves are blinded from this conflict
+    for who in ("co_author", "supervisor", "reviewer"):
         data = agreement(world[who], p)
-        assert data["scope"]["two_reviewers"] == 0 and data["n"] == 0 and data["matrix"] == {}, who
-    assert agreement(world["supervisor"], p)["scope"]["two_reviewers"] == 1  # cannot screen: the full picture
+        assert data["scope"] is None and data["n"] is None and data["matrix"] is None, who
+    assert agreement(world["supervisor"], p)["conflicts"] != []  # cannot screen: not blinded from the conflict list itself
     assert [c["source_id"] for c in agreement(world["supervisor"], p)["conflicts"]] == [s]  # cannot screen: not blinded
     assert [c["source_id"] for c in agreement(world["reviewer"], p)["conflicts"]] == [s]
     # a screener who has decided the record themselves sees it, as they do in the decision history

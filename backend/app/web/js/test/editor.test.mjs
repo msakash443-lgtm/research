@@ -158,6 +158,21 @@ test("text inserted from an accepted AI suggestion is labelled ai_edited with it
   assert.equal(own.origin, "typed");
 });
 
+// A whole AI-drafted passage inserted at the cursor (X.46.8), not an edit of existing wording: it passes
+// origin "ai_suggested" explicitly, while the clearer-sentence call site above (no origin passed) still defaults
+// to "ai_edited".
+test("a draft inserted at the cursor is labelled ai_suggested when origin is passed", () => {
+  let state = stateWith(docWith(written("Old wording. ", "a", ME)), sidMaker("draft"));
+  const insertAt = state.doc.content.size - 1;
+  state = state.apply(state.tr.insertText("Drafted paragraph.", insertAt).setMeta(AI_INSERT_META, { suggestionId: "sug-9", origin: "ai_suggested" }));
+
+  const spans = [...spansOf(state.doc).values()];
+  const draft = spans.find((span) => span.text === "Drafted paragraph.");
+  assert.equal(draft.origin, "ai_suggested");
+  assert.equal(draft.sug, "sug-9");
+  assert.equal(draft.by, ME);
+});
+
 test("an ordinary insert is still typed by the author, even right after an AI insert", () => {
   let state = stateWith(docWith(written("Start. ", "a", ME)), sidMaker("t"));
   state = state.apply(state.tr.insertText("AI.", state.doc.content.size - 1).setMeta(AI_INSERT_META, { suggestionId: "sug-2" }));
