@@ -1,5 +1,13 @@
 const KEY = "research-ai-origin-colors";
 
+export function originStorage(globalObject = globalThis) {
+  try {
+    return globalObject.localStorage;
+  } catch {
+    return null;
+  }
+}
+
 export function readOriginColors(storage, projectId) {
   try {
     const stored = storage?.getItem(`${KEY}:${projectId}`);

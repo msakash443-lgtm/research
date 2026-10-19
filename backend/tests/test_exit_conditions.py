@@ -8,7 +8,7 @@ from app import stage_order
 from app.database import SessionLocal
 from app.gates import ensure_gates
 from app.main import app
-from app.models import Gate, GateCode, GateStatus, Project, ProjectStage
+from app.models import Gap, Gate, GateCode, GateStatus, Project, ProjectStage
 
 
 def _owner_project():
@@ -74,6 +74,40 @@ def test_a_question_or_objective_is_needed_for_ec_1_2():
     client.post(f"/api/projects/{pid}/context", json={"kind": "question", "content": "Does remote work raise output?"})
     assert _by_id(_conditions(pid))["EC-1.2"].met is True
 
+def test_ec_8_2_requires_questions_and_hypotheses_linked_to_a_selected_gap():
+    client, pid = _owner_project()
+    with SessionLocal() as db:
+        gap = Gap(
+            project_id=uuid.UUID(pid),
+            type="empirical",
+            statement="A selected gap",
+            selected=True,
+            created_by="test",
+        )
+        db.add(gap)
+        db.commit()
+        gap_id = str(gap.id)
+    before = _by_id(_conditions(pid, ProjectStage.framework, stage=ProjectStage.gaps_selected))["EC-8.2"]
+    assert (before.met, before.level) == (False, ec.Level.recommended)
+    question = client.post(
+        f"/api/projects/{pid}/research-questions",
+        json={"text": "How does trust affect collaboration?", "type": "relational", "gap_ids": [gap_id]},
+    )
+    assert question.status_code == 201, question.text
+    question_id = question.json()["id"]
+    hypothesis = client.post(
+        f"/api/projects/{pid}/hypotheses",
+        json={
+            "research_question_id": question_id,
+            "statement": "Trust improves collaboration.",
+            "direction": "positive",
+            "theoretical_basis": "Trust theory",
+            "empirical_support": "Selected gap evidence",
+        },
+    )
+    assert hypothesis.status_code == 201, hypothesis.text
+    after = _by_id(_conditions(pid, ProjectStage.framework, stage=ProjectStage.gaps_selected))["EC-8.2"]
+    assert after.met is True and after.fix is None
 
 def test_ec_3_2_is_met_without_seeds_and_stays_unmet_until_recall_is_measured():
     client, pid = _owner_project()

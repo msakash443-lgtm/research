@@ -21,6 +21,7 @@ def new_codebook(definitions: dict[str, str]) -> dict:
 def accept(state: dict, name: str, definition: str, actor: str) -> dict:
     """A human accepts a code (for example, an AI suggestion) into the codebook."""
     _check_name(name)
+    _check_definition(definition)
     _check_actor(actor)
     if name in state["codes"] or name in state["merged"]:
         raise ValueError(f"code already exists: {name!r}")
@@ -72,13 +73,8 @@ def resolve(state: dict, label: str) -> str:
     return label
 
 
-def cohen_kappa(coder_a: list[str], coder_b: list[str]) -> float:
-    """Cohen's kappa for two coders' nominal labels over the same excerpts.
-
-    Returns 1.0 when both coders agree everywhere and only one category is used
-    (expected agreement is also 1, so kappa is undefined and we report perfect
-    agreement rather than dividing by zero).
-    """
+def cohen_kappa(coder_a: list[str], coder_b: list[str]) -> float | None:
+    """Cohen's kappa, or ``None`` when the statistic is undefined."""
     if len(coder_a) != len(coder_b):
         raise ValueError("coders must label the same number of excerpts")
     n = len(coder_a)
@@ -89,13 +85,18 @@ def cohen_kappa(coder_a: list[str], coder_b: list[str]) -> float:
     count_b = Counter(coder_b)
     expected = sum(count_a[k] * count_b[k] for k in count_a.keys() | count_b.keys()) / (n * n)
     if expected == 1.0:
-        return 1.0
+        return None
     return (observed - expected) / (1.0 - expected)
 
 
 def _check_name(name: str) -> None:
     if not isinstance(name, str) or not name.strip():
         raise ValueError("code name must be a non-empty string")
+
+
+def _check_definition(definition: str) -> None:
+    if not isinstance(definition, str) or not definition.strip():
+        raise ValueError("code definition must be a non-empty string")
 
 
 def _check_actor(actor: str) -> None:

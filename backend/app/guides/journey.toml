@@ -248,9 +248,15 @@ meaning = "Gaps backed by at least two studies or matrix cells."
 meaning = "A person must approve the research questions, hypotheses and model."
 step = "approvals"
 [conditions."EC-8.2"]
+<<<<<<< Updated upstream
 meaning = "At least one research question is linked to a selected gap (the FINER critique's novelty/relevance criteria)."
 [conditions."EC-8.3"]
 meaning = "At least one conceptual-model path has a recorded measure for every construct it uses."
+=======
+meaning = "Research questions and hypotheses linked to the selected gaps."
+built = true
+step = "scope"
+>>>>>>> Stashed changes
 [conditions."EC-9.1"]
 meaning = "The owner must approve the design and ethics before data collection."
 step = "approvals"

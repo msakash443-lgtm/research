@@ -14,7 +14,7 @@ import { citableSources, citedIdsIn, pickerMatches, sourceLabel } from "../sourc
 import { matchingNumbers, numberLabel, runLabel, statAttrs } from "../numberPanelLogic.js";
 import { renderReport } from "../provenanceReport.js";
 import { manuscriptExportItems } from "../manuscriptExportLogic.js";
-import { readOriginColors, writeOriginColors } from "../originColorsLogic.js";
+import { originStorage, readOriginColors, writeOriginColors } from "../originColorsLogic.js";
 
 // The writing editor (X.31.4). A section is saved as versions: the editor sends the whole document with the version
 // it was built on (`base_number`), and the server adds the next version or refuses (409 when someone else saved first,
@@ -164,7 +164,7 @@ async function openSection(root, ctx, section) {
     resultsEl: null, pollTimer: null, similarityTimer: null,
     // The last saved version's id and plain text: a similarity flag's offsets point into this text (X.31.14).
     latestId: latest?.id ?? null, latestText: latest?.content_text ?? "",
-    originColors: readOriginColors(window.localStorage, ctx.project.id),
+    originColors: readOriginColors(originStorage(window), ctx.project.id),
   };
   editorEl.classList.toggle("origin-colors-off", !s.originColors);
 

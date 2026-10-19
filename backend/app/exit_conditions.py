@@ -49,6 +49,10 @@ from app.models import (
     ProjectStage,
     ResearchContextItem,
     ResearchQuestion,
+<<<<<<< Updated upstream
+=======
+    Hypothesis,
+>>>>>>> Stashed changes
     ResearchRun,
     ResearchRunStatus,
     ScreeningCriterion,
@@ -569,6 +573,7 @@ def ec_8_1(db: Session, project: Project) -> Condition:
 
 
 def ec_8_2(db: Session, project: Project) -> Condition:
+<<<<<<< Updated upstream
     """At least one research question is drafted and linked to a selected gap, so the FINER critique's
     novelty/relevance criteria are not blocked on a missing gap link (M4.1)."""
     questions = list(db.scalars(select(ResearchQuestion).where(ResearchQuestion.project_id == project.id)))
@@ -613,6 +618,26 @@ def ec_8_3(db: Session, project: Project) -> Condition:
         if met
         else "no conceptual-model path yet has a recorded measure for every construct it uses",
         None if met else "Approvals: record a measure for each construct used in at least one path",
+=======
+    questions = db.scalars(
+        select(ResearchQuestion).where(ResearchQuestion.project_id == project.id)
+    ).all()
+    hypotheses = db.scalars(
+        select(Hypothesis).where(Hypothesis.project_id == project.id)
+    ).all()
+    question_ids = {question.id for question in questions}
+    linked_question_ids = {hypothesis.research_question_id for hypothesis in hypotheses}
+    has_gap_link = any(question.gap_links for question in questions)
+    met = bool(questions and question_ids <= linked_question_ids and has_gap_link)
+    return Condition(
+        "EC-8.2",
+        Level.recommended,
+        met,
+        "research questions and hypotheses are linked to selected gaps"
+        if met
+        else "research questions and hypotheses must be linked to selected gaps",
+        None if met else "Scope: draft a research question and hypothesis",
+>>>>>>> Stashed changes
     )
 
 

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readOriginColors, writeOriginColors } from "../originColorsLogic.js";
+import { originStorage, readOriginColors, writeOriginColors } from "../originColorsLogic.js";
 
 function storage() {
   const values = new Map();
@@ -21,4 +21,11 @@ test("blocked storage leaves origin colours enabled and does not block writes", 
   const blocked = { getItem() { throw new Error("blocked"); }, setItem() { throw new Error("blocked"); } };
   assert.equal(readOriginColors(blocked, "p1"), true);
   assert.doesNotThrow(() => writeOriginColors(blocked, "p1", false));
+});
+test("blocked localStorage getter falls back without throwing", () => {
+  const globalObject = {};
+  Object.defineProperty(globalObject, "localStorage", {
+    get() { throw new Error("blocked"); },
+  });
+  assert.equal(originStorage(globalObject), null);
 });

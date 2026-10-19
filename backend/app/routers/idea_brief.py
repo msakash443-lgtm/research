@@ -291,8 +291,9 @@ def get_semantic_novelty(
 
 LANDSCAPE_CONNECTORS = ("openalex", "crossref", "semantic_scholar")  # first enabled one is used
 LANDSCAPE_NOTE = (
-    "What this one search returned, not the whole literature. Citation counts are as the service reports them; a blank "
-    "count means the service gave none, not zero. Review titles are a heuristic: check each one. The scholar decides."
+    "What this one search returned, not the whole literature. The top-cited list is ranked within the returned sample, "
+    "not globally; citation counts are as the service reports them; a blank count means the service gave none, not zero. "
+    "Review titles are a heuristic: check each one. The scholar decides."
 )
 REVIEW_WINDOW_YEARS = 5
 

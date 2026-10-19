@@ -13,12 +13,13 @@ def test_accept_adds_a_logged_code():
     assert state["log"][-1] == {"op": "accept", "code": "fear", "actor": "coder1"}
 
 
-def test_accept_refuses_duplicates_and_unnamed_actor():
+def test_accept_refuses_duplicates_unnamed_actor_and_empty_definition():
     with pytest.raises(ValueError):
         qc.accept(_book(), "trust", "again", actor="coder1")
     with pytest.raises(ValueError):
         qc.accept(_book(), "fear", "x", actor="  ")
-
+    with pytest.raises(ValueError):
+        qc.accept(_book(), "fear", "   ", actor="coder1")
 
 def test_rename_keeps_old_label_resolvable():
     state = qc.rename(_book(), "trust", "institutional trust", actor="coder1")
@@ -70,8 +71,8 @@ def test_kappa_matches_hand_computed_value():
     assert qc.cohen_kappa(["a", "a", "b", "b"], ["a", "a", "b", "a"]) == pytest.approx(0.5)
 
 
-def test_kappa_single_category_is_perfect_not_division_by_zero():
-    assert qc.cohen_kappa(["x", "x"], ["x", "x"]) == 1.0
+def test_kappa_single_category_is_undefined():
+    assert qc.cohen_kappa(["x", "x"], ["x", "x"]) is None
 
 
 def test_kappa_input_checks():

@@ -65,9 +65,13 @@ def fetch_responses(client: httpx.Client, form_id: str) -> list[dict[str, Any]]:
     """Every response, following `nextPageToken`, up to MAX_RESPONSES. Refuses to truncate silently."""
     responses: list[dict[str, Any]] = []
     token: str | None = None
+    seen_tokens: set[str] = set()
     while True:
         params: dict[str, Any] = {"pageSize": PAGE_SIZE}
         if token:
+            if token in seen_tokens:
+                raise SurveyError("The survey service repeated a page token; import is refused.")
+            seen_tokens.add(token)
             params["pageToken"] = token
         page = _get(client, f"/forms/{form_id}/responses", params)
         responses.extend(page.get("responses") or [])

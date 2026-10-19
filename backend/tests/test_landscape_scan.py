@@ -142,6 +142,7 @@ def test_scan_reports_what_the_search_returned(client, enabled):
     assert body["uncounted"] == 1
     assert body["volume_by_year_in_sample"][str(this_year - 2)] == 1
     assert "not the whole literature" in body["note"]
+    assert "within the returned sample" in body["note"]
     assert fake.requests[0].query == "trust teams"
     assert fake.requests[0].limit == 10
 

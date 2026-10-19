@@ -1,6 +1,6 @@
 # X.14 clickable wireframes
 
-Static, clickable prototypes for the three M2+ screens that plan.md rule 32 says must be walked through by the scholar **before** they are built. Open `index.html` in a browser (double-click works; no server, no build). Data is invented, nothing is saved, nothing calls the app's API.
+Static, clickable prototypes for the three M2+ screens that plan.md rule 32 says must be walked through by the scholar **before** they are built. Open `index.html` in a browser (double-click works; no server, no build). Data is invented and nothing calls the app's API. The screening queue keeps its example decisions in this browser only so its reload walkthrough can be demonstrated; the other prototypes reset on reload.
 
 See also [`step-template-checklist.md`](step-template-checklist.md): a one-page checklist for the walkthrough of **every** screen in the app today, built and not-yet-built, added 2026-10-10 at the owner's request (X.40 decision 3).
 

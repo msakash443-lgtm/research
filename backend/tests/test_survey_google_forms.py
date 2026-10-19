@@ -73,6 +73,14 @@ def test_fetch_follows_pagination_and_sends_bearer_token_only_to_forms_host():
     assert [r[0] for r in rows] == ["r1", "r2"]
     assert all(req.url.host == "forms.googleapis.com" for req in seen)
     assert all(req.headers["authorization"] == "Bearer secret-token" for req in seen)
+def test_repeated_page_token_is_refused_instead_of_looping_forever():
+    pages = {
+        "first": {"responses": [_response("r1", "2026-10-01T00:00:00Z", {})], "nextPageToken": "repeat"},
+        "repeat": {"responses": [], "nextPageToken": "repeat"},
+    }
+    with pytest.raises(gf.SurveyError, match="repeated a page token"):
+        gf.fetch_table("F1", "secret-token", transport=_transport(pages))
+
 
 
 @pytest.mark.parametrize("status,expected", [(401, "refused the access token"), (404, "could not find"), (500, "HTTP 500")])

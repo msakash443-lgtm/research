@@ -5,7 +5,7 @@
 > that prove it. **plan.md is the source of truth for status**; this table is a snapshot and must be
 > updated whenever a task is added, finished or dropped (plan.md rule 31).
 >
-> Snapshot: 2026-10-10 (refreshed) · test baseline **2336 passed, 6 skipped, 0 failed** (Python 3.12 full run 2026-10-10) · tests live in `backend/tests/`. **M0 closed 2026-10-09, M1 closed 2026-10-10** (plan.md M0/M1 headers `[x]`, every M1.1–M1.14 epic `[x]`); M0- and M1-scoped rows below refreshed to match. M2–M7/X rows not re-verified this pass — still as of 2026-10-09/2026-10-10 where they touch M1 dependencies.
+> Snapshot: 2026-10-19 (M3 implementation refreshed) · test baseline **3073 passed, 13 skipped, 0 failed** (full `pytest -q`, SQLite/offline) · tests live in `backend/tests/`. M0/M1/M2/M4 core exits are recorded; M3 implementation is verified, but X.15/M3.15/X.16 real-data exit evidence remains blocked.
 > Status here follows plan.md as of the snapshot date; where the two disagree, plan.md wins.
 
 **Status key:** `[x]` done · `[?]` built, awaiting review · `[~]` in progress · `[ ]` not started ·
@@ -19,10 +19,10 @@
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
 |---|---|---|---|---|---|
 | 5.1.1 | Cluster/de-dup ideas; extract constructs & contexts | M4.7.c | `GET /api/projects/{id}/idea-brief` (`clusters`, `constructs`, `duplicate_ideas`) | `test_idea_clustering.py`, `test_idea_brief.py` | `[?]` (lexical only; contexts not extracted) |
-| 5.1.2 | Rapid landscape scan | M4.7 | — | — | `[ ]` |
+| 5.1.2 | Rapid landscape scan | M4.7.a, M4.7.d | `GET /api/projects/{id}/idea-brief/landscape-scan?query=&limit=` | `test_landscape_scan.py`, live OpenAlex connector check | `[?]` (249 focused tests pass; direct live OpenAlex check passed, but route-level live evidence and globally top-cited ordering remain open; output is top-cited in returned sample) |
 | 5.1.3 | Novelty heuristic **with visible comparators**; feasibility checklist | M4.7, M4.7.b | `GET/PUT /api/projects/{id}/idea-brief`; `GET …/idea-brief/semantic-novelty` (M4.7.b: embedding cosine, per-request, nothing stored, `model_id` recorded) | `test_idea_scoping.py`, `test_idea_brief.py`, `test_semantic_novelty.py`, `test_semantic_novelty_api.py`, `test_role_matrix.py` | `[?]` (lexical and semantic comparators built; semantic one needs EMBEDDING_MODEL and independent review) |
 | 5.1 in | Free-text idea/voice-note capture, scoping notes (design: `docs/researcher-workspace-design.md`) | X.31.1–X.31.2, X.31.17 | `POST/GET/PATCH /api/notes`, capture dialog; triage: `POST /api/notes/{id}/file`, `…/promote`, `GET …/suggestions`, `GET /api/projects/{id}/context?kind=`; inbox and decision-log screen (`#/inbox`, `web/js/inbox.js`) | `test_notes.py`, `test_note_guard.py`, `test_notes_triage.py`, `test_note_suggest.py`, `web/js/test/inboxLogic.test.mjs` | X.31.1 `[?]` (quick capture built); X.31.2.a `[?]` (triage backend); X.31.2.1 `[?]` (inbox and decision-log screen built ahead of the wireframe walkthrough, rule 32 override); X.31.17 `[ ]` |
-| 5.1 out | One-page idea brief | M4.7 | `GET/PUT /api/projects/{id}/idea-brief` (problem, why it matters, risks, chosen idea, feasibility; landscape snapshot pending the scan subtask) | `test_idea_brief.py` | `[?]` (partial: landscape snapshot missing) |
+| 5.1 out | One-page idea brief | M4.7, M4.7.a | `GET/PUT /api/projects/{id}/idea-brief` and landscape scan | `test_idea_brief.py`, `test_landscape_scan.py` | `[?]` (brief built; landscape snapshot remains pending M4.7.a/d closure) |
 | 5.1 gate | G1 approve topic direction | M4.7, M0.5.2–M0.5.4 | `ready_for_g1` on the idea-brief GET (readiness only; approval stays in the gates list) | `test_idea_brief.py` | `[ ]` (readiness built; G1 approval unchanged) |
 
 ### §5.2 Systematic literature search
@@ -47,19 +47,19 @@
 | 5.3.2 | Active-learning prioritisation | M2.6 | `GET/PUT …/screening/active-learning`, `screening/queue?sort=relevance` | `test_active_learning.py`, `test_screening.py`, `test_role_matrix.py` | `[x]` (naive-Bayes bag-of-words classifier, no embeddings; falls back to oldest-first with no training signal) |
 | 5.3.3 | Dual screen, kappa, conflict queue | M2.4.1–M2.4.2b | `GET/PUT …/screening/dual-screen`, `screening/queue` + `screening/decisions` (blinded), `screening/decisions/undo` (per-reviewer), `GET …/screening/agreement` | `test_screening.py`, `test_role_matrix.py`, `test_agreement.py` | `[x]` |
 | 5.3.4 | OA full-text fetch; paywalled → manual upload; full-text screening stage | M2.7.1–M2.7.4, M2.7.7 | `POST …/sources/{id}/fulltext/fetch`, `POST …/sources/{id}/fulltext/upload`, `GET …/sources/{id}/fulltext`, `screening/queue?stage=full_text` | `test_oa_fetch.py`, `test_fulltext_upload.py`, `test_screening.py`, `test_role_matrix.py` | `[x]` (M2.7.5 DNS-rebinding pin and M2.7.6 more OA sources still `[ ]`) |
-| 5.3 UI | Keyboard-first screening queue | M2.3.1–M2.3.2, **X.14** (wireframe first) | wireframe `docs/wireframes/screening-queue.html` (X.14, awaiting scholar walkthrough) | — | `[ ]` |
-| 5.3 gate | No AI auto-exclude without sampling audit; G3 | M2.5.1, M2.8.1 | `GET/PUT …/screening/auto-exclude`, `GET …/screening/auto-exclude/audits`, `POST …/auto-exclude/audits/{id}/review` | `test_prescreen.py`, `test_screening.py`, `test_ai_quality.py`, `test_role_matrix.py` | `[x]` (M2.5.1 built; M2.8.1 gate wiring still `[ ]`) |
-| 5.3 QC | Stop AI pre-screen when agreement drops | M2.5.2, M2.9 | `GET …/screening/ai-agreement`, `PUT …/screening/ai-prescreen` | `test_prescreen.py`, `test_screening.py`, `test_ai_quality.py` | `[x]` (M2.5.2 built; M2.9 gold-set evaluation still `[ ]`, blocked on X.15) |
+| 5.3 UI | Keyboard-first screening queue | M2.3.1, X.14, X.32 | authenticated workspace/screening UI; wireframe `docs/wireframes/screening-queue.html` | `test_screening.py`, frontend suite (84), authenticated browser smoke | `[x]` (core UI verified; M2.3.2/M2.3.3 policy-dependent bulk/conflict extensions remain deferred) |
+| 5.3 gate | No AI auto-exclude without sampling audit; G3 | M2.5.1, M2.8.1 | `GET/PUT …/screening/auto-exclude`, `GET …/screening/auto-exclude/audits`, `POST …/auto-exclude/audits/{id}/review` | `test_prescreen.py`, `test_screening.py`, `test_ai_quality.py`, `test_role_matrix.py` | `[x]` (sampling audit atomicity, G3 lock and reason guard verified) |
+| 5.3 QC | Stop AI pre-screen when agreement drops | M2.5.2 | `GET …/screening/ai-agreement`, `PUT …/screening/ai-prescreen` | `test_prescreen.py`, `test_screening.py`, `test_ai_quality.py` | `[x]` (M2.9 gold-set measurement deferred on X.15; guard behavior verified) |
 
 ### §5.4 Extraction and evidence tables
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
 |---|---|---|---|---|---|
 | 5.4.1 | Versioned discipline schemas with nested Appendix B value validation | M3.1.1–M3.1.2 | `extraction_schema.py`, `extraction_schemas/` | `test_extraction_schema.py`, `test_project_schemas.py`, `test_project_schema_guard.py` | M3.1 `[x]` (independent review found no defect) |
 | 5.4.2 | LLM extraction with evidence spans | M3.2.1, M3.3.1–M3.3.2 | `ai_extraction.py`, `routers/extractions.py`, `evidence_extraction.v1.toml` | `test_ai_extraction.py`, `test_extractions.py`, `test_role_matrix.py` | M3.2 `[x]`; M3.3 `[x]` (independently reviewed; post-fix full suite: 2186 passed, 6 skipped) |
-| 5.4.3 | Verbatim span verification | M3.4.1–M3.4.2; groundwork M0.2.6 (immutable excerpts) | — | `test_excerpt_immutability.py` | M0.2.6 `[?]`, M3.4 `[ ]` |
-| 5.4.4 | Matrix view, every cell links to source; CSV/Excel | M3.5.1–M3.5.2, **X.14** | wireframe `docs/wireframes/evidence-table.html` (X.14, awaiting scholar walkthrough) | — | `[ ]` |
-| 5.4 gate | G4 verify critical fields, side-by-side PDF | M3.6.1–M3.6.2 | — | — | `[ ]` |
-| 5.4 QC | Double extraction on a sample | M3.3.3 | `ai_extraction.py`, `models.py`, `routers/extractions.py`, migration 0051 | `test_ai_extraction.py` | `[~]` (stable 10% sample, second evidence-checked pass and field agreement implemented; final verification pending) |
+| 5.4.3 | Verbatim span verification | M3.4.1–M3.4.2; groundwork M0.2.6 (immutable excerpts) | shared span checker and extraction save/verify paths | `test_extraction_verification.py`, `test_excerpt_immutability.py` | M3.4 `[x]` implementation verified; real-paper demo pending X.15/X.16 |
+| 5.4.4 | Matrix view, every cell links to source; CSV/Excel | M3.5.1–M3.5.2, X.14 | evidence matrix/export endpoints; evidence-table wireframe | `test_evidence_matrix.py`, role tests | M3.5 `[x]` implementation verified; real-paper UI/demo pending X.14.2/X.16 |
+| 5.4 gate | G4 verify critical fields, side-by-side PDF | M3.6.1–M3.6.2 | extraction verification and G4 gate enforcement | `test_extraction_verification.py`, gate/role tests | M3.6 `[x]` implementation verified; actual G4 approval remains human/data-dependent |
+| 5.4 QC | Double extraction on a sample | M3.3.3 | `ai_extraction.py` double-extraction path | `test_ai_extraction.py` | `[x]` implementation verified; real sample agreement awaits X.15 |
 
 ### §5.5 Synthesis, constructs and gaps
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
@@ -76,34 +76,41 @@
 ### §5.6 RQs, hypotheses, framework
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
 |---|---|---|---|---|---|
-| 5.6.1 | Human-owned RQ/hypothesis drafts linked to selected gaps; transparent advisory FINER critique | M4.1 | `GET/POST/PATCH /api/projects/{id}/research-questions`; `GET …/research-questions/{id}/finer`; `GET/POST/PATCH /api/projects/{id}/hypotheses` | `test_research_questions.py`, `test_role_matrix.py` | `[~]` (implementation and focused/migration checks complete; full-suite result and independent review pending) |
-| 5.6.2–4 | Conceptual model, diagram, construct–measure check | M4.2 | — | — | `[ ]` |
-| 5.6 gate | G6 approve RQs, hypotheses, model | M4.8 *(new)* | — | — | `[ ]` |
+| 5.6.1 | Human-owned RQ/hypothesis drafts linked to selected gaps; transparent advisory FINER critique | M4.1 | `GET/POST/PATCH /api/projects/{id}/research-questions`; `GET …/research-questions/{id}/finer`; `GET/POST/PATCH /api/projects/{id}/hypotheses` | `test_research_questions.py`, `test_role_matrix.py` | `[x]` (focused 243 passed; full pytest 3072 passed, 13 skipped, 9 warnings) |
+| 5.6.2–4 | Conceptual model, diagram, construct–measure check | M4.2, M4.2.1 | conceptual-model API | `test_conceptual_model.py`, role/lookup tests | `[x]` (independently accepted; API-only, no UI by design) |
+| 5.6 gate | G6 approve RQs, hypotheses, model | M4.8 | gate/stage APIs; EC-8.2 checks linked RQs/hypotheses and selected gaps | `test_exit_conditions.py`, `test_gate_required_conditions.py`, `test_guidance.py` | `[x]` condition implemented and audited Recommended override path verified; human G6 approval remains a gate action |
 
 ### §5.7 Design and ethics
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
 |---|---|---|---|---|---|
-| 5.7.1–2 | Method recommender; sampling/power; qualitative saturation guidance | M4.3 `[x]`, M4.3.1 `[x]` (ANOVA/regression power), M4.3.2 `[?]` (saturation ranges) | `GET /api/projects/{id}/design/method-recommendation`; `GET …/design/sample-size`; `GET …/design/saturation-guidance` (M4.3.2, read-only, stateless) | `test_design_tools.py`, `test_saturation_guidance.py`, `test_role_matrix.py`, `test_never_lock.py` | `[~]` (M4.3/M4.3.1 accepted by @codex; M4.3.2 built, awaiting independent review and full-suite result) |
-| 5.7.3 | Instrument builder; item-quality checks | M4.4 (M4.4.1 item checks `[?]`; M4.4.2 measure-library builder and M4.4.3 validity/reliability plan open) | `POST /api/projects/{id}/instrument/item-checks` (stateless flags) | `test_item_checks.py`, `test_role_matrix.py` | `[~]` (item checks built; instrument builder blocked: no validated-measure library in the repo) |
-| 5.7.4 | Ethics pack; G7 sign-off | M4.5 | — | — | `[ ]` |
-| 5.7.5 | Pre-registration draft | M4.6 | `GET /api/projects/{id}/preregistration` (AsPredicted answers and OSF sections from stored RQs/hypotheses; stateless, nothing submitted) | `test_preregistration.py`, `test_role_matrix.py` | `[?]` (draft built; filing is the researcher's act; needs independent review) |
+| 5.7.1–2 | Method recommender; sampling/power; qualitative saturation guidance | M4.3 `[x]`, M4.3.1 `[x]`, M4.3.2 `[x]` | `GET /api/projects/{id}/design/method-recommendation`; `GET …/design/sample-size`; `GET …/design/saturation-guidance` | `test_design_tools.py`, `test_saturation_guidance.py`, `test_role_matrix.py`, `test_never_lock.py` | `[x]` (accepted; SQLite/offline; cited saturation ranges remain advisory) |
+| 5.7.3 | Instrument builder; item-quality checks | M4.4, M4.4.1–M4.4.3 | instrument endpoints | `test_item_checks.py`, `test_measure_library.py`, `test_validity_plan.py`, `test_role_matrix.py` | `[x]` (focused instrument suite 328 passed; static citation-only measure library, licences remain `to check`) |
+| 5.7.4 | Ethics pack; G7 sign-off | M4.5 | `GET /api/projects/{id}/ethics-pack` | `test_ethics_pack.py`, gate/role tests | `[x]` pack owner-approved with bracketed institutional facts; actual G7 approval remains a human gate action |
+| 5.7.5 | Pre-registration draft | M4.6 | `GET /api/projects/{id}/preregistration` | `test_preregistration.py`, role tests | `[x]` (owner approved as an advisory, non-submitting draft) |
 
 ### §5.8 Data collection and management
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
 |---|---|---|---|---|---|
-| 5.8.1–2 | Survey deploy/ingest; response-quality monitoring | M5.2, M5.1 | — | — | `[?]` M5.2 built (Google Forms import + rule-based quality); awaiting review |
-| 5.8.3 | Logged reversible cleaning; immutable raw data | M5.1 | `POST/GET /api/projects/{id}/datasets`; `GET …/datasets/{id}` (`intact`); `GET …/datasets/{id}/content`; `POST …/datasets/{id}/clean` (new version, parent kept; no edit/delete route) | `test_datasets.py`, `test_role_matrix.py` | `[?]` (API-level immutability; DB trigger not added; Q4 applies before analysis of participant data) |
-| 5.8.4 | Anonymisation; **codebook auto-generation** | M5.6, M5.7 *(new)* | — | — | M5.6 `[?]` (keyed pseudonymisation built, awaiting review); M5.7.2 `[?]` (codebook built, awaiting review) |
-| 5.8.5 | Qualitative **transcription**, anonymisation, storage | M5.7 *(new)* | — | — | M5.7.3 `[?]` (anonymisation built, awaiting review); transcription M5.7.4 `[!]` (no service approved) |
-| 5.8 gate | **Approve exclusion rules before applying**; never silently drop cases | M5.7 *(new)* | — | — | M5.7.1 `[?]` (approval flow built, awaiting review) |
+| 5.8.1–2 | Survey deploy/ingest; response-quality monitoring | M5.2, M5.1 | Google Forms import and rule-based quality endpoints | `test_survey_google_forms.py`, `test_response_quality.py`, `test_survey_api.py`, role tests | M5.2 `[?]` (pagination safety verified; live Google API/token refresh unverified) |
+| 5.8.3 | Logged reversible cleaning; immutable raw data | M5.1 | dataset version/content/clean routes | `test_datasets.py`, `test_role_matrix.py` | `[x]` ingestion/cleaning verified; API-level immutability and Q4 participant-analysis limitation remain documented |
+| 5.8.4 | Anonymisation; codebook auto-generation | M5.6, M5.7 | pseudonymisation/codebook endpoints | dataset/codebook/role tests | M5.6 `[?]` local-model participant path absent; M5.7.2 `[x]` codebook accepted |
+| 5.8.5 | Qualitative transcription, anonymisation, storage | M5.7 | transcript anonymisation endpoint | transcript/role tests | M5.7.3 `[x]` anonymisation accepted; M5.7.4 `[!]` no approved speech-to-text service |
+| 5.8 gate | Approve exclusion rules before applying; never silently drop cases | M5.7.1 | exclusion-rule propose/approve/apply endpoints | `test_exclusion_rules.py`, role tests | `[x]` approval/hash/dataset binding and no-silent-drop behavior verified |
 
 ### §5.9 Analysis
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
 |---|---|---|---|---|---|
+<<<<<<< Updated upstream
 | 5.9 Q1–2 | Scripts from plan; pinned env, seeds; G8 | M5.3 | — | — | `[~]` scripts (M5.3.2) and sandboxed runs (M5.3.3) built `[?]`; G8 precondition M5.3.4 `[ ]`; container path not run (no Docker here) |
 | 5.9 Q3 | Robustness suite | M5.4 | — | — | `[?]` M5.4.1 helpers `[?]`; suite M5.4.2 built `[?]` (alternative specs, outlier/missing-data comparisons via governed dataset versions, re-run identity) |
 | 5.9 Q4 | **Journal-style tables/figures**; notebooks | M5.4, M5.8 *(new)* | — | — | `[?]` M5.4.2 notebook export built; M5.8 (journal-style tables/figures) `[!]` blocked separately |
 | 5.9 Qual | Coding assist, codebook, inter-coder agreement | M5.5 | — | — | `[~]` M5.5.1 logic `[?]`; AI suggestions M5.5.2 blocked on Q4 |
+=======
+| 5.9 Q1–2 | Scripts from plan; pinned env, seeds; G8 | M5.3 | analysis-plan/script/run endpoints | analysis-plan/runner/gate tests | `[~]` sandboxed runs remain under review and require runtime/image evidence |
+| 5.9 Q3 | Robustness suite | M5.4 | pure robustness helpers | `test_robustness.py` | `[~]` M5.4.1 `[x]`; full suite/notebook reruns blocked on M5.3.3 |
+| 5.9 Q4 | **Journal-style tables/figures**; notebooks | M5.4, M5.8 *(new)* | — | — | `[!]` M5.8 blocked (M5.3 not `[x]`) |
+| 5.9 Qual | Coding assist, codebook, inter-coder agreement | M5.5 | pure coding state plus optional local-model suggestion routes | qualitative coding/API tests | `[~]` M5.5.1 `[x]`; M5.5.2 remains Q4/local-model constrained |
+>>>>>>> Stashed changes
 | 5.9 gate | G9; **pre-registration deviations documented** | M5.8 *(new)*, M6.9 *(new)* | — | — | `[ ]` |
 | 5.9 QC | Re-run gives identical numbers | M5.4 | — | — | `[?]` fingerprint helper (M5.4.1) and re-run identity check (M5.4.2) built, needs review |
 
@@ -174,11 +181,11 @@
 |---|---|---|---|---|---|
 | G1 | Idea scoping | M4.7 | M0.5.2–M0.5.4 `[x]` (gates stored, human-only decisions, tasks behind a pending gate stay blocked) | `test_gates.py`, `test_gate_decisions.py`, `test_gated_tasks.py` | gate `[x]`; stage content `[ ]` |
 | G2 | Before bulk search | M1.8.1 | ″ | `test_search_gate.py` | `[x]` |
-| G3 | After screening | M2.8.1 | ″ (decisions lock once G3 is approved, M2.1.3) | `test_screening.py` | lock `[?]`; M2.8.1 `[ ]` |
+| G3 | After screening | M2.8.1 | ″ (decisions lock once G3 is approved, M2.1.3) | `test_screening.py`, `test_gate_required_conditions.py`, `test_role_matrix.py` | `[x]` (human approval, reason completeness and decision/undo lock verified) |
 | G4 | After extraction | M3.6.2 | ″ | — | `[ ]` |
 | G5 | After gap analysis | M3.9.3 | ″ | — | `[ ]` |
-| G6 | After RQ/framework | M4.8 *(new)* | ″ | — | `[ ]` |
-| G7 | Before data collection | M4.5 | ″ | — | `[ ]` |
+| G6 | After RQ/framework | M4.8 | gate/stage API; EC-8.2 | `test_exit_conditions.py`, `test_gate_required_conditions.py`, `test_guidance.py` | `[x]` condition enforcement implemented; approval remains human-only |
+| G7 | Before data collection | M4.5 | gate/stage API | `test_gate_decisions.py`, `test_gate_reopen.py`, `test_research_types.py` | `[x]` mechanism/role verified; actual owner approval remains pending per gate integrity rules |
 | G8 | Before analysis | M5.3 | ″ | — | `[ ]` |
 | G9 | After analysis | M6.9 *(new)* | ″ | — | `[ ]` |
 | G10 | Per manuscript section | M6.11 | ″; plus per-section `POST …/documents/{doc}/approve` | `test_section_approval.py` | `[?]` (built 2026-10-19, needs review) |
@@ -205,7 +212,7 @@
 | Auditability (immutable, exportable) | M0.4.1–M0.4.5 | `test_audit_*.py` | `[?]` |
 | **Performance** (≥ 1,000 abstracts/h; 500 papers indexed < 1 h) | X.19 | `backend/tests/test_performance_benchmark.py` (app-side overhead only; model latency not measured) | `[?]` |
 | Scalability (multi-user, queue workers) | M0.3, M0.6 | — | `[ ]` |
-| Usability (keyboard screening, side-by-side, diffs) | M2.3.1, M3.6.1, M6.8, **X.14** (3 clickable wireframes in `docs/wireframes/`, walkthrough pending), X.32 | — | `[ ]` |
+| Usability (keyboard screening, side-by-side, diffs) | M2.3.1, M3.6.1, M6.8, X.14, X.32 | frontend suite, authenticated browser smoke | `[x]` for M2 keyboard/workspace UI; M3/M6 screens remain open |
 | Portability (open export formats) | X.8, M1.11, M3.5.2, M6.5, X.34 (Obsidian vault, verified-only) | `test_obsidian_export.py` (X.34.1), `test_manuscript_export.py` (M6.5 md/docx/latex/json/bibtex) | `[ ]` (X.34.1 `[?]`; M6.5 `[?]`, built 2026-10-18 needs review) |
 | Observability | X.7, M0.9.1 | — | `[ ]` |
 
