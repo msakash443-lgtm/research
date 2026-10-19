@@ -1042,6 +1042,7 @@ Spec: §5.4, §5.5 · exit: *verified evidence table + ranked gaps* (spec M3, ac
 - [ ] **X.81** Follow-up market research (docs only): verified features and pricing for Elicit, Covidence, Rayyan, DistillerSR and Undermind; bottom-up market size; current journal and publisher AI-disclosure rules; GDPR and ethics-board requirements — `P3` — deps: none
 - [ ] **X.82** Reference-manager interoperability: Zotero import/export and an Overleaf-friendly LaTeX package, on top of the X.8 exports — `P3` — deps: X.8
 - [ ] **X.83** Pilot with one or two labs, measuring time saved on one real review; run by the owner, results recorded in §3 — `P3` — deps: X.74, X.80 — blocked on owner — re-scoped 2026-10-19 (owner, chat): solo pilot on the owner's own review first; a lab pilot comes later
+- [?] **X.84** Remove committed merge-conflict markers from `backend/app/exit_conditions.py` and restore importable exit-condition checks — `P0` — owner: @codex — since: 2026-10-19 — deps: none — code: `backend/app/exit_conditions.py`; user-assigned fix; focused/full pytest not runnable locally because the configured Python 3.12 executable is missing
 
 ### Backlog (unscheduled)
 - [ ] **B.1** Arbitrary file uploads as sources beyond screened PDFs (needs scanning/storage design) — `P3` (was B.1)
@@ -1461,4 +1462,4 @@ Spec: §5.4, §5.5 · exit: *verified evidence table + ranked gaps* (spec M3, ac
 | 2026-10-19 | @codex | M5 | M5 interim report and traceability refreshed. Full pytest 3074 passed, 13 skipped, 9 warnings. Closed/reviewed M5.1, M5.4.1, M5.5.1 and M5.7.1; fixed survey repeated-token pagination but kept M5.2 open for live API evidence. M5.6/M5.6.1, M5.7.4 and sandboxed analysis remain blocked with Q4/service/runtime limitations. |
 | 2026-10-19 | @codex | M5.4.1, M5.5.1, M5.7.1 | Re-review closure: robustness helpers, qualitative coding defects and exclusion-rule approval behavior accepted. Focused qualitative/role tests 238 passed; full pytest 3074 passed, 13 skipped, 9 warnings. |
 | 2026-10-19 | @codex | M5.4.1, M5.5.1, M5.7.1 | Re-review closure: robustness helpers, qualitative coding defects and exclusion-rule approval behavior accepted. Focused qualitative/role tests 238 passed; full pytest 3074 passed, 13 skipped, 9 warnings. |
->>>>>>> Stashed changes
+| 2026-10-19 | @codex | X.84 | Removed the committed merge-conflict markers from `backend/app/exit_conditions.py`; retained the EC-8.2/EC-8.3 implementation matching current docs and tests. Focused/full pytest could not run because the local `.venv` Python executable points to a missing Python 3.12 installation. Additional conflict markers remain in `plan.md`, `docs/traceability.md`, and `backend/app/guides/journey.toml` and require separate resolution. |

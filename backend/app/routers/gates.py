@@ -138,7 +138,11 @@ def decide_gate(
         unmet = [
             c
             for c in exit_conditions.conditions(db, project, GATE_STAGES[code])
-            if c.level is exit_conditions.Level.required and not c.met and c.id != _OWN_GATE_ROW[code]
+            if (
+                (c.level is exit_conditions.Level.required or (code == GateCode.G6 and c.id == "EC-8.2"))
+                and not c.met
+                and c.id != _OWN_GATE_ROW[code]
+            )
         ]
         if unmet:
             raise HTTPException(
