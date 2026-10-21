@@ -1,7 +1,7 @@
 // Run with: node --test backend/app/web/js/test   (no packages; pytest does not run these)
 import test from "node:test";
 import assert from "node:assert/strict";
-import { afterDecision, authorsText, countsText, fetchEntireQueue, keyAction, runBulk, safeLink, typedReason } from "../steps/screenLogic.js";
+import { afterDecision, authorsText, confidenceText, countsText, fetchEntireQueue, keyAction, runBulk, safeLink, splitAtQuote, typedReason } from "../steps/screenLogic.js";
 
 test("a DOI becomes an https://doi.org link with slashes kept and unsafe characters escaped", () => {
   assert.equal(safeLink("10.1000/abc.1"), "https://doi.org/10.1000/abc.1");
@@ -107,4 +107,28 @@ test("a record that appears on two pages is kept once, and the next page is aske
   assert.equal(new Set(ids).size, ids.length, "no record twice");
   assert.equal(ids.includes("s199"), true);
   assert.deepEqual(calls, [0, 200, 400]);
+});
+
+test("the AI's quote is found in the record ignoring case and line breaks, and split around the match", () => {
+  const text = "We surveyed 200 nurses.\nWorkload was linked to burnout in every ward.";
+  assert.deepEqual(splitAtQuote(text, "workload was LINKED to burnout"),
+    ["We surveyed 200 nurses.\n", "Workload was linked to burnout", " in every ward."]);
+  assert.deepEqual(splitAtQuote(text, "nurses. workload")[1], "nurses.\nWorkload");
+});
+
+test("a quote that is not in the text, or is empty, marks nothing", () => {
+  assert.equal(splitAtQuote("Workload was linked to burnout", "Workload caused burnout"), null);
+  assert.equal(splitAtQuote("Workload", "   "), null);
+  assert.equal(splitAtQuote("", "x"), null);
+});
+
+test("quote characters that mean something in a pattern are matched as plain text", () => {
+  assert.deepEqual(splitAtQuote("Effect (n=20) was small. Done", "(n=20) was small."), ["Effect ", "(n=20) was small.", " Done"]);
+  assert.equal(splitAtQuote("abc", ".*"), null);
+});
+
+test("the confidence line names the level and the percentage, and is empty without a level", () => {
+  assert.equal(confidenceText("high", 0.9), "High confidence (90%)");
+  assert.equal(confidenceText("low", undefined), "Low confidence");
+  assert.equal(confidenceText(undefined, 0.9), "");
 });

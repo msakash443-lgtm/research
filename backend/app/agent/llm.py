@@ -1,13 +1,23 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 import httpx
 import jsonschema
+from httpx import HTTPStatusError, TransportError
 from pydantic import SecretStr
 
 from app.config import Settings
+
+# X.109: a dropped connection, a timeout, rate limiting or a gateway error is retried a few times
+# before the step fails loudly; a request the service refuses (bad key, bad request) is not.
+TRANSIENT_ATTEMPTS = 3
+TRANSIENT_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
+BACKOFF_SECONDS = 1.0
+MAX_RETRY_AFTER_SECONDS = 30.0
+_sleep = time.sleep
 
 
 class LLMConfigurationError(RuntimeError):
@@ -56,6 +66,22 @@ def _violation(output: str, schema: dict[str, Any]) -> tuple[Any, str | None]:
         where = "/".join(str(part) for part in error.absolute_path) or "(top level)"
         return None, f"at {where}: {error.message[:200]}"
     return value, None
+
+
+def _transient(exc: Exception) -> bool:
+    if isinstance(exc, HTTPStatusError):
+        return exc.response.status_code in TRANSIENT_STATUS_CODES
+    return isinstance(exc, TransportError)
+
+
+def _retry_delay(exc: Exception, attempt: int) -> float:
+    """A numeric `Retry-After` (capped), else doubling backoff from BACKOFF_SECONDS."""
+    if isinstance(exc, HTTPStatusError):
+        try:
+            return min(max(float(exc.response.headers["retry-after"]), 0.0), MAX_RETRY_AFTER_SECONDS)
+        except (KeyError, ValueError):
+            pass
+    return BACKOFF_SECONDS * 2 ** (attempt - 1)
 
 
 _UNSET = object()
@@ -162,15 +188,20 @@ class OpenAICompatibleLLM:
         headers = {"Content-Type": "application/json"}
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key.get_secret_value()}"
-        try:
-            with httpx.Client(timeout=self._timeout_seconds, follow_redirects=False) as client:
-                response = client.post(url, headers=headers, json=payload)
-                response.raise_for_status()
-                data = response.json()
-        except httpx.HTTPError as exc:
-            raise LLMResponseError("The configured LLM service could not be reached.") from exc
-        except ValueError as exc:
-            raise LLMResponseError("The configured LLM service returned invalid JSON.") from exc
+        for attempt in range(1, TRANSIENT_ATTEMPTS + 1):
+            try:
+                with httpx.Client(timeout=self._timeout_seconds, follow_redirects=False) as client:
+                    response = client.post(url, headers=headers, json=payload)
+                    response.raise_for_status()
+                    data = response.json()
+                break
+            except httpx.HTTPError as exc:
+                if attempt < TRANSIENT_ATTEMPTS and _transient(exc):
+                    _sleep(_retry_delay(exc, attempt))
+                    continue
+                raise LLMResponseError("The configured LLM service could not be reached.") from exc
+            except ValueError as exc:
+                raise LLMResponseError("The configured LLM service returned invalid JSON.") from exc
 
         if self._meter is not None:
             self._meter.after_call(self._model, data)

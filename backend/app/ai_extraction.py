@@ -269,7 +269,7 @@ def run_ai_extraction(
     row = Extraction(
         id=extraction_id,
         task_id=task_id, project_id=project.id, source_id=source.id, schema_version=schema_version(schema),
-        fields_json=fields, evidence_spans=evidence, confidence_json=confidence, agreement_json=agreement, verified_by_human=False,
+        fields_json=fields, ai_fields_json=dict(fields), evidence_spans=evidence, confidence_json=confidence, agreement_json=agreement, verified_by_human=False,
         extracted_by="ai", extractor=AI_EXTRACTOR, model_id=model_id, prompt_version=AI_EXTRACTION_PROMPT[0] + "@" + str(AI_EXTRACTION_PROMPT[1]),
     )
     db.add(row)

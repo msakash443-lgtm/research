@@ -1,0 +1,6 @@
+name = "default"
+version = 1
+label = "No jurisdiction chosen"
+description = "No privacy law is assumed. Nothing is purged automatically and no hosting region is required. Choose a jurisdiction profile before holding real participant data."
+
+[settings]

@@ -12,15 +12,18 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-MAX_SUGGESTIONS = 5
+from app.prompt_registry import load_prompt
+
+MAX_SUGGESTIONS = 5  # the v1 prompt text says "at most 5"; a new limit needs a new prompt version
 MAX_TOKENS = 600
 
-SYSTEM_PROMPT = (
-    "You suggest qualitative codes for one interview excerpt. Reply with only a JSON array. Each item is an object "
-    "with a string field \"code\" (a short label) and a string field \"rationale\" (one sentence). Suggest at most "
-    f"{MAX_SUGGESTIONS} codes. Reuse an existing code name when one fits. Do not add any text outside the JSON. "
-    'Example of a correct reply: [{"code": "trust", "rationale": "Decisions are left unexplained."}]'
-)
+# Pinned prompt version (X.121): each stored suggestion records this as its prompt_version.
+PROMPT = ("qual_code_suggestions", 1)
+
+
+def prompt_ref() -> str:
+    """`name@version` of the pinned prompt, stored with each suggestion."""
+    return load_prompt(*PROMPT).ref
 
 
 class SuggestionError(ValueError):
@@ -42,7 +45,7 @@ def build_user_prompt(existing: Mapping[str, str], excerpt: str) -> str:
     """The existing codebook and the excerpt. The excerpt appears here and nowhere else."""
     lines = [f"- {name}: {definition}" if definition else f"- {name}" for name, definition in existing.items()]
     codebook = "\n".join(lines) if lines else "(none yet)"
-    return f"Existing codes:\n{codebook}\n\nExcerpt:\n{excerpt}"
+    return load_prompt(*PROMPT).render_user(codebook=codebook, excerpt=excerpt)
 
 
 def parse_reply(reply: str, existing: Mapping[str, str]) -> list[Suggestion]:
@@ -68,5 +71,5 @@ def suggest_codes(llm: ChatModel, existing: Mapping[str, str], excerpt: str) -> 
     """Ask the model for codes for one excerpt. `llm` must be the participant-data adapter."""
     if not (excerpt or "").strip():
         raise SuggestionError("The excerpt is blank; nothing to code.")
-    reply = llm.complete(SYSTEM_PROMPT, build_user_prompt(existing, excerpt), max_tokens=MAX_TOKENS)
+    reply = llm.complete(load_prompt(*PROMPT).system, build_user_prompt(existing, excerpt), max_tokens=MAX_TOKENS)
     return parse_reply(reply, existing)

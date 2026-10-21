@@ -54,3 +54,16 @@ def test_vosviewer_and_citespace_exports_preserve_real_data_and_weights():
     rows = list(csv.DictReader(io.StringIO(citespace_csv(RECORDS))))
     assert rows[0]["cited_references"] == "r1; r2; r2"
     assert rows[1]["year"] == "" and rows[1]["authors"] == "" and rows[1]["doi"] == ""
+
+
+def test_citespace_csv_neutralises_cells_a_spreadsheet_would_run_as_formulas():
+    hostile = [{"source_id": "s1", "title": "=HYPERLINK(\"http://x\",\"y\")", "year": 2020,
+                "authors": ["+Smith"], "doi": "@SUM(1)", "keywords": ["-1+2"],
+                "reference_ids": ["\tr1", "\rr2"]}]
+    row = list(csv.DictReader(io.StringIO(citespace_csv(hostile))))[0]
+    assert row["title"] == "'=HYPERLINK(\"http://x\",\"y\")"
+    assert row["authors"] == "'+Smith"
+    assert row["doi"] == "'@SUM(1)"
+    assert row["keywords"] == "'-1+2"
+    assert row["cited_references"] == "'\tr1; \rr2"
+    assert row["source_id"] == "s1" and row["year"] == "2020"

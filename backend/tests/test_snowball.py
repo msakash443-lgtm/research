@@ -238,6 +238,17 @@ def test_snowballed_sources_keep_the_connectors_citation_count_and_unknown_stays
     assert (by_id["W3"].citation_count, by_id["W3"].citation_count_source, by_id["W3"].citation_count_at) == (None, None, None)
 
 
+def test_snowballed_sources_keep_the_reported_language_and_unknown_stays_unknown(project, monkeypatch):
+    owner, pid = project
+    langs = {"W2": "de", "W3": None}
+    monkeypatch.setattr(Graph, "get_references", lambda self, wid: tuple(rec(int(i[1:]), language=langs.get(i)) for i in REFS[wid]))
+    approve_g2(owner, pid)
+    owner.post(f"/api/projects/{pid}/snowball", json={"connector": "openalex", "directions": ["backward"]})
+    run_all()
+    by_id = {s.source_ids["openalex"]: s for s in sources(pid)}
+    assert (by_id["W2"].language, by_id["W3"].language) == ("de", None)
+
+
 def test_a_second_run_does_not_re_add_and_a_retried_task_runs_once(project):
     owner, pid = project
     approve_g2(owner, pid)

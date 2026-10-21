@@ -101,6 +101,8 @@ ARC_MAX_CRAWL_URLS=5
 
 The web and worker containers need the same configuration (both read it from the environment; `.env` is only for local development).
 
+`ENVIRONMENT` is required and has no default: the application refuses to start if it is unset or anything other than exactly `development` or `production` (X.105).
+
 The application refuses to start in production (`ENVIRONMENT=production`) if:
 
 - `SESSION_SECRET` is a placeholder or shorter than 32 characters;
@@ -202,14 +204,14 @@ Env:     ARC_RETRIEVAL_TOKEN   required, 16+ characters; the service refuses to 
 - Their text is treated as untrusted data: cleaned and fenced in the prompt, never followed as instructions.
 - If ARC fails or is unreachable, the run continues without it and the retrieval failure is recorded on the run and in the audit log.
 
-**Before enabling it in production** (status on 2026-10-14; `plan.md` is the source of truth):
+**Before enabling it in production** (status on 2026-10-20; `plan.md` is the source of truth):
 
 - [x] M1.1.8: service smoke test (`curl POST /v1/retrieve`).
 - [x] M1.1.10: end-to-end smoke with both services.
 - [x] M1.1.11: ARC hardening (SSRF re-check on redirects, response-size caps, writable cache dir for the non-root user).
-- [ ] X.1.2: ARC retrieval tests in CI. The tests are vendored in `backend/tests/test_arc_retrieval_api.py` and pass locally, but the CI workflow has not yet run on GitHub, so this stays open until it does.
+- [x] X.1.2: ARC retrieval tests in CI. The tests are vendored in `backend/tests/test_arc_retrieval_api.py` and run in the `test` job's `pytest -q` on GitHub Actions (first confirmed green on 2026-10-20, CI run 39431524427).
 
-Until X.1.2 is closed, keep `ARC_RETRIEVAL_ENABLED=false` in production.
+All four items above are closed. Turning ARC on in production is still an owner decision that has not been made: until it is, keep `ARC_RETRIEVAL_ENABLED=false` in production.
 
 ## Database and network
 

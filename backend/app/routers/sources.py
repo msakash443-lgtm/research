@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app import audit, citation_rank, own_paper
+from app import audit, citation_rank, fulltext_coverage, own_paper
 from app.config import get_settings
 from app.connectors.access import is_enabled
 from app.connectors.arxiv import normalise_id
@@ -29,7 +29,7 @@ from app.screening import screening_locked
 from app.object_storage import ObjectConflict, ObjectNotFound, ObjectStorageError, fulltext_key, get_object_store
 from app.task_handlers import FULLTEXT_FETCH, OWN_PAPER_LOOKUP, SOURCE_CHECK
 from app.task_queue import enqueue_task
-from app.refmanager import parse_bibtex, parse_ris, to_bibtex, to_ris
+from app.refmanager import parse_bibtex, parse_ris, source_records, to_bibtex, to_ris
 from app.schemas import SourceCreate, SourceMerge, SourceRead
 from app.source_merge import SourceMergeError, merge_sources
 
@@ -63,11 +63,13 @@ def source_response(source: Source) -> SourceRead:
         source_ids=source.source_ids,
         fulltext_path=source.fulltext_path,
         fulltext_access=source.fulltext_access,
+        coverage=fulltext_coverage.coverage(source),
         quality_flags=source.quality_flags,
         found_via=source.found_via,
         citation_count=source.citation_count,
         citation_count_source=source.citation_count_source,
         citation_count_at=source.citation_count_at,
+        language=source.language,
         evidence_excerpt=excerpt.content if excerpt else None,
         excerpt_locator=excerpt.locator if excerpt else None,
         created_at=source.created_at,
@@ -653,11 +655,7 @@ def export_references(
     the `X-Unverified-Skipped` header."""
     sources = db.scalars(select(Source).where(Source.project_id == project.id, Source.merged_into.is_(None)).order_by(Source.created_at)).all()
     verified = [s for s in sources if s.metadata_verified]
-    records = [
-        {k: v for k, v in {"title": s.title, "authors": s.authors, "year": s.year, "doi": s.doi, "url": s.url,
-                           "venue": s.venue, "abstract": s.abstract, "source_type": s.source_type}.items() if v}
-        for s in verified
-    ]
+    records = source_records(verified)
     audit.record(
         db, actor=audit.user_actor(user), action="sources.exported", project_id=project.id,
         payload={"format": format, "exported": len(verified), "unverified_skipped": len(sources) - len(verified)},

@@ -25,7 +25,7 @@ from app import audit
 from app.config import get_settings
 from app.ai_item_locks import CONTEXT_ITEM_KIND
 from app.database import get_db
-from app.dependencies import WRITE_ROLES, current_user, project_role
+from app.dependencies import WRITE_ROLES, current_user, project_role, refuse_if_archived
 from app.models import (
     AiItemLock,
     ContextKind,
@@ -68,6 +68,15 @@ def _load_own_note(db: Session, note_id: uuid.UUID, user: User) -> Note:
     return note
 
 
+def _load_own_note_for_change(db: Session, note_id: uuid.UUID, user: User) -> Note:
+    """Like `_load_own_note`, but a note filed to an archived project is read-only (X.4.7.6)."""
+    note = _load_own_note(db, note_id, user)
+    project = db.get(Project, note.project_id) if note.project_id is not None else None
+    if project is not None:
+        refuse_if_archived(project)
+    return note
+
+
 def _load_readable_note(db: Session, note_id: uuid.UUID, user: User) -> Note:
     """The caller's own note, or a filed note in a project the caller is a member of (read-only), else 404."""
     note = db.get(Note, note_id)
@@ -90,15 +99,34 @@ def _readable_projects(db: Session, user: User) -> list[Project]:
 def capture_note(
     payload: NoteCreate, response: Response, user: User = Depends(current_user), db: Session = Depends(get_db)
 ):
-    """Save a capture. Posting the same `client_id` again returns the existing note (200, not
-    created again), so a retried offline submit can't double-save."""
+    """Save a capture. Posting the same `client_id` again with the same content returns the existing note
+    (200, not created again), so a retried offline submit can't double-save. Posting the same `client_id`
+    with *different* content (X.31.16: an offline draft that diverged from what was saved elsewhere under
+    the same client id) is refused as 409 `note_conflict`, carrying the stored note as `current`, so the
+    caller can offer a keep-mine/keep-theirs/keep-both choice (offlineOutbox.js::resolveConflict) instead of
+    silently keeping whichever write happened to land first."""
     def existing_note() -> Note | None:
         return db.scalar(select(Note).where(Note.owner_id == user.id, Note.client_id == payload.client_id))
 
+    def same_content(note: Note) -> bool:
+        return note.body == payload.body and note.quoted_text == payload.quoted_text
+
+    def conflict(note: Note) -> HTTPException:
+        return HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "note_conflict",
+                "message": "This capture was already saved with different content under the same client id.",
+                "current": NoteRead.model_validate(note).model_dump(mode="json"),
+            },
+        )
+
     existing = existing_note()
     if existing is not None:
-        response.status_code = status.HTTP_200_OK
-        return NoteRead.model_validate(existing)
+        if same_content(existing):
+            response.status_code = status.HTTP_200_OK
+            return NoteRead.model_validate(existing)
+        raise conflict(existing)
 
     note = Note(
         owner_id=user.id,
@@ -124,13 +152,15 @@ def capture_note(
         )
         db.commit()
     except IntegrityError:
-        # A concurrent retry of the same capture won the insert: hand back its note, as above.
+        # A concurrent retry of the same capture won the insert: hand back its note (or 409, as above).
         db.rollback()
         existing = existing_note()
         if existing is None:
             raise
-        response.status_code = status.HTTP_200_OK
-        return NoteRead.model_validate(existing)
+        if same_content(existing):
+            response.status_code = status.HTTP_200_OK
+            return NoteRead.model_validate(existing)
+        raise conflict(existing) from None
     db.refresh(note)
     return NoteRead.model_validate(note)
 
@@ -162,6 +192,10 @@ def _notes_markdown(notes: list[Note]) -> str:
 
 
 
+def _existing_note(db: Session, user: User, client_id: str) -> Note | None:
+    return db.scalar(select(Note).where(Note.owner_id == user.id, Note.client_id == client_id))
+
+
 @router.post("/highlight", response_model=NoteRead, status_code=status.HTTP_201_CREATED)
 def capture_highlight(
     payload: HighlightCreate,
@@ -170,7 +204,7 @@ def capture_highlight(
     db: Session = Depends(get_db),
 ):
     """Save a source-linked PDF highlight while keeping the researcher's comment separate."""
-    existing = db.scalar(select(Note).where(Note.owner_id == user.id, Note.client_id == payload.client_id))
+    existing = _existing_note(db, user, payload.client_id)
     if existing is not None:
         response.status_code = status.HTTP_200_OK
         return NoteRead.model_validate(existing)
@@ -179,45 +213,56 @@ def capture_highlight(
     project = db.get(Project, source.project_id) if source is not None else None
     if source is None or project is None or project_role(db, project, user) not in WRITE_ROLES:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
+    refuse_if_archived(project)
     if not source.fulltext_path:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This source has no stored PDF")
 
     actor = audit.user_actor(user)
     quoted_text = payload.quoted_text.strip()
     locator = payload.locator.strip() if payload.locator else None
-    excerpt = SourceExcerpt(
-        source_id=source.id,
-        content=quoted_text,
-        locator=locator,
-        content_hash=excerpt_hash(quoted_text),
-        created_by=actor,
-    )
-    db.add(excerpt)
-    db.flush()
-    note = Note(
-        owner_id=user.id,
-        project_id=project.id,
-        client_id=payload.client_id,
-        kind=NoteKind.highlight,
-        body=payload.body or "",
-        quoted_text=quoted_text,
-        source_id=source.id,
-        excerpt_id=excerpt.id,
-        locator=locator,
-        revision=1,
-        captured_at=payload.captured_at or datetime.now(timezone.utc),
-    )
-    db.add(note)
-    db.flush()
-    db.add(NoteRevision(note_id=note.id, revision=1, body=note.body, quoted_text=quoted_text, edited_by=actor))
-    audit.record(db, actor=actor, action="source.excerpt_added", project_id=project.id,
-                 payload={"source_id": str(source.id), "excerpt_id": str(excerpt.id), "content_hash": excerpt.content_hash})
-    audit.record(db, actor=actor, action="note.created", project_id=project.id,
-                 payload={"note_id": str(note.id), "kind": note.kind.value, "source_id": str(source.id), "excerpt_id": str(excerpt.id)})
-    project.touch()
-    db.commit()
+    try:
+        excerpt = SourceExcerpt(
+            source_id=source.id,
+            content=quoted_text,
+            locator=locator,
+            content_hash=excerpt_hash(quoted_text),
+            created_by=actor,
+        )
+        db.add(excerpt)
+        db.flush()
+        note = Note(
+            owner_id=user.id,
+            project_id=project.id,
+            client_id=payload.client_id,
+            kind=NoteKind.highlight,
+            body=payload.body or "",
+            quoted_text=quoted_text,
+            source_id=source.id,
+            excerpt_id=excerpt.id,
+            locator=locator,
+            revision=1,
+            captured_at=payload.captured_at or datetime.now(timezone.utc),
+        )
+        db.add(note)
+        db.flush()
+        db.add(NoteRevision(note_id=note.id, revision=1, body=note.body, quoted_text=quoted_text, edited_by=actor))
+        audit.record(db, actor=actor, action="source.excerpt_added", project_id=project.id,
+                     payload={"source_id": str(source.id), "excerpt_id": str(excerpt.id), "content_hash": excerpt.content_hash})
+        audit.record(db, actor=actor, action="note.created", project_id=project.id,
+                     payload={"note_id": str(note.id), "kind": note.kind.value, "source_id": str(source.id), "excerpt_id": str(excerpt.id)})
+        project.touch()
+        db.commit()
+    except IntegrityError:
+        # A concurrent retry of the same highlight won the insert: hand back its note (the excerpt rolls back with ours).
+        db.rollback()
+        existing = _existing_note(db, user, payload.client_id)
+        if existing is None:
+            raise
+        response.status_code = status.HTTP_200_OK
+        return NoteRead.model_validate(existing)
     db.refresh(note)
     return NoteRead.model_validate(note)
+
 
 @router.post("/voice", response_model=NoteRead, status_code=status.HTTP_201_CREATED)
 async def capture_voice(
@@ -351,7 +396,7 @@ def edit_note(
     `base_revision` must match the note's current revision, or the edit is refused (409) with
     the server's copy, so two edits made offline from different revisions never silently overwrite
     each other."""
-    note = _load_own_note(db, note_id, user)
+    note = _load_own_note_for_change(db, note_id, user)
     if payload.base_revision != note.revision:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -368,7 +413,7 @@ def edit_note(
 
 @router.post("/{note_id}/archive", response_model=NoteRead)
 def archive_note(note_id: uuid.UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    note = _load_own_note(db, note_id, user)
+    note = _load_own_note_for_change(db, note_id, user)
     note.status = NoteStatus.archived
     audit.record(db, actor=audit.user_actor(user), action="note.archived", payload={"note_id": str(note.id)})
     db.commit()
@@ -382,7 +427,7 @@ def lock_note(
 ):
     """Set or clear 'never send to AI' for this note. Checked server-side by every AI action
     (X.31.7/X.31.11), never trusted from the client at request time."""
-    note = _load_own_note(db, note_id, user)
+    note = _load_own_note_for_change(db, note_id, user)
     note.ai_locked = payload.ai_locked
     audit.record(
         db, actor=audit.user_actor(user), action="note.locked",
@@ -404,6 +449,7 @@ def file_note(
     role = project_role(db, project, user) if project is not None else None
     if role is None or role not in WRITE_ROLES:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+    refuse_if_archived(project)
     note.project_id = project.id
     note.status = NoteStatus.filed
     audit.record(
@@ -436,6 +482,7 @@ def promote_note(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
     if role not in WRITE_ROLES:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Your role cannot do this on this project")
+    refuse_if_archived(project)
     if payload.related_item_id is not None:
         related = db.get(ResearchContextItem, payload.related_item_id)
         if related is None or related.project_id != project.id:

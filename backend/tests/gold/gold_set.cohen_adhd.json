@@ -1,0 +1,627 @@
+{
+ "topic": "ADHD drug-class systematic review (Cohen et al. 2006)",
+ "supplied_by": "Cohen et al. 2006 published screening decisions (via ASReview SYNERGY, CC0)",
+ "papers": [
+  {
+   "id": "W2044466939",
+   "doi": "https://doi.org/10.1001/archpsyc.56.4.330",
+   "title": "Long-term Methylphenidate Therapy in Children With Comorbid Attention-Deficit Hyperactivity Disorder and Chronic Multiple Tic Disorder",
+   "abstract": "BACKGROUND: This study examined changes in attention-deficit hyperactivity (ADHD) behaviors and motor and vocal tics during long-term treatment with methylphenidate. METHODS: Thirty-four prepubertal children with ADHD and chronic multiple tic disorder (who had participated in an 8-week, double-blind, placebo-controlled methylphenidate evaluation) were evaluated at 6-month intervals for 2 years as part of a prospective, nonblind, follow-up study. Treatment effects were assessed using direct observations of child behavior in a simulated (clinic-based) classroom and behavior rating scales completed by parents and physician. Videotapes of the simulated classroom were scored by coders who were blind to treatment status. RESULTS: There was no evidence (group data) that motor tics or vocal tics changed in frequency or severity during maintenance therapy compared with diagnostic or initial double-blind placebo evaluations. Behavioral improvements demonstrated during the acute drug trial were maintained during follow-up. There was no evidence (group data) of clinically significant adverse drug effects on cardiovascular function or growth at the end of 2 years of treatment. CONCLUSIONS: Long-term treatment with methylphenidate seems to be safe and effective for the management of ADHD behaviors in many (but not necessarily all) children with mild to moderate tic disorder. Nevertheless, careful clinical monitoring is mandatory to rule out the possibility of drug-induced tic exacerbation in individual patients.",
+   "label": "include",
+   "known_relevant": true,
+   "reason": "Cohen 2006 ADHD dataset label: included"
+  },
+  {
+   "id": "W1979465426",
+   "doi": "https://doi.org/10.1097/00004714-199906000-00009",
+   "title": "Controlled Trial of High Doses of Pemoline for Adults With Attention-Deficit/Hyperactivity Disorder",
+   "abstract": "Despite the increasing awareness of attention-deficit/hyperactivity disorder (ADHD) in adults, there are a limited number of controlled pharmacologic studies of this disorder. Because the stimulant medication magnesium pemoline (Cylert, Abbott Laboratories, Abbott Park, IL) has been found effective in treating ADHD in pediatric groups, we tested its efficacy in adults with ADHD using higher daily doses than those previously studied. We conducted a 10-week, double-blind, placebo-controlled, crossover design study of pemoline at a target daily dose of 3 mg/kg per day in 35 adult patients with DSM-III-R and -IV ADHD. We used standardized structured psychiatric instruments for diagnosis. To measure improvement, we used separate assessments of ADHD, depressive, and anxiety symptoms at baseline and at each biweekly visit. ADHD outcome was determined using the ADHD symptom checklist and Clinical Global Impression scales of Severity and Improvement. Of the 35 adults with ADHD who were randomized in the trial, 27 (77%) completed the protocol. Treatment with pemoline in the final week of the 4-week active phase was best tolerated at doses substantially lower than the target dose of 3 mg/kg per day (mean dose, 2.2 mg/kg per day; mean+/-SD, 148+/-95 mg). Pemoline was significantly better at reducing ADHD symptoms compared with placebo (z = 2.4,p < 0.02). Using a predefined 30% reduction in symptoms as an indication of improvement, 50% of pemoline-treated subjects and 17% of subjects in the placebo group were considered positive responders (chi2 = 7.1, p = 0.008). These results indicate that pemoline is moderately effective in the treatment of ADHD in adults. Although robust doses were targeted, most adults preferred more moderate dosing (120-160 mg/day). Given the limited efficacy, tolerability, and concerns of hepatic dysfunction, pemoline should be considered as second-line medication for treating ADHD in adults.",
+   "label": "include",
+   "known_relevant": true,
+   "reason": "Cohen 2006 ADHD dataset label: included"
+  },
+  {
+   "id": "W2116058617",
+   "doi": "https://doi.org/10.1176/appi.ajp.158.2.282",
+   "title": "A Controlled Clinical Trial of Bupropion for Attention Deficit Hyperactivity Disorder in Adults",
+   "abstract": "OBJECTIVE: Despite the increasing recognition of attention deficit hyperactivity disorder (ADHD) in adults, there is a paucity of controlled pharmacological trials demonstrating the effectiveness of compounds used in treatment, particularly nonstimulants. The authors report results from a controlled investigation to determine the anti-ADHD efficacy of bupropion in adult patients with DSM-IV ADHD. METHOD: This was a double-blind, placebo-controlled, randomized, parallel, 6-week trial comparing patients receiving sustained-release bupropion (up to 200 mg b.i.d.) (N=21) to patients receiving placebo (N=19). The authors used standardized structured psychiatric instruments for diagnosis of ADHD. To measure improvement, they used separate assessments of ADHD, depression, and anxiety symptoms at baseline and each weekly visit. RESULTS: Of the 40 subjects (55% male) enrolled in the study, 38 completed the study. Bupropion treatment was associated with a significant change in ADHD symptoms at the week-6 endpoint (42% reduction), which exceeded the effects of placebo (24% reduction). In analyses using a cutoff of 30% or better reduction to denote response, 76% of the subjects receiving bupropion improved, compared to 37% of the subjects receiving placebo. Similarly, in analyses using Clinical Global Impression scale scores, 52% of the subjects receiving bupropion reported being \"much improved\" to \"very improved,\" compared to 11% of the subjects receiving placebo. CONCLUSIONS: These results indicate a clinically and statistically significant effect of bupropion in improving ADHD in adults. The results suggest a therapeutic role for bupropion in the armamentarium of agents for ADHD in adults, while further validating the continuity of pharmacological responsivity of ADHD across the lifespan.",
+   "label": "include",
+   "known_relevant": true,
+   "reason": "Cohen 2006 ADHD dataset label: included"
+  },
+  {
+   "id": "W2018897037",
+   "doi": "https://doi.org/10.1097/00004714-200104000-00015",
+   "title": "Comparing Guanfacine and Dextroamphetamine for the Treatment of Adult Attention-Deficit/Hyperactivity Disorder",
+   "abstract": "The objective of this study was to compare the efficacy of the alpha-2a agonist guanfacine with that of dextroamphetamine for the treatment of adult attention-deficit/hyperactivity disorder (ADHD). Seventeen adult outpatients who met DSM-IV criteria for ADHD participated in a double-blind, placebo-controlled, crossover study comparing drug effects on ADHD symptoms. Measures of change included the DSM-IV ADHD Behavior Checklist for Adults and the Copeland Symptom Checklist for Adult Attention Deficit Disorders. Cognitive measures of attention included the Stroop and Controlled Oral Word Association Test using the letters \"C,\" \"F,\" and \"L\" (COWAT, CFL version). For each trial, the drug was administered daily and titered up to optimal doses of maximum efficacy but with a minimum of side effects, and then data were collected. Both drugs significantly reduced ADHD symptoms on the DSM-IV Adult Behavior Checklist for Adults over placebo (p < 0.05). The Stroop Color subscale showed significant improvement for both drugs (p < 0.05), but the Color-Word measures showed significant improvement for guanfacine only (p < 0.01). The average dose of guanfacine was 1.10 (SD = 0.60), and the most common side effect of guanfacine was fatigue. No subjects discontinued drug trials. This preliminary study indicates that guanfacine may be a well-tolerated treatment option for adult ADHD.",
+   "label": "include",
+   "known_relevant": true,
+   "reason": "Cohen 2006 ADHD dataset label: included"
+  },
+  {
+   "id": "W2164549762",
+   "doi": "https://doi.org/10.1176/appi.ajp.158.7.1067",
+   "title": "A Placebo-Controlled Study of Guanfacine in the Treatment of Children With Tic Disorders and Attention Deficit Hyperactivity Disorder",
+   "abstract": "OBJECTIVE: This study evaluated the efficacy and safety of guanfacine in treating children with tic disorders and attention deficit hyperactivity disorder (ADHD). METHOD: Subjects from a specialty tic disorders clinic were randomly assigned to receive 8 weeks of treatment with guanfacine or placebo under double-blind conditions. Follow-up visits occurred every 2 weeks for safety monitoring and dose adjustment. RESULTS: Thirty-four medication-free subjects (31 boys and three girls with a mean age of 10.4 years) with ADHD, combined type, and a tic disorder participated. After 8 weeks of treatment, guanfacine was associated with a mean improvement of 37% in the total score on the teacher-rated ADHD Rating Scale, compared to 8% improvement for placebo. Nine of 17 subjects who received guanfacine were blindly rated on the Clinical Global Improvement scale as either much improved or very much improved, compared with none of 17 subjects who received placebo. The mean score on the parent-rated hyperactivity index improved by 27% in the guanfacine group and 21% in the placebo group, not a significant difference. On the Continuous Performance Test, commission errors decreased by 22% and omission errors by 17% in the guanfacine group, compared with increases of 29% in commission errors and of 31% in omission errors in the placebo group. Tic severity decreased by 31% in the guanfacine group, compared to 0% in the placebo group. One guanfacine subject with sedation withdrew at week 4. Guanfacine was associated with insignificant decreases in blood pressure and pulse. CONCLUSIONS: Guanfacine appears to be a safe and effective treatment for children with tic disorders and ADHD.",
+   "label": "include",
+   "known_relevant": true,
+   "reason": "Cohen 2006 ADHD dataset label: included"
+  },
+  {
+   "id": "W2010661621",
+   "doi": "https://doi.org/10.1111/j.1749-6632.2001.tb05785.x",
+   "title": "Adult ADHD",
+   "abstract": "Many adults with ADHD respond to stimulant therapy, but controlled medication assessments have not been reported. We administered an effortful working memory task in four half-day sessions, double blind, at methylphenidate levels of 0, 5, 10 and 20 mg. Dose-response curves were established individually. Fifteen of 17 patients displayed a favorable response to one or more levels of medication; that is, they achieved more correct responses and less variability than on placebo. Each dose level elicited optimal performance from some of the patients. Unlike monitoring by self-report, the objective medication assessment offers an expeditious approximation to the ultimate optimal dose, potentially saving the patient weeks on an ineffective and/or excessive dosage regime.",
+   "label": "include",
+   "known_relevant": true,
+   "reason": "Cohen 2006 ADHD dataset label: included"
+  },
+  {
+   "id": "W2169861403",
+   "doi": "https://doi.org/10.1001/archpsyc.58.8.775",
+   "title": "Efficacy of a Mixed Amphetamine Salts Compound in Adults With Attention-Deficit/Hyperactivity Disorder",
+   "abstract": "BACKGROUND: We report on a controlled trial of a mixed amphetamine salts compound (Adderall, dextroamphetamine sulfate, dextro-, levoamphetamine sulfate, dextroamphetamine aspartate, levoamphetamine aspartate, and dextroamphetamine saccharate) in the treatment of adult attention-deficit/hyperactivity disorder (ADHD). METHODS: This was a 7-week, randomized, double-blind, placebo-controlled, crossover study of Adderall in 27 well-characterized adults satisfying full DSM-IV criteria for ADHD of childhood onset and persistent symptoms into adulthood. Medication was titrated up to 30 mg twice a day. Outcome measures included the ADHD Rating Scale and the Clinical Global Impression Score. Comorbid psychiatric disorders were assessed to test for potential effects on treatment outcome. RESULTS: Treatment with Adderall at an average oral dose of 54 mg (administered in 2 daily doses) was effective and well tolerated. Drug-specific improvement in ADHD symptoms was highly significant overall (42% decrease on the ADHD Rating Scale, P<.001), and sufficiently robust to be detectable in a parallel groups comparison restricted to the first 3 weeks of the protocol (P<.001). The percentage of subjects who improved (reduction in the ADHD rating scale of > or =30%) was significantly higher with Adderall treatment than with a placebo (70% vs 7%; P =.001). CONCLUSIONS: Adderall was effective and well tolerated in the short-term treatment of adults with ADHD. More work is needed to evaluate the long-term effects of Adderall, or other amphetamine compounds, in the treatment of adults with ADHD.",
+   "label": "include",
+   "known_relevant": true,
+   "reason": "Cohen 2006 ADHD dataset label: included"
+  },
+  {
+   "id": "W2085799036",
+   "doi": "https://doi.org/10.1023/a:1012239823148",
+   "title": "Bupropion SR vs. Methylphenidate vs. Placebo for Attention Deficit Hyperactivity Disorder in Adults",
+   "abstract": "Despite the increasing recognition of attention-deficit hyperactivity disorder (ADHD) in adults, there are few controlled trials demonstrating the effectiveness of pharmacological treatments, particularly with nonstimulants. One controlled trial found bupropion SR more effective than placebo in the treatment of ADHD adults. We conducted a controlled study to contrast the effectiveness of bupropion SR and methylphenidate to placebo in ADHD adults. A randomized, double-blind, parallel design was used in this study. Following a 7-day placebo lead-in, 30 ADHD (DSM-IV) subjects (18-60 years old) were randomized to bupropion, methylphenidate, or placebo for 7 weeks. Methylphenidate was titrated over 1 week to a maximum dose of 0.9 mg/kg/d divided into 3 doses while bupropion was titrated over 2 weeks to a maximum dose of 200 mg A.M. and 100 mg P.M. Response rates based on Clinical Global Impression improvement ratings in patients receiving bupropion, methylphenidate, and placebo were 64, 50, and 27%, respectively. The difference in response rates between active treatment and placebo was not statistically significant (p = 0.14). Neuropsychological testing demonstrated trends favoring drug treatment on measures of immediate recall and verbal fluency. While bupropion SR may be a viable clinical alternative for adults with ADHD, further investigation is needed.",
+   "label": "include",
+   "known_relevant": true,
+   "reason": "Cohen 2006 ADHD dataset label: included"
+  },
+  {
+   "id": "W2266471137",
+   "doi": "https://doi.org/10.1212/wnl.58.4.527",
+   "title": "Treatment of ADHD in children with tics",
+   "abstract": "BACKGROUND: The treatment of children with attention deficit hyperactivity disorder (ADHD) and Tourette syndrome (TS) has been problematic because methylphenidate (MPH)--the most commonly used drug to treat ADHD--has been reported to worsen tics and because clonidine (CLON)--the most commonly prescribed alternative--has unproven efficacy. METHODS: The authors conducted a multicenter, randomized, double-blind clinical trial in which 136 children with ADHD and a chronic tic disorder were randomly administered CLON alone, MPH alone, combined CLON + MPH, or placebo (2 x 2 factorial design). Each subject participated for 16 weeks (weeks 1-4 CLON/placebo dose titration, weeks 5-8 added MPH/placebo dose titration, weeks 9-16 maintenance therapy). RESULTS: Thirty-seven children were administered MPH alone, 34 were administered CLON alone, 33 were administered CLON + MPH, and 32 were administered placebo. For our primary outcome measure of ADHD (Conners Abbreviated Symptom Questionnaire--Teacher), significant improvement occurred for subjects assigned to CLON (p < 0.002) and those assigned to MPH (p < 0.003). Compared with placebo, the greatest benefit occurred with combined CLON + MPH (p < 0.0001). CLON appeared to be most helpful for impulsivity and hyperactivity; MPH appeared to be most helpful for inattention. The proportion of individual subjects reporting a worsening of tics as an adverse effect was no higher in those treated with MPH (20%) than those being administered CLON alone (26%) or placebo (22%). Compared with placebo, measured tic severity lessened in all active treatment groups in the following order: CLON + MPH, CLON alone, MPH alone. Sedation was common with CLON treatment (28% reported moderate or severe sedation), but otherwise the drugs were tolerated well, including absence of any evident cardiac toxicity. CONCLUSIONS: Methylphenidate and clonidine (particularly in combination) are effective for ADHD in children with comorbid tics. Prior recommendations to avoid methylphenidate in these children because of concerns of worsening tics are unsupported by this trial.",
+   "label": "include",
+   "known_relevant": true,
+   "reason": "Cohen 2006 ADHD dataset label: included"
+  },
+  {
+   "id": "W2080231392",
+   "doi": "https://doi.org/10.1017/s1461145702002845",
+   "title": "Efficacy of Adderall and methylphenidate in attention deficit hyperactivity disorder: a drug–placebo and drug–drug response curve analysis of a naturalistic study",
+   "abstract": "Stimulant medication has, for many years, been the pharmacological treatment of choice for children and adults with attention deficit hyperactivity disorder (ADHD). Recently, several studies have documented the efficacy of a new stimulant, Adderall. Although these initial studies provide useful information for clinicians treating ADHD children, their method of data presentation has provided limited information about the clinical significance of drug effects. Thus, to address the issue of clinical significance, we completed drug-placebo response curve analyses of a blinded, placebo-controlled study of Adderall and methylphenidate (MPH). Our results show that the efficacy of Adderall and MPH to improve functioning is seen throughout the full range of improvement scores. Both drugs prevent worsening and, for a majority of patients, lead to improvements that are well into the normal range. The analyses also highlight an important subgroup of placebo responders, which suggests that future research should focus on how to predict robust placebo response in ADHD patients.",
+   "label": "include",
+   "known_relevant": true,
+   "reason": "Cohen 2006 ADHD dataset label: included"
+  },
+  {
+   "id": "W2073497495",
+   "doi": "https://doi.org/10.1177/108705470200600201",
+   "title": "An experimental comparison of Pycnogenol® and methylphenidate in adults with Attention-Deficit/ Hyperactivity Disorder (ADHD)",
+   "abstract": "Twenty-four adults (24 to 53 years old) with Attention-Deficit/Hyperactivity Disorder (ADHD), Combined Type, were studied in a double-blind, placebo-controlled, crossover study of Pycnogenol and methylphenidate. Pycnogenol is an antioxidant derived from the bark of the French maritime pine tree. Methylphenidate is a standard pharmaceutical intervention for ADHD. Anecdotal reports suggest that Pycnogenol improves concentration in adults with ADHD without adverse side effects. Participants received Pycnogenol, methylphenidate, and placebo, each for three weeks, in a randomized and counterbalanced order. Although ADHD symptoms improved during treatment, neither methylphenidate nor Pycnogenol outperformed the placebo control, as measured by self-report rating scales, rating scales completed by the individual's significant other, and a computerized continuous performance test. The conservative dosage levels and relatively brief length of treatment may have contributed to the absence of significant differences among treatment conditions. Implications for future research are noted.",
+   "label": "include",
+   "known_relevant": true,
+   "reason": "Cohen 2006 ADHD dataset label: included"
+  },
+  {
+   "id": "W2123980944",
+   "doi": "https://doi.org/10.1176/appi.ajp.159.11.1896",
+   "title": "Once-Daily Atomoxetine Treatment for Children and Adolescents With Attention Deficit Hyperactivity Disorder: A Randomized, Placebo-Controlled Study",
+   "abstract": "OBJECTIVE: The authors assessed the efficacy of once-daily atomoxetine administration in the treatment of children and adolescents with attention deficit hyperactivity disorder (ADHD). METHOD: In a double-blind study, children and adolescents with ADHD (N=171, age range=6-16 years) were randomly assigned to receive 6 weeks of treatment with either atomoxetine (administered once daily) or placebo. RESULTS: Outcomes among atomoxetine-treated patients were superior to those of the placebo treatment group as assessed by investigator, parent, and teacher ratings. The treatment effect size (0.71) was similar to those observed in previous atomoxetine studies that used twice-daily dosing. Parent diary ratings suggested that drug-specific effects were sustained late in the day. Discontinuations due to adverse events were low (less than 3%) for both treatment groups, and no serious safety concerns were observed. CONCLUSIONS: Once-daily administration of atomoxetine is an effective treatment for children and adolescents with ADHD.",
+   "label": "include",
+   "known_relevant": true,
+   "reason": "Cohen 2006 ADHD dataset label: included"
+  },
+  {
+   "id": "W2016483680",
+   "doi": "https://doi.org/10.4088/jcp.v63n1209",
+   "title": "Results From 2 Proof-of-Concept, Placebo-Controlled Studies of Atomoxetine in Children With Attention-Deficit/Hyperactivity Disorder",
+   "abstract": "BACKGROUND: Atomoxetine is a nonstimulant drug being studied for the treatment of attention-deficit/hyperactivity disorder (ADHD). Atomoxetine is a highly specific inhibitor of the presynaptic norepinephrine transporter with minimal affinity for other noradrenergic receptors or other neurotransmitter transporters or receptors. Results of 2 proof-of-concept studies are reported that tested the hypothesis that a selective inhibitor of presynaptic norepinephrine uptake would be effective for the treatment of ADHD in school-aged children. METHOD: Two identical 12-week, stratified, randomized, double-blind, placebo-controlled trials were conducted in children who met DSM-IV criteria for ADHD. The primary efficacy outcome measure was the mean change from baseline to endpoint in the Attention-Deficit/Hyperactivity Disorder Rating Scale (ADHD RS) total score. Secondary efficacy measures included the Clinical Global Impressions-ADHD-Severity (CGI-ADHD-S) and the Conners' Parent Rating Scale-Revised: Short Form (CPRS-R:S). RESULTS: A total of 291 patients were randomized in the 2 trials combined (Study 1, N = 147; Study 2, N = 144). Stimulant-naive patients were randomized to atomoxetine, placebo, or methylphenidate. Patients with prior stimulant exposure were randomized to atomoxetine or placebo. Atomoxetine significantly reduced ADHD RS total scores compared with placebo in each study (p <.001). Changes in the CGI-ADHD-S (Study 1: p =.003; Study 2: p =.001) and CPRS-ADHD Index (Study 1: p =.023; Study 2: p <.001) also showed atomoxetine to be statistically significantly superior to placebo in reducing ADHD symptoms. Atomoxetine was found to be well tolerated in this population of pediatric patients. CONCLUSION: Two studies of atomoxetine early in its development confirmed that atomoxetine, a specific and selective inhibitor of noradrenergic uptake, was effective for the treatment of children with ADHD. In addition, atomoxetine was found to be well tolerated.",
+   "label": "include",
+   "known_relevant": true,
+   "reason": "Cohen 2006 ADHD dataset label: included"
+  },
+  {
+   "id": "W2053295943",
+   "doi": "https://doi.org/10.1016/s0006-3223(02)01671-2",
+   "title": "Atomoxetine in adults with ADHD: two randomized, placebo-controlled studies",
+   "abstract": null,
+   "label": "include",
+   "known_relevant": true,
+   "reason": "Cohen 2006 ADHD dataset label: included"
+  },
+  {
+   "id": "W2070811057",
+   "doi": "https://doi.org/10.1542/peds.111.2.262",
+   "title": "Childhood Behavior Disorders and Injuries Among Children and Youth: A Population-Based Study",
+   "abstract": "CONTEXT: While an association between pediatric behavioral disorders and injuries is generally acknowledged, no studies have measured the risk for injury in the context of a large, population-based study that is free of cohort biases. OBJECTIVES: To examine the association between childhood behavior disorders ([CBDs] as indicated by prescription for methylphenidate [MPH]) and a variety of injury outcomes, and to evaluate the risk for injury among these children after controlling for known demographic correlates. DESIGN: Population-based database analysis of all children in British Columbia (BC) under the age of 19 as of December 31, 1996; comparison of those who had been prescribed MPH and therefore placed in the CBD group (n = 16, 806) and those who were not (n = 1,010,067). Demographic information collected was as follows: age, sex, measures of socioeconomic status, and region of residence. OUTCOME MEASURES: Common types of childhood injury in BC: International Classification of Diseases, Ninth Revision N-codes (fractures, open wounds, poisoning/toxic effect, concussion, intracranial, burns) and E-codes (falls, postoperative complications, motor vehicle accidents, struck by object, adverse effects of drugs, suffocation, drowning). DATA SOURCE: BC Linked Health Data Set and the BC Triplicate Prescription Program. RESULTS: After controlling for known demographic correlates, odds for injury was greater among those treated with MPH and presumed to have a behavioral disorder, when injury was characterized either by type (1.67; 99% confidence interval: 1.54-1.81) or cause (1.52; 99% confidence interval: 1.40-1.66) of injury. This increased risk extended to unexpected categories of injury such as postoperative complications and adverse effects of drugs. CONCLUSIONS: Children with CBDs have >1.5 times the odds of sustaining injuries of a variety of types from a variety of causes, even after controlling for known demographic correlates, than those without behavioral disorders. The risks for these children extend beyond those that might be directly associated with impulsivity and overactivity. Injury prevention strategies aimed at this group of children and youth would be beneficial. Policy-makers should account for increased risk of a wide variety of injuries in this group of children and youth.",
+   "label": "include",
+   "known_relevant": true,
+   "reason": "Cohen 2006 ADHD dataset label: included"
+  },
+  {
+   "id": "W2094270069",
+   "doi": "https://doi.org/10.2165/00002018-200326100-00006",
+   "title": "Cardiovascular Effects of Atomoxetine in Children, Adolescents, and Adults",
+   "abstract": null,
+   "label": "include",
+   "known_relevant": true,
+   "reason": "Cohen 2006 ADHD dataset label: included"
+  },
+  {
+   "id": "W2031663376",
+   "doi": "https://doi.org/10.2165/00148581-200305080-00005",
+   "title": "Comparative Efficacy of Two Once Daily Methylphenidate Formulations (Ritalin?? LA???1 and Concerta??) and Placebo in Children with Attention Deficit Hyperactivity Disorder Across the School Day",
+   "abstract": null,
+   "label": "include",
+   "known_relevant": true,
+   "reason": "Cohen 2006 ADHD dataset label: included"
+  },
+  {
+   "id": "W1989428478",
+   "doi": "https://doi.org/10.1001/archpsyc.1995.03950180020004",
+   "title": "A Double-blind, Crossover Comparison of Methylphenidate and Placebo in Adults With Childhood-Onset Attention-Deficit Hyperactivity Disorder",
+   "abstract": "BACKGROUND: There are few controlled studies of methylphenidate hydrochloride in adults with attention-deficit hyperactivity disorder (ADHD), and their results have been equivocal. The discrepancies among these studies may be related to low doses, diagnostic uncertainties, and lack of attention to comorbid disorders. METHODS: We conducted a randomized, 7-week, placebo-controlled, crossover study of methylphenidate in 23 adult patients with DSM-III-R ADHD using standardized instruments for diagnosis, separate assessments of ADHD and depressive and anxiety symptoms, and a robust daily dose of methylphenidate hydrochloride, 1.0 mg/kg per day. RESULTS: We found a marked therapeutic response for methylphenidate treatment of ADHD symptoms that exceeded the placebo response (78% vs 4%, P < .0001). Response to methylphenidate was independent of gender, psychiatric comorbidity with anxiety or moderate depression, or family history of psychiatric disorders. CONCLUSION: Robust doses of methylphenidate are effective in the treatment of adult ADHD.",
+   "label": "include",
+   "known_relevant": true,
+   "reason": "Cohen 2006 ADHD dataset label: included"
+  },
+  {
+   "id": "W2146994054",
+   "doi": null,
+   "title": "Epilepsy and attention deficit hyperactivity disorder: Is methylphenidate safe and effective?",
+   "abstract": null,
+   "label": "include",
+   "known_relevant": true,
+   "reason": "Cohen 2006 ADHD dataset label: included"
+  },
+  {
+   "id": "W2099530687",
+   "doi": "https://doi.org/10.1177/009127000004001008",
+   "title": "Dose‐Proportional and Stereospecific Pharmacokinetics of Methylphenidate Delivered Using an Osmotic, Controlled‐Release Oral Delivery System",
+   "abstract": "Methylphenidate hydrochloride (HCl) is frequently used for the treatment of attention deficit/hyperactivity disorder (ADHD). A study was conducted in healthy subjects to evaluate the dose-ranging pharmacokinetics of 18, 36, and 54 mg methylphenidate HCl delivered using an oral, osmotic, controlled-release formulation (OROS). Plasma concentrations of l-methylphenidate were 40-fold lower than those of d-methylphenidate, whereas plasma concentrations of d-alpha-phenyl-2-piperidine acetic acid (d-PPA) and l-PPA, the major metabolite of methylphenidate, were comparable. Mean AUCinf values for d-methylphenidate were 42.2, 80.9, and 120 ng.h/mL for the 18, 36, and 54 mg doses, respectively, increasing dose proportionally. AUCinf values for l-methylphenidate were only approximately 1% of d-methylphenidate (0.43, 0.96, and 1.82 ng.h/mL for the 18, 36, and 54 mg dose groups, respectively). In contrast, AUCinf values of d- and l-PPA were comparable. The dose-normalized d- and l-methylphenidate plasma concentration-time profiles for the three treatment groups were superimposable. Similarly, dose-normalized plasma concentrations of d- and l-PPA were superimposable. Methylphenidate metabolism, measured as the ratio of d-methylphenidate AUCinf to d-PPA AUCinf and as l-methylphenidate AUCinf to l-PPA AUCinf, was similar for the three dose groups, indicating that methylphenidate metabolism was not affected by increasing dose. OROS (methylphenidate HCl) exhibits dose-proportional and linear pharmacokinetics.",
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W2322021487",
+   "doi": "https://doi.org/10.1097/00004714-200212000-00016",
+   "title": "Dosing Strategies of Clozapine-Fluvoxamine Cotreatment",
+   "abstract": "Lu, Mong-Liang MD, MS; Lane, Hsien-Yuan MD, PhD; Jann, Michael W. PharmD; Chang, Wen-Ho MD Author Information",
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W1996463621",
+   "doi": "https://doi.org/10.4088/jcp.v63n1210",
+   "title": "A Comparison of the Efficacy, Safety, and Tolerability of Divalproex Sodium and Olanzapine in the Treatment of Bipolar Disorder",
+   "abstract": "BACKGROUND: This study compared the efficacy, safety, and tolerability of divalproex and olanzapine in the treatment of acute mania associated with bipolar disorder. METHOD: This randomized, 12-week, double-blind, parallel-group, multicenter study included DSM-IV-defined bipolar disorder type I patients hospitalized for acute mania and randomly assigned to treatment with divalproex or olanzapine. After an inpatient period of up to 21 days, subjects were followed as outpatients. Dose adjustment was permitted during the inpatient period. Efficacy was assessed using change from baseline in Mania Rating Scale (MRS) score to day 21; other efficacy measures included the Brief Psychiatric Rating Scale, the Hamilton Rating Scale for Depression, and the Clinical Global Impressions-Part I, Severity of Illness scale. The primary safety endpoint was change from baseline in weight. Other safety and tolerability endpoints included spontaneous adverse event reporting and changes from baseline in laboratory measures and vital signs. RESULTS: 120 subjects (N = 63 divalproex, N = 57 olanzapine) were randomly assigned to treatment. No significant differences between groups were found for any efficacy variable for change from baseline to day 21. Mean MRS score changes from baseline to day 21 were -14.8 for divalproex and -17.2 for olanzapine (p =.210). A significantly (p <.05) greater proportion of olanzapine-treated subjects experienced somnolence, weight gain, edema, rhinitis, and speech disorder (slurred speech); no adverse events were significantly greater in the divalproex group. A number of laboratory measures also demonstrated significant treatment differences, but the clinical significance of many of these is uncertain. Mean body weight changes were significantly greater in the olanzapine group (+ 8.8 lb [+ 4.0 kg]) than the divalproex group (+ 5.5 lb [+ 2.5 kg], p <.050). One death occurred during the study (olanzapine group, diabetic ketoacidosis). CONCLUSION: No significant difference in efficacy was found between treatment groups. Divalproex was associated with a more favorable adverse event profile and significantly less weight gain than olanzapine.",
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W1978094417",
+   "doi": "https://doi.org/10.1097/01.jcp.0000085405.08426.73",
+   "title": "Serum Antimuscarinic Activity During Clozapine Treatment",
+   "abstract": "This study attempts: (1) to verify that serum antimuscarinic activity is related to clozapine dose, and more importantly to clozapine plasma concentrations; (2) to explore whether norclozapine has serum antimuscarinic activity; (3) to explore whether antimuscarinic activity is related to clozapine side effects; and (4) to compare the serum antimuscarinic activities of clozapine with those of antiparkinsonian drugs and other antipsychotics. In 39 patients participating in a double-blind clozapine study, the [3H]QNB assay was used to measure serum antimuscarinic activity: (1) on baseline medications; (2) after a 4-week haloperidol trial; (3) after a 16-week clozapine trial of either 100, 300, or 600 mg/d; and (4) after 1 or 2 consecutive 16-week clozapine trials with remaining doses in nonresponders. Clozapine levels predicted serum antimuscarinic activity better than clozapine dose. At the end of the 1st clozapine trial, the correlation with the levels explained 69% of the variance of serum antimuscarinic activity (r = 0.83, P < 0.001, N = 34). Clozapine levels were good predictors of serum antimuscarinic activity only in patients taking 300 or 600 mg/d. After correcting for clozapine levels, the within-subject correlation between norclozapine levels and serum antimuscarinic activity was relatively high and significant (r = 0.54, F = 26.7, df = 1.65, P < 0.001). Constipation was significantly associated with higher serum antimuscarinic activity during the 1st clozapine trial. Clozapine was associated with clearly higher antimuscarinic activity than other antipsychotics or low doses of antiparkinsonians. In vitro studies and new clinical studies are needed to verify whether norclozapine may significantly contribute to antimuscarinic activity during clozapine treatment.",
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W2150568116",
+   "doi": "https://doi.org/10.1007/s00213-003-1399-9",
+   "title": "Differential sensitivity to acute administration of Ritalin, apormorphine, SCH 23390, but not raclopride in mice selectively bred for hyperactive wheel-running behavior",
+   "abstract": null,
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W2082613933",
+   "doi": "https://doi.org/10.1007/bf03012457",
+   "title": "The effectiveness of clonidine as an analgesic in paediatric adenotonsillectomy",
+   "abstract": null,
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W2139176680",
+   "doi": "https://doi.org/10.1212/wnl.45.5.865",
+   "title": "Common drugs may influence motor recovery after stroke",
+   "abstract": "Article abstract—Studies in laboratory animals indicate that certain centrally acting drugs (eg, the antihyperten-sives clonidine and prazosin, neuroleptics and other dopamine receptor antagonists, benzodiazepines, and the anticon-vulsants phenytoin and phenobarbital) impair behavioral recovery after focal brain injury. Even single doses may have long-term harmful effects. To determine whether these medications have a similar negative impact in humans, we analyzed the recoveries of control patients who were enrolled in the Sygen in Acute Stroke Study, a multicenter study of the effects of GM1 ganglioside after ischemic stroke. Motor impairments were measured by the motor subscores of the Toronto Stroke Scale at baseline and 7, 14, 21, 28, 56, and 84 days after stroke. Using these data, we compared motor recovery between patients with initial motor deficits who received at least one of the drugs that interfere with recovery in laboratory studies (“detrimental” drug group, n = 37) and patients who did not receive these drugs (“neutral” drug group, n = 59). The groups were well balanced with regard to the frequency of comorbid conditions and other prognostic factors. For upper-extremity motor function, repeated-measures ANOVA showed a significant interaction between drug group and time after stroke [F(6,528) = 2.38; p = 0.031, with a significant (p < 0.001) difference between the groups beginning 7 days after the stroke. A similar trend was present for the lower extremity, but the overall difference between the groups was not significant [ANOVA F(6,498) = 1.22; p = 0.29]. Drug group did influence the degree of independence in activities of daily living as measured with the Barthel Index. Repeated-measures ANOVA showed a significant interaction between drug group and time after stroke [F(5,420) = 3.35; p = 0.0061, with a significant (p 5 0.002) difference between the groups 56 and 84 days after stroke. Stepwise regression analyses incorporating other potential prognostic factors indicated that drug group independently influenced both the degree of upper-extremity motor impairment and independence in activities of daily living 84 days after stroke. These data are consistent with the detrimental effects of certain drugs on recovery in laboratory animals and suggest that similar effects may occur in humans.",
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W2027294868",
+   "doi": "https://doi.org/10.1007/bf02245620",
+   "title": "Clozapine versus typical antipsychotics a retro- and prospective study of extrapyramidal side effects",
+   "abstract": null,
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W2003359037",
+   "doi": "https://doi.org/10.1097/00000542-199708000-00015",
+   "title": "Oral Clonidine Premedication Does Not Alter the Efficacy of Simulated Intravenous Test Dose Containing Low Dose Epinephrine in Awake Volunteers",
+   "abstract": "BACKGROUND: Clonidine premedication modifies the hemodynamic responses to sympathomimetics. The present study was designed to test whether clonidine altered the response to a small intravenous dose of epinephrine, such as that which might be used in an epidural test dose. METHODS: In 18 healthy volunteers, four series of determinations were performed in random order and were separated by a minimum 72 h: (1) no premedication followed by intravenous saline 3 ml, (2) no premedication followed by intravenous test dose containing 3 ml of 1.5% lidocaine + 15 microg epinephrine, (3) oral clonidine (5 microg/kg 1.5 h before hemodynamic determinations) followed by intravenous saline, and (4) oral clonidine followed by intravenous epinephrine-containing test dose. Systolic blood pressure (SBP) and heart rate (HR) were measured continuously, and symptoms associated with central nervous system toxicity were noted. RESULTS: After the test dose injections, HR and SBP increased with or without clonidine premedication. The 95% confidence intervals for the maximum HR increases with and without clonidine were 49-61 and 44-54 beats/min, respectively, indicating that one could not be absolutely certain that everyone would develop a positive HR response. The HR increase was > or = 20 beats/min in 18 of 18 volunteers given epinephrine with or without clonidine and in 0 of 18 volunteers given saline. Calculated sensitivities, specificities, and positive and negative predictive values were all 100% based on the conventional HR criterion and were unaltered by clonidine. Subjective symptoms were not affected by clonidine. CONCLUSIONS: Oral clonidine does not alter the efficacy of epinephrine-containing test doses used for detecting intravascular injection.",
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W2164164342",
+   "doi": "https://doi.org/10.1046/j.1365-2125.2000.00121.x",
+   "title": "Non‐linear pharmacokinetics of MDMA (‘ecstasy’) in humans",
+   "abstract": "AIMS: 3,4-Methylenedioxymethamphetamine (MDMA, commonly called ecstasy) is a synthetic compound increasingly popular as a recreational drug. Little is known about its pharmacology, including its metabolism and pharmacokinetics, in humans in controlled settings. A clinical trial was designed for the evaluation of MDMA pharmacological effects and pharmacokinetics in healthy volunteers. METHODS: A total of 14 subjects were included. In the pilot phase six received MDMA at 50 (n=2), 100 (n=2), and 150 mg (n=2). In the second phase eight received MDMA at both 75 and 125 mg (n=8). Subjects were phenotyped for CYP2D6 activity and were classified as extensive metabolizers for substrates, such as MDMA, whose hepatic metabolism is regulated by this enzyme. Plasma and urine samples were collected throughout the study for the evaluation of MDMA pharmacokinetics. Body fluids were analysed for the determination of MDMA and its main metabolites 3,4-methylenedioxyamphetamine (MDA), 4-hydroxy-3-methoxy-methamphetamine (HMMA) and 4-hydroxy-3-methoxy-amphetamine (HMA). RESULTS: As the dose of MDMA administered was increased, volunteers showed rises in MDMA concentrations that did not follow the same proportionality which could be indicative of nonlinearity. In the full range of doses tested the constant recovery of HMMA in the urine combined with the increasing MDMA recovery seems to point towards a saturation or an inhibition of MDMA metabolism (the demethylenation step). These observations are further supported by the fact that urinary clearance was rather constant while nonrenal clearance was dose dependent. CONCLUSIONS: It has previously been postulated that individuals genetically deficient for the hepatic enzyme CYP2D6 (about 10% of the Caucasian people) were at risk of developing acute toxicity at moderate doses of MDMA because the drug would accumulate in the body instead of being metabolized and inactivated. The lack of linearity of MDMA pharmacokinetics (in a window of doses compatible with its recreational use) is a more general phenomenon as it concerns the whole population independent of their CYP2D6 genotype. It implies that relatively small increases in the dose of MDMA ingested are translated to disproportionate rises in MDMA plasma concentrations and hence subjects are more prone to develop acute toxicity.",
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W2077868413",
+   "doi": "https://doi.org/10.1002/ana.410400116",
+   "title": "Effect of lazabemide on the progression of disability in early Parkinson's disease",
+   "abstract": "Lazabemide (Ro 19-6327) is a relatively short-acting, reversible, and selective type B monoamine oxidase inhibitor that is not metabolized to amphetamines or other active compounds. We previously found lazabemide to be safe and well tolerated at dosages of up to 400 mg/day during a 6-week study of 201 patients with early untreated Parkinson's disease (PD). We now assess whether or not lazabemide influences the progression of disability in untreated PD. Patients (N = 321) were assigned by randomization to one of five treatment groups (placebo, 25 mg, 50 mg, 100 mg, or 200 mg/day) and followed systematically for up to 1 year. The risk of reaching the primary end point (the onset of disability sufficient to require levodopa therapy) was reduced by 51% for the patients who received lazabemide compared with placebo-treated subjects. This effect was consistent among all dosages. The frequency of adverse experiences did not differ among the treatment groups. At dosages ranging from 25 to 200 mg/day, lazabemide was well tolerated and delayed the need for levodopa in early, otherwise untreated PD. The magnitude and pattern of benefits were similar to those observed after 1 year of deprenyl (selegiline) treatment in the DATATOP clinical trial.",
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W1986046877",
+   "doi": "https://doi.org/10.1001/archpsyc.60.2.204",
+   "title": "Development of a New Once-a-Day Formulation of Methylphenidate for the Treatment of Attention-deficit/Hyperactivity Disorder",
+   "abstract": "BACKGROUND: The duration of action of the immediate-release formulation of methylphenidate hydrochloride is short (3 to 4 hours), and 3 times daily dosing is thought to maximize effectiveness across a 12-hour day. The initial sustained-release formulations of methylphenidate had reduced efficacy compared with immediate-release methylphenidate and were not well accepted. Tachyphylaxis was hypothesized to account for the reduced effects, and an ascending drug delivery pattern was proposed to overcome this acute tolerance. METHODS: Children with attention-deficit/hyperactivity disorder were evaluated in a laboratory school to characterize onset and duration of the effect of a variety of methylphenidate regimens. In a proof-of-concept study, an experimental ascending profile was established by an initial bolus followed by small increasing doses of immediate-release methylphenidate in capsules administered every 30 minutes for 8 hours. Two proof-of-product studies of a new oral once-a-day formulation to deliver methylphenidate by an osmotic pump process based on OROS (ALZA Corp, Mountain View, Calif) technology (hereafter referred to \"OROS-methylphenidate\") were conducted: a pharmacokinetic study and a pharmacodynamic study. RESULTS: The experimental ascending profile matched the effect of the standard regimen of methylphenidate, 3 times daily. In the pharmacokinetic study, OROS-methylphenidate treatment produced a rapid rise followed by increasing plasma concentrations that peaked 7 to 9 hours after administration. In the pharmacodynamic study, OROS-methylphenidate treatment matched the 3 times daily dosing of methylphenidate for onset and duration of efficacy. CONCLUSIONS: These studies demonstrate the translation of a basic science finding (acute tolerance to clinical doses of methylphenidate) into clinical application (the selection of a new drug delivery pattern for methylphenidate). This approach produced a new product (OROS-methylphenidate or Concerta), which proved to have the predicted rapid onset (with 1-2 hours) and long duration of efficacy (10-12 hours) after a single administration in the morning.",
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W1992683185",
+   "doi": "https://doi.org/10.1038/sj.npp.1300089",
+   "title": "Treatment of Weight Gain with Fluoxetine in Olanzapine-Treated Schizophrenic Outpatients",
+   "abstract": null,
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W1993917134",
+   "doi": "https://doi.org/10.1046/j.1360-0443.2003.00372.x",
+   "title": "Evaluation of the effects of lofexidine and clonidine on naloxone‐precipitated withdrawal in opioid‐dependent humans",
+   "abstract": "AIMS: To examine the efficacy of lofexidine, an alpha2 adrenergic agonist, to suppress opioid withdrawal symptoms in opioid-dependent humans under in-patient laboratory conditions by using a naloxone challenge procedure. DESIGN: Randomized, within-subject, cross-over design with drug administration taking place under double-blind and triple-dummy conditions. SETTING: A 14-bed in-patient hospital research unit dedicated to the conduct of behavioral pharmacology studies. PARTICIPANTS: Eight healthy adult volunteers (two female/six male) with histories of polysubstance abuse and current physical dependence on opioids. INTERVENTION: Participants were stabilized onto methadone and maintained on 30 mg/day, p.o. throughout the study. Oral placebo, lofexidine (0.4, 0.8 and 1.6 mg, p.o.) and clonidine (0.1 and 0.2 mg, p.o.) were each tested as pre-treatments once in combination with each of three intramuscular naloxone doses (0, 0.1 and 0.3 mg, i.m.) during 18 separate experimental sessions. MEASUREMENTS: An array of physiological indices (e.g. heart rate, blood pressure, pupil diameter) as well as a number of subjective and observer-rating scales sensitive to opioid withdrawal effects. FINDINGS: As expected, lofexidine and clonidine both produced dose-related decreases in blood pressure and heart rate but few subjective effects; naloxone increased opioid withdrawal signs and symptoms in a dose- and time-dependent fashion. Although both lofexidine and clonidine reduced the cardiovascular response to naloxone challenge, close inspection of the data reveal that this occurred only to the extent that baseline physiological parameters were reduced, while neither drug significantly modified the overall magnitude of the response to naloxone. Moreover, neither lofexidine nor clonidine suppressed the subjective discomfort of opioid withdrawal or significantly reduced other autonomic signs of opioid withdrawal, such as lacrimation or rhinorrhea. CONCLUSIONS: These data suggest that lofexidine is well tolerated even at supratherapeutic acute doses. However, its failure to modify most signs and symptoms of opioid withdrawal suggest that its effective use in spontaneous withdrawal will require concomitant medications for improved therapeutic response.",
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W2067912704",
+   "doi": "https://doi.org/10.1016/s0378-5122(97)00073-x",
+   "title": "Neuroendocrine effects of different estradiol-progestin regimens in postmenopausal women",
+   "abstract": null,
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W2012800223",
+   "doi": "https://doi.org/10.1016/s0306-4530(01)00016-6",
+   "title": "Effects of olanzapine and haloperidol on serum prolactin levels in male schizophrenic patients",
+   "abstract": null,
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W1968455975",
+   "doi": "https://doi.org/10.4088/jcp.v63n1212",
+   "title": "An Open Study of Olanzapine and Fluoxetine for Psychotic Major Depressive Disorder",
+   "abstract": "BACKGROUND: Although atypical antipsychotic agents are commonly used in the treatment of psychotic depression, there are no published prospective studies on their use in this condition. The aim of this study was to assess, by interim analyses, the efficacy of the atypical antipsychotic agent olanzapine in combination with the selective serotonin reuptake inhibitor antidepressant agent fluoxetine. METHOD: We enrolled 27 patients (17 women [63.0%] and 10 men [37.0%]; mean +/- SD age: 41.2 +/- 14.7 years) with DSM-IV-defined major depressive disorder with psychotic features into an open trial of olanzapine, 5 to 20 mg/day, plus fluoxetine, 20 to 80 mg/day. Patients were assessed at each visit with the 17-item Hamilton Rating Scale for Depression and both the psychotic and mood modules of the Structured Clinical Interview for DSM-IV Axis I Disorders, Patient Edition. We are reporting the results of the first 6 weeks of treatment. RESULTS: Twenty-two (81.5%) of the 27 enrolled patients completed the 6-week open trial, and 5 (18.5%) dropped out, with only 2 (7.4%) dropping out due to side effects. Of the 27 patients, 74.1% (N = 20) met criteria for melancholic features, 14.8% (N = 4) had delusions alone, 18.5% (N = 5) had hallucinations alone, and 66.7% (N = 18) reported both delusions and hallucinations. In addition, the overall rates of response for the intent-to-treat group were as follows: depression response rate, 66.7% (N = 18); psychosis response rate, 59.3% (N = 16); psychotic depression response rate, 55.6% (N = 15); and psychotic depression remission rate, 40.7% (N = 11). CONCLUSION: The combination of olanzapine and fluoxetine appears to be a promising, safe, and effective treatment for psychotic depression. Double-blind studies are needed to confirm this impression.",
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W1879428650",
+   "doi": "https://doi.org/10.1542/peds.96.2.320",
+   "title": "Effects of Late-Afternoon Methylphenidate Administration on Behavior and Sleep in Attention-Deficit Hyperactivity Disorder",
+   "abstract": "OBJECTIVE: This study evaluated the effects on behavior and sleep of methylphenidate (MPH) administered at 4 PM to children with attention-deficit hyperactivity disorder (ADHD). METHODOLOGY: Twelve children admitted to a child psychiatric inpatient service with ADHD participated in a double-blind, crossover study in which they received a 4 PM dose of either 15 mg of MPH, 10 mg of MPH, or a placebo in random order for 12 consecutive days. Ratings of behavior, including ADHD symptoms, pertaining to the period from dose administration until sleep onset, were supplied nightly by hospital staff. Sleep latency and sleep adequacy were also assessed for each night. RESULTS: MPH resulted in markedly improved behavioral control compared with placebo; there was no difference between 15-mg and 10-mg MPH doses. MPH did not alter sleep latencies observed with the placebo. Children were more often rated as less tired on awakening after nights that they received 10 mg of MPH compared with 15 mg of MPH and the placebo. Weight loss was apparent among 83% of the patients, but dinner intake did not vary with third-dose condition. CONCLUSIONS: Morning and noon administration of stimulants to children with ADHD is a near-universal practice, but many clinicians avoid a third, late-afternoon administration for fear of inducing insomnia. This study's findings show that children with ADHD derive substantial symptom reduction from MPH administered in late afternoon, with no untoward effects on sleep. Therefore, three-times-a-day dosing should be considered for those children exhibiting ADHD symptoms in the evening. Adverse effects on sleep latency were not apparent in the sample overall. Nonetheless, monitoring for possible aggravation of sleep problems and weight loss remains sound treatment practice.",
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W2121675770",
+   "doi": "https://doi.org/10.1345/aph.1a099",
+   "title": "Bupropion Versus Selective Serotonin-Reuptake Inhibitors for Treatment of Depression",
+   "abstract": "OBJECTIVE: To compare the benefits and risks of bupropion and selective serotonin-reuptake inhibitors (SSRIs) in adults with depression. DATA SOURCES: MEDLINE (1966-September 1999), Embase (1980-August 1999), PsyclNFO (1887-August 1999), International Pharmaceutical Abstracts (1970-August 1999), and CIANHL databases were searched. References from the selected citations, review articles, and the manufacturer were also screened. STUDY SELECTION: Included studies were randomized, double-blind, controlled trials evaluating bupropion versus SSRIs for depression in adults. Studies were assessed independently in duplicate. Discrepancies were resolved by consensus. DATA ANALYSIS: Data are reported as absolute weighted mean differences or relative risks and 95% confidence intervals comparing bupropion relative to SSRIs. Data not combined are presented qualitatively. DATA SYNTHESIS: Six full-length studies were included of 257 citations identified. SSRI comparators were fluoxetine, sertraline, and paroxetine. No differences in Hamilton Rating Scale for Depression (HAM-D) and Clinical Global Impressions Scale for Improvement of illness (CGI-I) were found, but data were not able to be quantitatively combined. The absolute weighted mean differences were 0.10 (95% CI -0.2 to 0.4) for the CGI for Severity of Illness and 0.37 (95% CI -0.85 to 1.6) for the Hamilton Rating Scale for Anxiety measurements. Relative risks of bupropion compared with SSRIs were 0.6 (95% CI 0.41 to 0.89), 0.31 (95% CI 0.16 to 0.57), and 0.27 (95% CI 0.15 to 0.48) for nausea, diarrhea, and somnolence, respectively. Sexual arousal disorder, orgasmic dysfunction, and sexual desire disorder occurred less with bupropion than with SSRIs, with relative risks of 0.46 (95% CI 0.26 to 0.83), 0.22 (95% CI 0.12 to 0.40), and 0.65 (95% CI 0.51 to 0.84), respectively. CONCLUSIONS: Bupropion and SSRIs have similar effectiveness; however, bupropion was associated with less nausea, diarrhea, somnolence, and sexual dysfunction.",
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W2063498586",
+   "doi": "https://doi.org/10.1038/ki.1996.398",
+   "title": "Mechanism of angiotensin converting enzyme inhibitor-related anemia in renal transplant recipients",
+   "abstract": null,
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W2070635185",
+   "doi": "https://doi.org/10.1097/00004714-199612000-00015",
+   "title": "Effects of 'Seroquel' (Quetiapine) on Platelet Serotonin-2 Binding in Schizophrenia",
+   "abstract": "Faustman, William O. PhD; Ringo, David L. MD, PhD; Lauriello, John MD; Lim, Kelvin O. MD; Pfefferbaum, Adolf MD; Bardgett, Mark E. PhD; Csernansky, John G. MD Author Information",
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W2037172357",
+   "doi": "https://doi.org/10.1097/00004714-200108000-00006",
+   "title": "A Double-Blind, Randomized Comparison of the Efficacy and Safety of Intramuscular Injections of Olanzapine, Lorazepam, or Placebo in Treating Acutely Agitated Patients Diagnosed With Bipolar Mania",
+   "abstract": "There are no rapid-acting intramuscular formulations of atypical antipsychotics available for quickly calming an agitated patient with bipolar disorder. In this study, 201 agitated patients with bipolar mania were randomly assigned to receive one to three injections of the atypical antipsychotic olanzapine (10 mg, first two injections; 5 mg, third injection), the benzodiazepine lorazepam (2 mg, first two injections; 1 mg, third injection), or placebo (placebo, first two injections; olanzapine, 10 mg, third injection) within a 24-hour period. Agitation was measured at baseline, every 30 minutes for the first 2 hours, and at 24 hours after the first injection using the Positive and Negative Syndrome Scale-Excited Component subscale and two additional agitation scales. At 2 hours after the first injection, patients treated with olanzapine showed a significantly greater reduction in scores on all agitation scales compared with patients treated with either placebo or lorazepam. At 24 hours after the first injection, olanzapine remained statistically superior to placebo in reducing agitation in patients with acute mania, whereas patients treated with lorazepam were not significantly different from those treated with placebo or olanzapine. Furthermore, no significant differences among the three treatment groups were observed in safety measures, including treatment-emergent extrapyramidal symptoms, the incidence of acute dystonia, or QTc interval changes. These findings suggest that intramuscular olanzapine is a safe and effective treatment for reducing acute agitation in patients with bipolar mania.",
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W2030925538",
+   "doi": "https://doi.org/10.1097/00000539-200111000-00016",
+   "title": "Plasma Lidocaine Concentrations During Continuous Thoracic Epidural Anesthesia After Clonidine Premedication in Children",
+   "abstract": "UNLABELLED: There is no report concerning oral clonidine's effects on epidural lidocaine in children. Therefore, we performed a study to assess the concentrations of plasma lidocaine and its major metabolite (monoethylglycinexylidide [MEGX]) in children receiving continuous thoracic epidural anesthesia after oral clonidine premedication. Ten pediatric patients, aged 1-9 yr, were randomly allocated to the Control or Clonidine 4 microg/kg group (n = 5 each). Anesthesia was induced and maintained with sevoflurane in oxygen and air (FIO2 40%). Epidural puncture and tubing were carefully performed at the Th11-12 intervertebral space. An initial dose of 1% lidocaine (5 mg/kg) was injected through a catheter into the epidural space, followed by 2.5 mg x kg(-1) x h(-1). Plasma concentrations of lidocaine and MEGX were measured at 15 min, 30 min, and every 60 min for 4 h after the initiation of continuous epidural injection. The concentrations of lidocaine and MEGX were measured using high-pressure liquid chromatography with ultraviolet detection. Hemodynamic variables were similar between members of the Control and Clonidine groups during anesthesia. The Clonidine group showed significantly smaller lidocaine concentrations (p < 0.05) and the concentration of MEGX tended to be smaller in the plasma of the Clonidine group for the initial 4 h after the initiation of epidural infusion. In conclusion, oral clonidine preanesthetic medication at a dose of 4 microg/kg decreases plasma lidocaine concentration in children. IMPLICATIONS: Oral clonidine decreases the plasma lidocaine concentration in children. Our finding may have clinical implications in patients receiving continuous epidural anesthesia. Additionally, perhaps an additional margin of safety regarding lidocaine toxicity is gained through the use of oral clonidine in children who will receive epidural lidocaine.",
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W2141441326",
+   "doi": "https://doi.org/10.1016/s0149-2918(00)89080-3",
+   "title": "A comparison of the relative safety, efficacy, and tolerability of quetiapine and risperidone in outpatients with schizophrenia and other psychotic disorders: the quetiapine experience with safety and tolerability (QUEST) study",
+   "abstract": null,
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W567455060",
+   "doi": "https://doi.org/10.1007/978-3-7091-9324-2_49",
+   "title": "Pharmacodynamics of MDL 72974A: absence of effect on the pressor response to oral tyramine",
+   "abstract": null,
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W2406471561",
+   "doi": "https://doi.org/10.1097/00004714-200006000-00002",
+   "title": "Longitudinal Comparative Study of Risperidone and Conventional Neuroleptics for Treating Patients With Schizophrenia",
+   "abstract": "This study compared the long-term (12 months) effectiveness of risperidone (RP) with that of conventional neuroleptics (CNs) in a population with chronic schizophrenia who had shown suboptimal response to CNs. A randomized, open, parallel, multicenter design was used. One hundred eighty-four subjects meeting DSM-IV criteria for schizophrenia were randomly assigned to receive either RP or a CN, and 165 of them completed the follow-up. Outcome measures were taken at 3, 6, and 12 months and included the Positive and Negative Syndrome Scale (PANSS) and the Extrapyramidal Symptom Rating Scale. Within this 12-month follow-up, RP was found to be superior to CNs in terms of both the average change in score from baseline on the PANSS (p = 0.006) and the proportion of good responders (as defined by a 20% decrease in total PANSS scores;p = 0.03). For positive symptoms, the effectiveness of the RP treatment tended to increase over time. At 12 months, the percentage of good responders in the RP group was twice as large as that in the CN group (30% vs. 15%;p = 0.03). The superiority of RP over CNs was constant over the three dose categories. In both the RP and the CN groups, the maximum decrease in psychopathology was achieved with the lowest dose range. A worsening of akathisia was less frequent in subjects receiving RP than in those receiving CNs (p = 0.02). In conclusion, this study showed that, compared with CNs, RP is beneficial in the treatment of patients with chronic schizophrenia and that some of these benefits may appear only after longer-term treatment.",
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W177478450",
+   "doi": "https://doi.org/10.1007/s001010050672",
+   "title": "Gamma-Hydroxybuttersäure zur Therapie des Alkoholentzugssyndroms bei Intensivpatienten Vergleich zweier symptomorientierter therapeutischer Konzepte",
+   "abstract": null,
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W1993833790",
+   "doi": "https://doi.org/10.1097/00004714-199804000-00002",
+   "title": "Therapeutic Equivalence of Risperidone Given Once Daily and Twice Daily in Patients With Schizophrenia",
+   "abstract": "A study was conducted to determine whether once-daily administration of risperidone was as effective and safe as twice-daily administration. In a double-blind 6-week trial, 211 patients with acute exacerbation according to DSM-III-R criteria were randomly assigned to receive risperidone at 8 mg once daily or 4 mg twice daily. The primary efficacy measure was the treatment response rate, defined as a 20% or greater reduction in total Positive and Negative Syndrome Scale (PANSS) scores. Severity of extrapyramidal symptoms was assessed by the Extrapyramidal Symptom Rating Scale. The percentage of patients who showed a treatment response at endpoint was not significantly different between groups (76%, once-daily; 72%, twice-daily), nor was the median time to first treatment response (14 days, both groups). Significant reductions in PANSS total and subscale scores and PANSS-derived Brief Psychiatric Rating Scale were observed in both groups, with no significant between-group differences. Extrapyramidal Symptom Rating Scale scores did not differ significantly between groups. There were no clinically relevant changes in vital signs, electrocardiograms, or clinical laboratory test results in either group. Gradual dosage titration over the first 3 days of treatment was well-tolerated in both groups. The median trough plasma concentrations of risperidone, 9-hydroxyrisperidone, and risperidone plus 9-hydroxyrisperidone were significantly lower with once-daily than with twice-daily administration; median plasma concentrations measured within the first 8 hours after administration tended to be higher with once-daily administration. These differences did not affect the safety and efficacy of risperidone. Risperidone given once daily at 8 mg is as effective as twice-daily administration of 4 mg in the treatment of acute exacerbations of schizophrenia. Both regimens were equally well-tolerated.",
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W2109935740",
+   "doi": "https://doi.org/10.1177/000992280003900102",
+   "title": "A Pilot Study of Methyiphenidate, Clonidine, or the Combination in ADHD Comorbid with Aggressive Oppositional Defiant or Conduct Disorder",
+   "abstract": "A pilot comparison of the safety and efficacy of methylphenidate (MPH) combined with clonidine, clonidine monotherapy, or MPH monotherapy in 6- to 16-year-old children diagnosed with attention deficit hyperactivity disorder (ADHD) and comorbid aggressive oppositional defiant disorder or conduct disorder was completed. Study design was a 3-month, randomized, blinded, group comparison with eight subjects per group. No placebo comparison was used. All three treatment groups showed significant improvements in attention deficits, impulsivity, oppositional, and conduct disordered symptoms as assessed by parent and teacher rating scales and laboratory measures. Significant differences among treatment groups were found only on a few measures. Only the clonidine monotherapy group showed significantly decreased fine motor speed. These results suggest the safety and efficacy of clonidine alone or in combination with MPH for the treatment of ADHD and aggressive oppositional and conduct disorders.",
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W2053574680",
+   "doi": "https://doi.org/10.1097/00004714-200204000-00004",
+   "title": "The Safety and Pharmacokinetics of Quetiapine When Coadministered With Haloperidol, Risperidone, or Thioridazine",
+   "abstract": "The effects of haloperidol, risperidone, and thioridazine on the pharmacokinetics and side-effect profile of quetiapine were investigated in 36 patients with schizophrenia, schizoaffective disorder, or bipolar disorder in a single-center, two-period, multiple-dose, open-label, randomized trial. Over a one-to two-week period, quetiapine doses were escalated to 300 mg twice daily (bid). Patients were then treated for at least 7 days at the target quetiapine dose and subsequently entered into the combination therapy period, receiving haloperidol (7.5 mg, bid), risperidone (3 mg, bid), or thioridazine (200 mg, bid) for 8.5 days (after 3 days of dose escalation). Key assessments included the pharmacokinetics of quetiapine at steady state (area under the curve within a dosing interval [AUCtSS], maximum [CmaxSS], and minimum [CminSS] observed plasma concentrations, and oral clearance [Cl/f]), as well as the UKU Side Effect Rating Scale scores and safety evaluations. Neither risperidone nor haloperidol had significant effects on quetiapine pharmacokinetics. However, thioridazine produced statistically significant changes, decreasing the least squares means values of the AUCtSS, CmaxSS, and CminSS by 40%, 47%, and 31%, respectively, and increasing Cl/f by 68%. Increases in the following adverse events were noted during coadministration: somnolence (risperidone), insomnia and dry mouth (all three coadministered therapies), and dizziness (thioridazine). UKU side effect items that became worse in >or= 25% of patients during each coadministration period included sedation and increased sleep duration. Results of laboratory tests, electrocardiograms, and vital sign measurements revealed few clinically important changes. Clinical stability can be maintained with good tolerability during the transition from quetiapine monotherapy to periods of coadministration with haloperidol, risperidone, or thioridazine. Coadministration of either haloperidol or risperidone did not have any important effects on the steady-state pharmacokinetics of quetiapine. Thioridazine significantly increased the oral clearance of quetiapine. Increased doses of quetiapine may be necessary to control psychotic symptoms when thioridazine is coadministered with quetiapine.",
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W2161061887",
+   "doi": "https://doi.org/10.1016/s1389-9457(03)00108-4",
+   "title": "Effects of modafinil on sustained attention performance and quality of life in OSA patients with residual sleepiness while being treated with nCPAP",
+   "abstract": null,
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W2007416161",
+   "doi": "https://doi.org/10.4088/jcp.v63n0203",
+   "title": "Obsessive-Compulsive Symptoms During Treatment With Olanzapine and Risperidone",
+   "abstract": "OBJECTIVE: To determine whether severity of obsessive-compulsive symptoms (OCS) differs during treatment with olanzapine or risperidone and to establish whether duration of antipsychotic treatment is related to severity of OCS. METHOD: We conducted a prospective study of consecutively hospitalized young patients (mean age = 22.4 years) with DSM-IV schizophrenia or related disorders (N = 113) who were treated with olanzapine or risperidone. Olanzapine or risperidone was randomly prescribed for patients who were drug-naive or were treated with typical antipsychotics before admission (N = 36). Patients who had started olanzapine (N = 39) or risperidone treatment (N = 23) prior to admission continued with that medication if they showed initial clinical response. Patients who prior to admission started olanzapine (N = 6) or risperidone (N = 9) but showed no response or suffered from adverse effects switched at admission to risperidone or olanzapine, respectively. Medical records, parents, and patients revealed information on duration of treatment and compliance with olanzapine or risperidone prior to admission. The Yale-Brown Obsessive Compulsive Scale (YBOCS) was administered at admission and 6 weeks thereafter. RESULTS: At baseline and 6-week assessments, OCS were found in about 30% of 106 evaluable cases and 15% met DSM-IV criteria for obsessive-compulsive disorder. No differences in OCS were found in the patients randomly assigned to olanzapine or risperidone. The 35 subjects treated with olanzapine at both assessments had significantly (p = .01) more severe OCS at week 6 than the 20 subjects treated with risperidone at both assessments. Duration of treatment with olanzapine was significantly (p < .01) related to severity of OCS. CONCLUSION: There are no differences in the short-term propensity of olanzapine or risperidone to induce or exacerbate OCS. However, severity of OCS was associated with duration of treatment with olanzapine.",
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W2432031385",
+   "doi": "https://doi.org/10.1177/112067219800800309",
+   "title": "The Effect of 0.25% Apraclonidine in Preventing Intraocular Pressure Elevation after Nd: Yag Laser Posterior Capsulotomy",
+   "abstract": "PURPOSE: The efficacy and adverse effects of 0.25% apraclonidine on intraocular pressure (IOP) after Nd:YAG laser posterior capsulotomy were investigated, and the results were compared with placebo, 0.50% timolol maleate and 1% apraclonidine. METHODS: Eighty eyes were randomly assigned to four groups of 20 eyes. In a double-masked design, the groups were treated with placebo (group 1), 0.50% timolol maleate (group 2), 1% apraclonidine (group 3), 0.25% apraclonidine (group 4) one hour before and five minutes after Nd:YAG laser posterior capsulotomy. IOP was measured by applanation tonometry 1 hour before (baseline IOP) and 1, 3, 24 hours after capsulotomy. RESULTS: The average baseline IOP increased respectively 3.90 +/- 5.35, 5.95 +/- 5.32, 1.15 +/- 3.20 mmHg in the first group 1, 3 and 24 hours post-treatment. There were significant differences between baseline IOP and 1 and 3 hours but not at 24 hours (p = 0.004, p = 0.001, p = 0.13). IOP increased 0.40 +/- 4.08, 0.75 +/- 5.33, 0.80 +/- 6.03 mmHg in the second group at the same times. The differences between the average baseline IOP and the 1, 3 and 24 h measurement were not significant (p = 0.83, p = 0.65, p = 0.93). In the third group, IOP decreased 3.70 +/- 2.40, 3.30 +/- 2.47, 2.65 +/- 1.56 mmHg at the measurement times, with significant differences between the average baseline IOP and the 1, 3 and 24 hour measurements (p = 0.001, p = 0.0001, p = 0.01). In the fourth group IOP increased 0.35 +/- 3.32 mmHg at 1 hour, but decreased 1.25 +/- 3.41, 0.90 +/- 2.07 mmHg at 3 and 24 hours. The differences were not significant (p = 0.94, p = 0.16, p = 0.08). When the 0.25% and 1% apraclonidine groups were compared, there were significant differences between the average IOP at 1 hour in both groups but not at 3 and 24 hours (p = 0.01, p = 0.17, p = 0.21). Similarly, there were no significant differences between the average IOP at the same times when the 0.25% apraclonidine group was compared with the timolol group (p = 0.30, p = 0.08, p = 0.16). Some systemic and local side effects were seen in the timolol and 1% apraclonidine groups, but none with 0.25% apraclonidine. CONCLUSIONS: It was concluded that 0.25% apraclonidine is effective in preventing the early elevation of IOP after Nd:YAG laser posterior capsulotomy and may offer an alternative to 0.50% timolol maleate and 1% apraclonidine.",
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W2005762752",
+   "doi": "https://doi.org/10.1016/s0920-9964(99)00021-3",
+   "title": "The treatment of tardive dyskinesia—a systematic review and meta-analysis",
+   "abstract": null,
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W2022076582",
+   "doi": "https://doi.org/10.7326/0003-4819-132-10-200005160-00004",
+   "title": "Oral Clonidine in Postmenopausal Patients with Breast Cancer Experiencing Tamoxifen-Induced Hot Flashes: A University of Rochester Cancer Center Community Clinical Oncology Program Study",
+   "abstract": "BACKGROUND: Hot flashes are the most frequently reported side effect of tamoxifen treatment. Although hormones are an effective treatment, their safety is questionable in women with breast cancer. It is therefore important to evaluate nonhormonal treatments for hot flashes. OBJECTIVE: To evaluate the effectiveness of oral clonidine for control of hot flashes associated with tamoxifen therapy in postmenopausal women with breast cancer. DESIGN: Randomized, double-blind, placebo-controlled clinical trial. SETTING: University of Rochester Cancer Center Community Clinical Oncology Program. PATIENTS: 194 postmenopausal women with breast cancer who were receiving adjuvant tamoxifen therapy. INTERVENTION: Oral clonidine hydrochloride, 0.1 mg/d, or placebo for 8 weeks. MEASUREMENTS: In a daily diary, patients recorded number, duration, and severity of hot flashes and overall quality-of-life score (on a 10-point scale) during a 1-week baseline period and during the 4th, 8th, and 12th weeks of the study. RESULTS: Patients in the placebo and treatment groups were similar in age, duration of tamoxifen use, reported frequency and duration of hot flashes at baseline, and dropout rates. One hundred forty-nine patients completed 12 weeks of follow-up. The mean decrease in hot flash frequency was greater in the clonidine group than in the placebo group after 4 weeks of treatment (37% compared with 20% [95% CI for difference, 7% to 27%]) and 8 weeks of treatment (38% compared with 24% [CI for difference, 3% to 27%]). Patients receiving clonidine were more likely than patients receiving placebo to report difficulty sleeping (41% compared with 21%; P = 0.02). A significant difference was seen in the mean change in quality-of-life scores (0.3 points in the clonidine group compared with -0.2 points in the placebo group; P = 0.02) at 8 weeks, although the median difference was 0 in both groups. CONCLUSION: Oral clonidine, 0.1 mg/d, is effective against tamoxifen-induced hot flashes in postmenopausal women with breast cancer.",
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W1988897630",
+   "doi": "https://doi.org/10.1097/00004850-199705000-00001",
+   "title": "A double-blind comparative study of clozapine versus chlorpromazine on Chinese patients with treatment-refractory schizophrenia",
+   "abstract": "Clozapine has been shown to have superior effectiveness compared with classic neuroleptics in treating refractory schizophrenia in Caucasians, but its efficacy and safety in Chinese have not been adequately studied. Forty Chinese schizophrenic patients were recruited in a 12-week, double-blind, comparative trial. Twenty-one patients were randomly assigned to clozapine treatment and 19 to chlorpromazine treatment. The average dose was 543 +/- 157 and 1163 +/- 228 mg/day for clozapine and chlorpromazine, respectively. The results showed that six clozapine-treated patients (28.6%) had more than 20% improvement in Brief Psychiatric Rating Scale score and were classified as responders, whereas none of the chlorpromazine-treated patients was classified as a responder. The degree of improvement in positive symptoms, negative symptoms and Brief Psychiatric Rating Scale scores in the clozapine group was inversely correlated with the severity of negative symptoms at entry into the trial. Two clozapine-treated patients were withdrawn from the study, one because of leukopenia and nausea, and the other because of vomiting and hypotension. Chlorpromazine treatment was prematurely discontinued in two patients, because of jaundice and over sedation in one, and because of severe weight loss in the other (9 kg). The rate of moderate-to-severe sialorrhea was high in clozapine-treated patients (28.6%). Two clozapine-treated patients and two chlorpromazine-treated patients showed significant improvement in previously existing tardive dyskinesia and one chlorpromazine-treated patient exhibited aggravation of tardive dyskinesia. The results of this study indicate that clozapine treatment might have advantages over chlorpromazine for Chinese schizophrenic patients who are refractory to typical neuroleptic treatment.",
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W2083925186",
+   "doi": "https://doi.org/10.1016/s0738-081x(02)00267-5",
+   "title": "Psychotropic and neurotropic agents in dermatology: unapproved uses, dosages, or indications",
+   "abstract": null,
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W1992963936",
+   "doi": "https://doi.org/10.1207/s15327655jchn1304_1",
+   "title": "Effects of an Educational Intervention on Mothers of Male Children With Attention Deficit Hyperactivity Disorder",
+   "abstract": "An experimental research study was done to determine whether an educational intervention about attention deficit hyperactivity disorder (ADHD) would improve a mother's knowledge about ADHD and her feelings of competence as a parent. 20 low socioeconomic status mothers who had a male child between the ages of 5 and 11 diagnosed with ADHD and placed on methylphenidate were randomly selected for the study. An experimental group of 10 mothers was given a 5-week educational intervention on ADHD; the remaining 10 mothers served as a control group. Differences between the experimental and non-experimental mothers in knowledge and opinions about ADHD and parental sense of competency were measured. Scores improved in parental satisfaction and parental sense of competency in mothers who participated in the educational intervention. The research findings support the idea that nurses can assist a family in learning and dealing with their child's ADHD, a chronic condition.",
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W2089528901",
+   "doi": "https://doi.org/10.1016/s0920-9964(98)00087-5",
+   "title": "Clozapine effects on force control in schizophrenic patients",
+   "abstract": null,
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W2198259144",
+   "doi": "https://doi.org/10.1177/112067210001000310",
+   "title": "Low-Dose Oral Clonidine as Premedication before Intraocular Surgery in Retrobulbar Anesthesia",
+   "abstract": "PURPOSE: We investigated whether low-dosed oral clonidine premedication before elective intraocular surgery in retrobulbar anesthesia is effective in terms of anxiolysis, sedation, stable hemodynamics, lower intraocular pressure and perioperative endocrine stress response. METHODS: In a prospective, randomised, double-blind study, 44 patients scheduled for elective intraocular surgery received either 0.15 mg clonidine (n=22) or a matched placebo (n=22) orally 60 minutes before retrobulbar anesthesia. The main study parameters were sedation, anxiolysis, hemodynamics and intraocular pressure. Additionally, mediators of endocrine stress responses were measured five times, in 13 patients after clonidine and 12 after placebo. RESULTS: After clonidine 86% of the patients showed sedation and after placebo 90.9% showed no sedation (p<0.01). Clonidine produced effective anxiolysis (Erlanger-Anxiety-Scale: 31.6 +/- 2.6 points vs. 38.1 +/- 8.5 points) before the operation (p<0.01). Systolic blood pressure was significantly lower after clonidine. Effects on mean and diastolic blood pressure were small but statistically significant. Norepinephrine and cortisol plasma concentrations were significantly lower after clonidine. Intraocular pressure was significantly lower too (p<0.05). No clinically relevant adverse effects were observed e.g. inappropriate sedation, hypotension (<100 mmHg), bradycardia (<50 bpm) or hypoxemia (SpO2<90%). CONCLUSIONS: Oral low-dose clonidine produces light sedation, significant anxiolysis and stable hemodynamics, and attenuates the endocrine response to perioperative stress. Thus, clonidine seems sufficient to increase patient comfort for intraocular surgery and might even offer clinically worthwhile benefits such as stable hemodynamics and a reduced response to perioperative stress.",
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W2075039588",
+   "doi": "https://doi.org/10.1002/gps.862",
+   "title": "The impact upon extra‐pyramidal side effects, clinical symptoms and quality of life of a switch from conventional to atypical antipsychotics (risperidone or olanzapine) in elderly patients with schizophrenia",
+   "abstract": "BACKGROUND: Atypical antipsychotics are commonly used in the management of schizophrenia in late life with evidence suggesting they induce lower rates of motor disturbance, but have similar efficacy to conventional antipsychotics. Trials in the elderly have been either retrospective, small, of short duration or of a single-arm design. AIMS: To demonstrate the effects upon motor side-effects, efficacy, safety and quality of life (QOL) of switching elderly patients with schizophrenia from conventional antipsychotics to olanzapine or risperidone. METHODS: Elderly patients with schizophrenia were randomly allocated to olanzapine or risperidone and followed through an open-label crossover period. Between and within group intention to treat analyses were conducted. RESULTS: 66 patients were randomised (mean age 69.6 [SD +/- 6.2]). Four (11.8%) patients on olanzapine and 8 (26.7%) patients on risperidone failed to complete the crossover because of treatment failure [Odds Ratio (OR) = 2.73[0.73-10.2] p = 0.14]. The mean doses upon completion of switching in each arm were 9.9 mg (SD = 4.2) and 1.7 mg (SD = 1.2) for olanzapine and risperidone respectively. In both arms there was improvement in Parkinsonism, though only olanzapine was associated with a reduction in dyskinetic symptoms. The Brief Psychiatric Rating Scale, Scale for the assessment of Negative Symptoms and Montgomery and Asberg Depression Rating Scale scores all improved through the crossover period in both arms with no between group differences. Treatment with olanzapine was associated with a better response over risperidone on the psychological domain of the World Health Organisation-Quality Of Life [Brief] (WHO-QOL-BREF) scale ( p = 0.02). Patients in the olanzapine arm also demonstrated improvement from baseline in the WHO-QOL-BREF physical, psychological and health satisfaction domains, but risperidone had no effect on any Quality of Life (QOL) measure. CONCLUSIONS: After switching from a conventional antipsychotic, olanzapine and risperidone were associated with improvement in core symptoms of schizophrenia and motor side effects. Subjects switched to olanzapine were more likely to complete the switching process and show an improvement in psychological QOL.",
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W1997750823",
+   "doi": "https://doi.org/10.1016/0952-8180(96)00033-5",
+   "title": "Effect of oral clonidine premedication on anesthetic requirement, hormonal response, hemodynamics, and recovery in coronary artery bypass graft surgery patients",
+   "abstract": null,
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W1970891546",
+   "doi": "https://doi.org/10.1016/s0006-3223(00)00991-4",
+   "title": "Bipolar disorder therapeutics: maintenance treatment",
+   "abstract": null,
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W2088710565",
+   "doi": "https://doi.org/10.1016/s0924-977x(01)00072-4",
+   "title": "Effect of amantadine on weight gain during olanzapine treatment",
+   "abstract": null,
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W2038739154",
+   "doi": "https://doi.org/10.1097/00004850-199703000-00006",
+   "title": "Response to clozapine in acute mania is more rapid than that of chlorpromazine",
+   "abstract": "The purpose of the present study was to compare the efficacy of clozapine with that of chlorpromazine in an open label manner (both given in association with lithium salts) in the treatment of acute mania. Thirty hospitalized manic patients were entered into the study. All patients met DSM-IV criteria for bipolar disorder, Manic Episode; 27 patients completed the study and three patients dropped for noncompliance. The duration of the study was 3 weeks. Patients were randomly assigned to two treatment groups; group 1 (n = 15) was treated with clozapine at a mean dose of 166 mg/day and group 2 (n = 12) was treated with chlorpromazine at a mean dose of 310 mg/day. Manic symptomatology was rated on Young Rating Scale for Mania (YRSM) each week; side effects were recorded on dosage records and treatment emergent symptoms; extrapyramidal acute side effects were rated on the Simpson-Angus Rating Scale performed at the beginning of the study and after 3 weeks of treatment. A two-way repeated measures analysis of variance on YRMS scores showed a significant time effect (p < 0.0001) and a significant time-group interaction (p < 0.0001). Post-hoc comparison between the two groups showed a significant difference after 2 weeks of treatment (p = 0.0001), with clozapine treated patients showing lower YRSM scores than chlorpromazine treated patients. YRSM scores at the end of the study were not significantly different. Patients treated with clozapine showed a more rapid trend toward amelioration. No clinically relevant side effect was observed during the study.",
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W2041491649",
+   "doi": "https://doi.org/10.1177/00912709922008425",
+   "title": "Population Pharmacokinetics of Methylphenidate in Children with Attention‐Deficit Hyperactivity Disorder",
+   "abstract": "Sources of individual variation in plasma methylphenidate (MP) concentrations during usual clinical use are not established. This was evaluated in a series of patients receiving clinical treatment with MP. A single plasma MP concentration was determined in each of 273 children and adolescents ages 5 to 18 years (mean: 11.1 years) who were clinically good responders to MP for the treatment of attention-deficit hyperactivity disorder. MP was given on a twice-daily schedule (mean dose: 25 mg/day) in 40% of patients and three times daily (mean dose: 39.3 mg/day) in 60%. A nonlinear regression model was applied to estimate overall population values of MP clearance and elimination half-life (t1/2), assuming a one-component model with first-order absorption and elimination, and further assuming that clearance is linearly related to body weight. The model incorporated each patient's dosage size and schedule, body weight, and time of the plasma sample. Iterated solutions of best fit were: t1/2, 4.5 hours (95% confidence interval [CI]: 3.1-8.1 hours), and apparent clearance, 90.7 ml/min/kg (95% CI: 74.6-106.7 ml/min/kg). The model explained 43% of the overall variance in MP concentrations (r2 = 0.43, p < .001). In a small subsample (N = 16), a second plasma sample was drawn at the same time of day and at the same dose; the correlation between the two concentration values was 0.83. The relatively noninvasive approach used in this study allows the assessment of pharmacokinetic properties of medications under conditions of appropriate clinical use in special populations such as children, adolescents, and the elderly.",
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W2047647486",
+   "doi": "https://doi.org/10.1097/00004714-200108000-00008",
+   "title": "An Evaluation of Risperidone Drug Interactions",
+   "abstract": "Risperidone, an atypical antipsychotic drug, is widely used in the treatment of psychoses associated with schizophrenia, Alzheimer's disease, and other psychiatric disorders. Polypharmacology is a necessary condition for the optimal treatment of many patients with comorbid psychiatric and medical illness. One concern raised by the widespread use of multiple concurrent pharmacotherapies is the potential for drug-drug interactions to adversely affect patient outcome. Accordingly, the biomedical literature was reviewed for reports of drug interactions involving risperidone, and the clinical significance of each report was evaluated. Additionally, the potential for risperidone to participate in drug interactions was evaluated by considering the drug's pharmacokinetic properties. Controlled studies and case reports indicate that risperidone has a low potential for metabolic drug interactions. Drugs that inhibit cytochrome P450 (CYP) 2D6 or induce or inhibit CYP3A4 may alter risperidone plasma concentrations, but the clinical significance of such interactions seems to be minimal. Adherence to a few guidelines for the design of dosage regimens should limit the effect of drug-drug interactions on patient status and contribute to optimal pharmacotherapy with risperidone.",
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W2165907198",
+   "doi": "https://doi.org/10.1213/01.ane.0000074795.68061.16",
+   "title": "Pharmacologic Myocardial Protection in Patients Undergoing Noncardiac Surgery: A Quantitative Systematic Review",
+   "abstract": "In Brief A number of drugs have been tested in clinical trials to decrease cardiac complications in patients undergoing noncardiac surgery. To compare the results of these studies, we conducted a quantitative systematic review. Medline, Embase, and Cochrane databases were searched for randomized trials that assessed myocardial ischemia, myocardial infarction, 30-day cardiac mortality, and adverse effects. Data were combined using a fixed-effect model and expressed as Peto odds ratios (OR) with 95% confidence interval (CI) and as numbers-needed-to-treat/harm (NNT/H). Twenty-one trials involving 3646 patients were included: 11 trials using β-blockers (6 drugs; 866 patients), 6 clonidine or mivazerol (614 patients), 3 diltiazem or verapamil (121 patients), and 1 nitroglycerin (45 patients). All trials had an inactive control; there were no direct comparisons. β-blockers decreased ischemic episodes during surgery (7.6% versus 20.2% with placebo; OR 0.32 [95% CI, 0.17–0.58]; NNT 8) and after surgery (15.2% versus 27.9% with control; OR 0.46 [95% CI, 0.26–0.81]; NNT 8). α2-agonists decreased ischemia during surgery only (19.4% versus 32.8%; OR 0.47 [95% CI, 0.33–0.68]; NNT 7). β-blockers reduced the risk of myocardial infarction (0.9% versus 5.2%; OR 0.19 [95% CI, 0.08–0.48]; NNT 23) but only when 2 trials with high-risk patients were included. The effect of α2-agonists on myocardial infarction was not significant (6.1% versus 7.3%; OR 0.85 [95% CI, 0.62–1.14]). β-blockers significantly decreased the risk of cardiac death from 3.9% to 0.8% (OR 0.25 [95% CI, 0.09–0.73], NNT 32). α2-agonists significantly decreased the risk of cardiac death from 2.3% to 1.1% (OR 0.50 [95% CI, 0.28–0.91], NNT 83). For calcium channel blockers and nitroglycerin, evidence of any benefit was lacking. The most common adverse effect was bradycardia, which occurred in 24.5% of patients receiving a β adrenergic blocker versus 9.1% of controls (OR 3.76 [95% CI, 2.45–5.77], NNH 6). IMPLICATIONS: Among the drugs that have been tested in randomized-controlled trials, β-blockers, clonidine, and mivazerol are effective in preventing cardiac complications in patients undergoing noncardiac surgery. For β-blockers, high-risk patients are most likely to benefit from treatment. Valid studies are required to directly compare the efficacy of these classes of drug and determine how dose, timing, and duration of treatment influence outcome.",
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W1537019936",
+   "doi": "https://doi.org/10.1037/e558732011-001",
+   "title": "Depression in Children and Adolescents",
+   "abstract": "Depression among children and adolescents is common but frequently unrecognized. It affects 2 percent of prepubertal children and 5 to 8 percent of adolescents. The clinical spectrum of the disease can range from simple sadness to a major depressive or bipolar disorder. Risk factors include a family history of depression and poor school performance. Evaluation should include a complete medical assessment to rule out underlying medical causes. A structured clinical interview and various rating scales such as the Pediatric Symptom Checklist are helpful in determining whether a child or adolescent is depressed. Evidence-based treatment guidelines from the literature are limited. Psychotherapy appears to be useful in most children and adolescents with mild to moderate depression. Tricyclic antidepressants and selective serotonin reuptake inhibitors are medical therapies that have been studied on a limited basis. The latter agents are better tolerated but not necessarily more efficacious. Because the risk of school failure and suicide is quite high in depressed children and adolescents, prompt referral or close collaboration with a mental health professional is often necessary.",
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  },
+  {
+   "id": "W2066448639",
+   "doi": "https://doi.org/10.4088/jcp.v62n0405",
+   "title": "A Randomized Controlled Trial of Risperidone in the Treatment of Aggression in Hospitalized Adolescents With Subaverage Cognitive Abilities",
+   "abstract": "BACKGROUND: Risperidone is an atypical antipsychotic drug that blocks dopamine as well as serotonin receptor systems. The present study was designed to examine the efficacy and safety of risperidone in a 6-week double-blind, randomized, parallel-group design in the treatment of aggression in adolescents with a primary diagnosis of DSM-IV disruptive behavior disorders and with subaverage intelligence. METHOD: We randomly assigned 38 adolescents (33 boys; 10 subjects with slightly subaverage IQ, 14 with borderline IQ, and 14 with mild mental retardation), who were hospitalized for treatment of psychiatric disorders associated with severe aggression, to receive risperidone or placebo. The main efficacy measures were the Clinical Global Impressions-Severity of Illness scale (CGI-S), the modified Overt Aggression Scale (OAS-M), and the Aberrant Behavior Checklist (ABC). Side effects were measured using the Extrapyramidal Symptom Rating Scale (ESRS). RESULTS: The mean daily dose of risperidone at the end of treatment was 2.9 mg (range, 1.5-4 mg). Risperidone, compared with placebo, was associated with significant improvements on the CGI-S (p < .001) and the at-school ABC overall and hyperactivity scales (p < .05). During a 2-week washout following the 6-week trial, a statistically significant worsening was found in the risperidone group on the CGI-S scale, the OAS-M. and the ABC. Extrapyramidal symptoms were absent or very mild during risperidone treatment. Transient tiredness was present in 11 (58%) of 19 drug-treated subjects. Other untoward effects included sialorrhea, nausea, and slight weight gain (mean = 3.5% of body weight in the risperidone group). No clinically relevant changes were found in laboratory parameters, electrocardiogram, heart rate, or blood pressure. CONCLUSION: These results suggest that risperidone may be effective for severe aggression in adolescents with disruptive behavior disorders and subaverage intelligence, and these results are consistent with reports suggesting its effectiveness for treating severe aggression in adolescents in general.",
+   "label": "exclude",
+   "known_relevant": false,
+   "reason": "Cohen 2006 ADHD dataset label: excluded"
+  }
+ ]
+}

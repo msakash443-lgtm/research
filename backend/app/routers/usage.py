@@ -9,6 +9,7 @@ from app import audit
 from app.config import get_settings
 from app.database import get_db
 from app.dependencies import MANAGE_ROLES, READ_ROLES, current_user, project_access
+from app.llm_usage import budget_status
 from app.models import LlmUsage, Project, User
 
 router = APIRouter(prefix="/projects/{project_id}/usage", tags=["usage"])
@@ -28,6 +29,9 @@ class UsageRead(BaseModel):
     calls: int
     calls_without_token_counts: int
     by_purpose: list[PurposeUsage]
+    budget_status: str  # no_limit | ok | near | over (X.79.1)
+    tokens_remaining: int | None  # None when there is no limit
+    percent_used: float | None
 
 
 class BudgetOverrideUpdate(BaseModel):
@@ -43,8 +47,11 @@ def _usage_read(project: Project, db: Session) -> UsageRead:
     ).all()
     default_budget = get_settings().project_token_budget
     effective = default_budget if project.token_budget_override is None else project.token_budget_override
+    used = sum(int(r[2]) for r in rows)
+    status = budget_status(used, effective or None)
     return UsageRead(
-        tokens_used=sum(int(r[2]) for r in rows),
+        budget_status=status["status"], tokens_remaining=status["remaining"], percent_used=status["percent_used"],
+        tokens_used=used,
         token_budget=effective or None,
         budget_override=project.token_budget_override,
         default_budget=default_budget or None,

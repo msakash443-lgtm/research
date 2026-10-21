@@ -323,7 +323,8 @@ def export_manuscript(
             detail={
                 "message": "Export refused: one or more saved sections cite a source, or carry an inserted number, that is not verified or not known to this project.",
                 "citations": [
-                    {"document_id": b.document_id, "document_title": b.document_title, "kind": b.kind, "subject": b.subject, "message": b.message}
+                    {"document_id": b.document_id, "document_title": b.document_title, "kind": b.kind, "subject": b.subject, "message": b.message,
+                     **({"status": "unverifiable", "verification": b.verification} if b.verification is not None else {})}
                     for b in blockers
                 ],
             },
@@ -340,7 +341,7 @@ def export_manuscript(
     sources = {
         key: manuscript_export.CitedSource(
             id=key, title=row.title, authors=tuple(row.authors or ()), year=row.year, venue=row.venue, doi=row.doi,
-            verified=bool(row.metadata_verified),
+            verified=bool(row.metadata_verified), verification_method=row.verification_method,
         )
         for key, row in source_rows.items()
     }

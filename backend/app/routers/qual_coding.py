@@ -39,6 +39,8 @@ class DecisionIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     suggestion_id: uuid.UUID
     decision: Literal["accept", "reject"]
+    # The person's definition for the code. Required on accept when the suggestion has no rationale.
+    definition: str | None = Field(default=None, max_length=1000)
 
 
 class RenameCodeIn(BaseModel):
@@ -63,6 +65,8 @@ def _suggestion_read(row: QualSuggestion) -> dict[str, Any]:
         "code": row.code,
         "is_new": row.is_new,
         "rationale": row.rationale,
+        "model_id": row.model_id,
+        "prompt_version": row.prompt_version,
         "status": row.status,
         "decided_by": row.decided_by,
         "decided_at": _iso(row.decided_at),
@@ -105,6 +109,7 @@ def suggest(
     except (LLMResponseError, qual_suggest.SuggestionError) as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
 
+    model_id, prompt_version = llm.model, qual_suggest.prompt_ref()
     excerpt = QualExcerpt(project_id=project.id, text=body.excerpt, created_by=audit.user_actor(user))
     db.add(excerpt)
     db.flush()
@@ -115,13 +120,16 @@ def suggest(
             code=s.code,
             is_new=s.is_new,
             rationale=s.rationale,
+            model_id=model_id,
+            prompt_version=prompt_version,
             status="pending",
         )
         for s in suggestions
     ]
     db.add_all(rows)
     audit.record(db, actor=audit.user_actor(user), action="qual.suggested", project_id=project.id,
-                 payload={"excerpt_id": str(excerpt.id), "suggestions": len(rows)})
+                 payload={"excerpt_id": str(excerpt.id), "suggestions": len(rows)},
+                 model_id=model_id, prompt_version=prompt_version)
     db.commit()
     db.refresh(excerpt)
     return _excerpt_read(excerpt, rows)
@@ -157,8 +165,13 @@ def decide(
     if row.status != "pending":
         raise HTTPException(status.HTTP_409_CONFLICT, "This suggestion has already been decided.")
     if body.decision == "accept":
+        # The person's definition wins; the model's rationale is the fallback. Refuse with nothing decided if neither exists.
+        definition = (body.definition or "").strip() or (row.rationale or "").strip()
+        if not definition:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "This suggestion has no rationale, so write the code's definition to accept it.")
         try:
-            qual_codebook_store.accept_code(db, project, user, row.code, row.rationale)
+            qual_codebook_store.accept_code(db, project, user, row.code, definition)
         except ValueError as exc:
             raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     row.status = "accepted" if body.decision == "accept" else "rejected"

@@ -9,6 +9,7 @@
 import { el, formatDate, toast, confirmAction } from "./dom.js";
 import { request, projectApi } from "./api.js";
 import { actorName, provenanceBadge } from "./provenance.js";
+import { evidenceLine, canAskAgain } from "./suggestionLogic.js";
 
 export const PANEL_TITLE = "AI suggestion, not yet yours";
 
@@ -22,19 +23,9 @@ function approvalFor(ctx, suggestion) {
   return { state: "pending", text: "Not yet yours: waiting for your decision" };
 }
 
-function evidenceLine(item) {
-  if (typeof item === "string") return item;
-  if (item && typeof item === "object") {
-    const where = item.source_id || item.source || item.id;
-    const quote = item.quote || item.text;
-    if (where && quote) return `${where}: ${quote}`;
-    if (where) return String(where);
-  }
-  return JSON.stringify(item);
-}
-
 // `extraActions(suggestion)` may return extra buttons for a card (the writing screen adds Insert for accepted wording).
-export async function suggestionPanel(ctx, { targetKind, targetId, onChange, extraActions } = {}) {
+// `extraContent(suggestion)` may return extra nodes shown under the card text (the writing screen adds a word diff).
+export async function suggestionPanel(ctx, { targetKind, targetId, onChange, extraActions, extraContent } = {}) {
   const panel = el("div", { className: "panel suggestion-panel" });
   let showDiscarded = false;
   let busy = false;
@@ -83,6 +74,7 @@ export async function suggestionPanel(ctx, { targetKind, targetId, onChange, ext
     if (suggestion.state === "accepted" && suggestion.accepted_text !== suggestion.content) {
       node.append(el("p", { className: "muted small", text: `The AI proposed: ${suggestion.content}` }));
     }
+    if (extraContent) node.append(...extraContent(suggestion));
     if (suggestion.confidence !== null) {
       node.append(el("p", { className: "muted small", text: `AI confidence ${Math.round(suggestion.confidence * 100)}%` }));
     }
@@ -151,12 +143,13 @@ export async function suggestionPanel(ctx, { targetKind, targetId, onChange, ext
           }, false),
         ];
       };
-      actions.prepend(
+      const actionsList = [
         button("Accept", () => post(`/${id}/accept`), false),
         button("Edit then accept", editor("edit", editBox)),
         button("Discard", () => post(`/${id}/discard`)),
-        button("Ask again", editor("ask", askBox))
-      );
+      ];
+      if (canAskAgain(suggestion)) actionsList.push(button("Ask again", editor("ask", askBox)));
+      actions.prepend(...actionsList);
     }
     if (ctx.canWrite && suggestion.state === "accepted") actions.prepend(button("Undo", () => post(`/${id}/undo`)));
     if (ctx.canWrite && suggestion.state === "discarded") actions.prepend(button("Restore", () => post(`/${id}/restore`)));

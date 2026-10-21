@@ -6,6 +6,7 @@ import {
   buildManualOwnPaperPayload,
   buildOwnPaperLookupPayload,
   describeOwnPaperLookup,
+  describePollBudgetExhausted,
   isLookupPending,
   parseAuthors,
 } from "../ownPaperLogic.js";
@@ -63,4 +64,13 @@ test("isLookupPending is true only for a 404 (not resolved yet)", () => {
   assert.equal(isLookupPending({ status: 404 }), true);
   assert.equal(isLookupPending({ status: 500 }), false);
   assert.equal(isLookupPending(null), false);
+});
+
+test("a lookup still unresolved when the poll budget runs out is pending, not failed, and can be checked again (M2.14.2)", () => {
+  const state = describePollBudgetExhausted("task-1");
+
+  assert.equal(state.kind, "pending");
+  assert.equal(state.taskId, "task-1");
+  assert.ok(!/check back later/i.test(state.text));
+  assert.ok(state.text.includes("Check again"));
 });

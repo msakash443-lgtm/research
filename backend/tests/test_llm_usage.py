@@ -79,3 +79,33 @@ def test_usage_parsing_ignores_bad_values():
     assert parse_usage({"usage": {"total_tokens": -5, "prompt_tokens": True}}) == (None, None, None)
     assert parse_usage({"usage": "lots"}) == (None, None, None) and parse_usage(None) == (None, None, None)
 
+
+
+# ---- how close the project is to its budget (X.79.1) -------------------------------------------------------
+
+def test_budget_status_names_ok_near_over_and_no_limit():
+    from app.llm_usage import budget_status
+
+    assert budget_status(500, None) == {"status": "no_limit", "remaining": None, "percent_used": None}
+    assert budget_status(500, 0)["status"] == "no_limit"
+    assert budget_status(0, 1000) == {"status": "ok", "remaining": 1000, "percent_used": 0.0}
+    assert budget_status(799, 1000)["status"] == "ok"
+    assert budget_status(800, 1000) == {"status": "near", "remaining": 200, "percent_used": 80.0}
+    assert budget_status(1000, 1000) == {"status": "over", "remaining": 0, "percent_used": 100.0}
+    assert budget_status(1500, 1000) == {"status": "over", "remaining": 0, "percent_used": 150.0}  # one call can overshoot
+
+
+def test_the_usage_api_reports_status_remaining_and_percent_and_the_status_matches_the_hard_stop(fake_llm):
+    fake_llm.handler = lambda r: _with_usage("Output rose [S1].", prompt=100, completion=50)  # 150 tokens per run
+    client, pid = _setup("usage-status@example.com")
+    assert client.put(f"/api/projects/{pid}/usage/budget", json={"override": 180}).json()["budget_status"] == "ok"
+
+    _run(client, pid)
+    near = client.get(f"/api/projects/{pid}/usage").json()
+    assert (near["budget_status"], near["tokens_remaining"], near["percent_used"]) == ("near", 30, 83.3)
+
+    _run(client, pid)  # still under the budget when it started, so it ran and overshot
+    over = client.get(f"/api/projects/{pid}/usage").json()
+    assert (over["budget_status"], over["tokens_remaining"]) == ("over", 0)
+    refused = client.post(f"/api/projects/{pid}/research-runs", json={"question": "Did output rise at all?"}).json()
+    assert refused["status"] != "completed"  # the same "over" the status reported: the meter refuses the call

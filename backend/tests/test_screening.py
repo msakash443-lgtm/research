@@ -137,7 +137,7 @@ def test_an_ai_suggestion_is_shown_but_never_counts_as_a_decision(world):
         db.commit()
     data = queue(world["owner"], p)
     item = next(i for i in data["items"] if i["source_id"] == s)
-    assert item["ai_suggestion"] == {"decision": "exclude", "reason_code": "E1", "confidence": 0.9, "rationale": None}
+    assert item["ai_suggestion"] == {"decision": "exclude", "reason_code": "E1", "confidence": 0.9, "rationale": None, "confidence_level": "high"}
     assert data["counts"]["exclude"] == 0 and data["counts"]["unscreened"] == 3  # still waiting for a person
     # a person then decides; the AI row stays in the history and a person's decision is what counts
     assert decide(world["owner"], p, s, "include").json()["seq"] == 2

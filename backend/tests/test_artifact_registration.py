@@ -141,7 +141,7 @@ def test_editing_a_stale_extraction_makes_its_artifact_current_again(world, monk
     assert len(_artifacts(world["pid"], "extraction")) == 1
 
 
-VERIFY = {"confirmed_critical_fields": ["measures", "sample", "key_findings"]}  # the default schema's critical fields
+VERIFY = {"confirmed_critical_fields": ["measures", "sample", "key_findings"], "confirmed_not_reported_fields": ["measures", "key_findings"]}  # the default schema's critical fields
 
 
 def _ai_extraction(world, source_id):

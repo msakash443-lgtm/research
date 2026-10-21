@@ -6,6 +6,7 @@ and generated, by whom, with which model and prompt version, and check the files
 * `data/<table>.json` and `data/<table>.csv` for every project-scoped table, rows in a stable order;
 * `derived/prisma.json`: the PRISMA counts computed at export time;
 * `derived/agreement.json`: Cohen's kappa per screening stage, its scope counts and the conflict list, computed at export time;
+* `derived/known_items.json`, `derived/recall_report.json`: seed-paper coverage and gold-set recall (X.8.4); `derived/references.bib`: BibTeX of verified sources;
 * `manifest.json`: sha256 and row count per file, schema revision, prompt/schema/model versions seen,
   what was left out and why, who exported and when;
 * `README.md`: how to read it.
@@ -31,9 +32,10 @@ from typing import Any
 from sqlalchemy import Table, select
 from sqlalchemy.orm import Session
 
-from app import prisma
+from app import known_items, prisma, recall_report
 from app.database import Base
-from app.models import Project
+from app.models import Project, Source
+from app.refmanager import source_records, to_bibtex
 from app.screening import STAGES, stage_agreement
 
 FORMAT_VERSION = 1
@@ -150,6 +152,9 @@ regenerated for the export.
   model and prompt version of every AI step.
 * `data/research_runs` keeps each run's `input_snapshot`: the exact sources and excerpts the model saw.
 * `data/search_queries` is the versioned search log; `derived/prisma.json` the PRISMA counts at export time; `derived/agreement.json` the Cohen's kappa, scope counts and conflicts per stage at export time.
+* `derived/known_items.json` says which seed papers the searches found and which they missed;
+  `derived/recall_report.json` is the gold-set recall against the 95% target with the reason for each miss;
+  `derived/references.bib` is BibTeX for the metadata-verified sources only (unverified ones are left out).
 * AI pre-screen suggestions are rows in `data/screening_decisions` with `decided_by = "ai"`; they are not
   decisions.
 * A row with `decided_by = "arbiter"` is an owner's or supervisor's ruling on two reviewers who disagreed. It settles
@@ -194,6 +199,13 @@ def build_package(db: Session, project: Project, *, exported_by: str, exported_a
             "scope": result.scope, "conflicts": result.conflicts,
         }
     files["derived/agreement.json"] = _json(agreement_json)
+    files["derived/known_items.json"] = _json(known_items.check(db, project))
+    files["derived/recall_report.json"] = _json(recall_report.project_report(db, project))
+    verified = db.scalars(
+        select(Source).where(Source.project_id == project.id, Source.merged_into.is_(None), Source.metadata_verified.is_(True))
+        .order_by(Source.created_at, Source.id)
+    ).all()
+    files["derived/references.bib"] = to_bibtex(source_records(verified)).encode("utf-8")
 
     rows_of = lambda name: json.loads(files[f"data/{name}.json"])  # noqa: E731
     versions = {

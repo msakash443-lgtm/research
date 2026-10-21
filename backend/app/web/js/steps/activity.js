@@ -1,6 +1,8 @@
 import { $, el, formatDate, toast } from "../dom.js";
 import { request, projectApi } from "../api.js";
 import { AI_LEVELS, AI_ROUTES, aiLevel } from "../aiLevels.js";
+import { usageSummary } from "../usageLogic.js";
+import { extractionNotes, extractionTables, hasAnything, screeningLines } from "../accuracyLogic.js";
 
 let offset = 0;
 let actionFilter = "";
@@ -62,12 +64,11 @@ async function usagePanel(ctx) {
   box.append(el("h2", { text: "Model usage" }));
   try {
     const usage = await request(projectApi(ctx.project.id, "/usage"));
+    const summary = usageSummary(usage);
     const dl = el("dl", { className: "effective-settings" });
-    dl.append(
-      el("dt", { text: "Tokens used" }), el("dd", { text: String(usage.tokens_used) }),
-      el("dt", { text: "Budget" }), el("dd", { text: usage.token_budget === null ? "No limit" : `${usage.token_budget} tokens` })
-    );
+    summary.rows.forEach(([name, value]) => dl.append(el("dt", { text: name }), el("dd", { text: value })));
     box.append(dl);
+    if (summary.notice) box.append(el("p", { className: `usage-notice usage-${summary.notice.tone}`, text: summary.notice.text }));
     if (usage.by_purpose.length > 0) box.append(purposeTable(usage));
     if (ctx.isOwner) {
       const row = el("div", { className: "form-actions" });
@@ -96,6 +97,37 @@ async function usagePanel(ctx) {
       box.append(row);
       box.append(el("p", { className: "muted small", text: "Leave blank to use this server's default budget for every project. 0 means no limit for this project." }));
     }
+  } catch (error) {
+    box.append(el("p", { className: "muted small", text: error.message }));
+  }
+  return box;
+}
+
+// How well the AI matched this project's own people (X.80): recall and precision from their decisions, never a verdict.
+async function accuracyPanel(ctx) {
+  const box = el("div", { className: "panel" });
+  box.append(el("h2", { text: "AI accuracy in this project" }));
+  try {
+    const report = await request(projectApi(ctx.project.id, "/accuracy-report"));
+    if (!hasAnything(report)) {
+      box.append(el("p", { className: "muted small", text: "Nothing to compare yet. Once you have decided papers the AI also suggested on, or verified AI extractions, the match shows here." }));
+    }
+    screeningLines(report.screening).forEach((line) => box.append(el("p", { children: [el("strong", { text: `${line.stage}: ` }), document.createTextNode(line.text)] })));
+    extractionTables(report.extraction).forEach((scored) => {
+      box.append(el("h3", { text: `Extraction, ${scored.schema} (${scored.papers} paper(s))` }));
+      const grid = el("table", { className: "versions-table" });
+      const head = el("tr");
+      ["Field", "Precision", "Recall"].forEach((h) => head.append(el("th", { text: h })));
+      grid.append(head);
+      scored.rows.forEach((row) => {
+        const tr = el("tr");
+        [`${row.field}${row.critical ? " *" : ""}`, row.precision, row.recall].forEach((cell) => tr.append(el("td", { text: cell })));
+        grid.append(tr);
+      });
+      box.append(grid);
+    });
+    extractionNotes(report.extraction).forEach((note) => box.append(el("p", { className: "muted small", text: note })));
+    box.append(el("p", { className: "muted small", text: `* Critical field. ${report.caveat}` }));
   } catch (error) {
     box.append(el("p", { className: "muted small", text: error.message }));
   }
@@ -227,7 +259,7 @@ async function render(root, ctx) {
     panel.append(more);
   }
 
-  root.replaceChildren(await aiSettingsPanel(ctx), await usagePanel(ctx), panel);
+  root.replaceChildren(await aiSettingsPanel(ctx), await usagePanel(ctx), await accuracyPanel(ctx), panel);
 }
 
 export default { render };

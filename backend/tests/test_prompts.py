@@ -15,6 +15,7 @@ GOLDEN = Path(__file__).parent / "golden" / "evidence_synthesis_v1.json"
 # caller to it. If this test fails you edited a published prompt; revert it and create v2 instead.
 PUBLISHED_CHECKSUMS = {
     "screening_prescreen.v1.toml": "a319c46a1c5899c9117e30331d9b7c87e9b1e7e2d5c32a4a8ec334e6e9be1b18",
+    "screening_prescreen.v2.toml": "52f766ba5512a33d97f5bf7d9efc1c9b135f9a85bc2dc009ee04191389710aa9",
     "evidence_synthesis.v1.toml": "a2825a5ca79211cf7716466f24d39b1b307c6d677c6c6e1656510ba74d518beb",
     "evidence_synthesis.v2.toml": "3f17a3de6c39c594b515ad32501d402d379357f43c86181f3b6b7db51ef978fb",
     "evidence_synthesis.v3.toml": "f94fd8fccaecf3676588012090e478198c4695ae92a5c4bb87f1b7a9d3fc702d",
@@ -26,6 +27,7 @@ PUBLISHED_CHECKSUMS = {
     "workspace_clearer_sentence.v1.toml": "8cee2698fdfabb1406a9605dc20ff1eef832f42aee65babe8113453478c75e45",
     "workspace_find_evidence.v1.toml": "ac78ecc5cad03ddd7e291e924c48a5726936f587afae6e7b1395a955634ade12",
     "section_draft.v1.toml": "b6f71b13824d34588dafac6f31b0d44617e05935c2a38fd6e2e484b002b418d1",
+    "qual_code_suggestions.v1.toml": "aa02dc07add26fdbdcca3f2ec8b3f902187570e52eced8b6eb7181800c332267",
 }
 
 

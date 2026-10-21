@@ -1,8 +1,8 @@
 import { el, label, toast } from "../dom.js";
 import { request, projectApi } from "../api.js";
-import { errorCard } from "./common.js";
+import { coverageBadge, errorCard } from "./common.js";
 import { suggestionPanel } from "../suggestion.js";
-import { afterDecision, authorsText, countsText, fetchEntireQueue, keyAction, runBulk, safeLink, typedReason } from "./screenLogic.js";
+import { afterDecision, authorsText, confidenceText, countsText, fetchEntireQueue, keyAction, runBulk, safeLink, splitAtQuote, typedReason } from "./screenLogic.js";
 
 // Title/abstract screening (M2.3.1), built from the approved wireframe docs/wireframes/screening-queue.html.
 // Every decision is a person's own: the AI suggestion is shown as a suggestion and never pre-selected.
@@ -267,13 +267,22 @@ async function render(root, ctx) {
       ? el("a", { href: link, target: "_blank", rel: "noopener noreferrer", text: `DOI ${item.doi}` })
       : el("span", { className: "muted small", text: "No DOI recorded" });
     const found = item.found_via ? el("p", { className: "muted small", text: `Found via ${label(item.found_via.method || "another search")}` }) : null;
+    // The AI's quoted evidence, marked where it sits in the record, only while its suggestion is showing (X.77).
+    const shown = item.ai_suggestion && state.showAi && !state.hiddenAi.has(item.source_id) && !["discarded", "locked"].includes(item.ai_suggestion.state);
+    const marked = (tag, text, where, extra = {}) => {
+      const parts = shown && item.ai_suggestion.evidence_source === where ? splitAtQuote(text, item.ai_suggestion.evidence_quote) : null;
+      return parts
+        ? el(tag, { ...extra, children: [document.createTextNode(parts[0]), el("mark", { text: parts[1], attrs: { title: "The AI's evidence" } }), document.createTextNode(parts[2])] })
+        : el(tag, { ...extra, text });
+    };
     record.replaceChildren(
-      el("h2", { text: item.title || "(untitled)" }),
+      marked("h2", item.title || "(untitled)", "title"),
       meta,
       el("p", { children: [source] }),
       ...(found ? [found] : []),
+      coverageBadge(item.coverage),
       el("h3", { text: "Abstract" }),
-      el("p", { className: "screen-abstract", text: item.abstract || "No abstract recorded for this record." })
+      marked("p", item.abstract || "No abstract recorded for this record.", "abstract", { className: "screen-abstract" })
     );
   }
 
@@ -307,6 +316,17 @@ async function render(root, ctx) {
     const ai = el("section", { className: "panel screen-ai", attrs: { "aria-live": "polite" } });
     const item = current();
     const s = item?.ai_suggestion;
+    // Next to the suggestion: how sure the AI says it is, and the words of the record it points to (X.77).
+    const evidenceBlock = () => {
+      const block = el("div", { className: "screen-evidence" });
+      const level = confidenceText(s.confidence_level, s.confidence);
+      if (level) block.append(el("p", { className: `small confidence-${s.confidence_level}`, text: level }));
+      if (s.evidence_quote) {
+        block.append(el("p", { className: "muted small", text: `The AI points to this ${s.evidence_source || "text"} in the record:` }),
+          el("blockquote", { text: s.evidence_quote }));
+      } else if (s.decision) block.append(el("p", { className: "muted small", text: "The AI gave no quote from the record." }));
+      return block;
+    };
     if (!item) {
       ai.append(el("h3", { text: "AI suggestion, not a decision" }), el("p", { className: "muted small", text: "—" }));
     } else if (!state.showAi) {
@@ -337,7 +357,7 @@ async function render(root, ctx) {
       }).then((panel) => {
         if (current()?.source_id !== wanted || !state.showAi) return;
         if (panel.querySelector(".suggestion-card")) {
-          ai.replaceChildren(panel);
+          ai.replaceChildren(panel, evidenceBlock());
           return;
         }
         if (state.hiddenAi.has(wanted)) {
@@ -353,6 +373,7 @@ async function render(root, ctx) {
           el("h3", { text: "AI suggestion, not a decision" }),
           el("p", { text: `${label(s.decision)}${s.reason_code ? ` (${s.reason_code})` : ""}${conf}` }),
           el("p", { className: "small", text: s.rationale || "No rationale recorded." }),
+          evidenceBlock(),
           el("p", { className: "muted small", text: "A suggestion only. It counts for nothing until you decide." })
         );
       });

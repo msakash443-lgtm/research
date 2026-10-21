@@ -4,12 +4,18 @@
 import { $, el, emptyCard, formatDate, saveOnce, toast } from "./dom.js";
 import { request } from "./api.js";
 import { errorCard } from "./steps/common.js";
+import { enqueueNoteEdit, rebaseEdit, resolveConflict } from "./offlineOutbox.js";
 import {
+  canEditNote,
   decisionRows,
+  editConflict,
   INBOX_TABS,
+  inboxRefreshAfterSync,
+  isOfflineFailure,
   loadDismissed,
   newestRender,
   parseInboxRoute,
+  planNoteEdit,
   promoteDefaults,
   promotedInto,
   rememberDismissed,
@@ -199,11 +205,100 @@ function actionRow(note, ctx) {
       actions.append(promoteButton);
       actions.append(form);
     }
+    if (canEditNote(note)) {
+      const editButton = el("button", { className: "quiet-button small", type: "button", text: "Edit", attrs: { "aria-expanded": "false" } });
+      const form = editForm(note);
+      editButton.addEventListener("click", () => {
+        const open = form.hidden;
+        form.hidden = !open;
+        editButton.setAttribute("aria-expanded", String(open));
+      });
+      actions.append(editButton, form);
+    }
     const archiveButton = el("button", { className: "quiet-button small", type: "button", text: "Archive" });
     archiveButton.addEventListener("click", () => archiveNote(note));
     actions.append(archiveButton);
   }
   return actions;
+}
+
+// Edit a saved note's body (X.31.25). The edit is sent against the revision it was made from; a request that never
+// reaches the server is queued in the offline outbox, and a stale revision shows the keep-mine/theirs/both choice.
+function editForm(note) {
+  const form = el("form", { className: "promote-form note-edit-form" });
+  form.hidden = true;
+  const text = el("textarea", { attrs: { name: "body", maxlength: "20000", required: "", "aria-label": "Note text" } });
+  text.value = note.body || "";
+  const conflictBox = el("div", { className: "note-edit-conflict", attrs: { role: "alert" } });
+  conflictBox.hidden = true;
+  const submit = el("button", { type: "submit", text: "Save" });
+  const cancel = el("button", { className: "quiet-button", type: "button", text: "Cancel" });
+  cancel.addEventListener("click", () => {
+    text.value = note.body || "";
+    conflictBox.hidden = true;
+    form.hidden = true;
+  });
+  form.append(
+    el("label", { children: [el("span", { text: "Note text" }), text] }),
+    conflictBox,
+    el("div", { className: "dialog-actions", children: [cancel, submit] })
+  );
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    saveOnce(form, async () => {
+      const plan = planNoteEdit(note, text.value);
+      if (plan.action === "invalid") return toast("A note can't be empty.");
+      if (plan.action === "unchanged") {
+        form.hidden = true;
+        return;
+      }
+      await sendEdit(note, plan.body, plan.baseRevision, conflictBox);
+    });
+  });
+  return form;
+}
+
+async function sendEdit(note, body, baseRevision, conflictBox) {
+  try {
+    await request(`/api/notes/${note.id}`, { method: "PATCH", body: JSON.stringify({ body, base_revision: baseRevision }) });
+    toast("Saved.");
+    await rerender();
+  } catch (error) {
+    const conflict = editConflict(error);
+    if (conflict) return showEditConflict(note, body, conflict.current, conflictBox);
+    if (!isOfflineFailure(error)) return toast(error.message);
+    const queued = await enqueueNoteEdit({ id: note.id, revision: baseRevision }, body);
+    toast(queued ? "You're offline: the edit is saved on this device and will sync when you're back online." : "Can't reach the server, and this browser can't hold the edit offline. Keep this page open and try again.");
+    if (queued) await rerender();
+  }
+}
+
+function showEditConflict(note, body, current, conflictBox) {
+  const choose = async (choice) => {
+    const resolution = resolveConflict({ body }, current, choice);
+    conflictBox.hidden = true;
+    if (resolution.action === "drop") {
+      toast("Kept the saved version.");
+      await rerender();
+      return;
+    }
+    const payload = rebaseEdit(resolution.payload, current);
+    await sendEdit(note, payload.body, payload.base_revision, conflictBox);
+  };
+  const button = (label, choice) => {
+    const node = el("button", { className: "quiet-button small", type: "button", text: label });
+    node.addEventListener("click", () => choose(choice));
+    return node;
+  };
+  conflictBox.replaceChildren(
+    el("p", { text: "This note was changed elsewhere since you opened it. Choose what to keep." }),
+    el("div", { className: "note-edit-compare", children: [
+      el("div", { children: [el("h4", { text: "Your edit" }), el("pre", { text: body })] }),
+      el("div", { children: [el("h4", { text: "Saved version" }), el("pre", { text: current.body || "" })] }),
+    ] }),
+    el("div", { className: "dialog-actions", children: [button("Keep mine", "mine"), button("Keep saved", "theirs"), button("Keep both", "both")] })
+  );
+  conflictBox.hidden = false;
 }
 
 async function fileNote(note, projectId) {
@@ -336,4 +431,12 @@ function decisionCard(row) {
 async function rerender() {
   const route = parseInboxRoute(window.location.hash) || { tab: "inbox", projectId: null };
   await renderInbox($("#inbox-view"), route.tab, viewerId, route.projectId);
+}
+
+// After an offline outbox sync: redraw the Inbox at its current hash when the sync changed a note, the Inbox is on
+// screen and no edit or promote form is open (X.94). A skipped redraw happens on the next save or visit.
+export async function refreshInboxAfterSync(result) {
+  const root = $("#inbox-view");
+  const formOpen = Boolean(root.querySelector(".promote-form:not([hidden])"));
+  if (inboxRefreshAfterSync(result, { inboxHidden: root.hidden, formOpen })) await rerender();
 }

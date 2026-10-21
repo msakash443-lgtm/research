@@ -27,7 +27,8 @@ export function runLabel(analysisRunId) {
   return String(analysisRunId || "").slice(0, 8);
 }
 
-// The attrs for a new `stat` node (editor/schema.js) to insert for one chosen number.
+// The attrs for a new `stat` node (editor/schema.js) to insert for one chosen number. `value` is a display cache
+// only (editor/schema.js::stat); the ledger and exports always resolve the real value from the run's output.
 export function statAttrs(option) {
-  return { analysis_run_id: option.analysis_run_id, path: option.path };
+  return { analysis_run_id: option.analysis_run_id, path: option.path, value: option.value };
 }

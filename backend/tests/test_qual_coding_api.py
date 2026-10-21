@@ -10,7 +10,7 @@ from app.agent import llm as llm_module
 from app.config import Settings
 from app.database import SessionLocal
 from app.main import app
-from app.models import AuditEvent, QualExcerpt
+from app.models import AuditEvent, QualExcerpt, QualSuggestion
 from app.routers import qual_coding as router_module
 
 EXCERPT = "My manager never explains decisions, so I stopped asking."
@@ -244,6 +244,73 @@ def test_renaming_or_merging_an_unknown_code_is_refused(project, monkeypatch):
                         json={"source": "nope", "target": "also-nope"}).status_code == 409
 
 
+def test_renaming_onto_a_name_in_use_or_merging_into_an_unknown_target_is_refused(project, monkeypatch):
+    client, pid = project
+    http = FakeHttp(_reply("trust"))
+    _patch(monkeypatch, http, _settings())
+    first = client.post(f"/api/projects/{pid}/qual/suggest", json={"excerpt": EXCERPT}).json()
+    client.post(f"/api/projects/{pid}/qual/decisions",
+                json={"suggestion_id": first["suggestions"][0]["id"], "decision": "accept"})
+    http.reply = _reply("silence")
+    second = client.post(f"/api/projects/{pid}/qual/suggest", json={"excerpt": "A different excerpt."}).json()
+    client.post(f"/api/projects/{pid}/qual/decisions",
+                json={"suggestion_id": second["suggestions"][0]["id"], "decision": "accept"})
+    assert client.post(f"/api/projects/{pid}/qual/codebook/rename",
+                        json={"old": "trust", "new": "silence"}).status_code == 409
+    assert client.post(f"/api/projects/{pid}/qual/codebook/merge",
+                        json={"source": "trust", "target": "ghost"}).status_code == 409
+    assert client.get(f"/api/projects/{pid}/qual/codebook").json() == {
+        "codes": {"trust": "from the excerpt", "silence": "from the excerpt"}}
+
+
+def test_with_ai_off_a_suggest_request_is_refused_before_any_model_call(project, monkeypatch):
+    client, pid = project
+    http = FakeHttp(_reply("trust"))
+    _patch(monkeypatch, http, _settings())
+    assert client.put(f"/api/projects/{pid}/ai-settings", json={"ai_involvement": "off"}).status_code == 200
+    r = client.post(f"/api/projects/{pid}/qual/suggest", json={"excerpt": EXCERPT})
+    assert r.status_code == 409
+    assert http.urls == []
+    assert client.get(f"/api/projects/{pid}/qual/excerpts").json() == []
+
+
+def test_a_spent_token_budget_refuses_the_next_suggest_with_409_and_stores_nothing(project, monkeypatch):
+    client, pid = project
+    http = FakeHttp(_reply("trust"))
+    _patch(monkeypatch, http, _settings())
+    assert client.put(f"/api/projects/{pid}/usage/budget", json={"override": 2}).status_code == 200
+    assert client.post(f"/api/projects/{pid}/qual/suggest", json={"excerpt": EXCERPT}).status_code == 201
+    calls_before = len(http.urls)
+    r = client.post(f"/api/projects/{pid}/qual/suggest", json={"excerpt": "A second excerpt."})
+    assert r.status_code == 409
+    assert len(http.urls) == calls_before
+    assert len(client.get(f"/api/projects/{pid}/qual/excerpts").json()) == 1
+
+
+def test_a_suggestion_with_no_rationale_is_accepted_when_the_person_writes_the_definition(project, monkeypatch):
+    client, pid = project
+    _patch(monkeypatch, FakeHttp(json.dumps([{"code": "trust", "rationale": ""}])), _settings())
+    excerpt = client.post(f"/api/projects/{pid}/qual/suggest", json={"excerpt": EXCERPT}).json()
+    sid = excerpt["suggestions"][0]["id"]
+    r = client.post(f"/api/projects/{pid}/qual/decisions",
+                    json={"suggestion_id": sid, "decision": "accept", "definition": "Belief that others act in good faith."})
+    assert r.status_code == 200, r.text
+    assert client.get(f"/api/projects/{pid}/qual/codebook").json() == {
+        "codes": {"trust": "Belief that others act in good faith."}}
+
+
+def test_a_suggestion_with_no_rationale_and_no_definition_is_refused_and_stays_pending(project, monkeypatch):
+    client, pid = project
+    _patch(monkeypatch, FakeHttp(json.dumps([{"code": "trust", "rationale": "   "}])), _settings())
+    excerpt = client.post(f"/api/projects/{pid}/qual/suggest", json={"excerpt": EXCERPT}).json()
+    sid = excerpt["suggestions"][0]["id"]
+    r = client.post(f"/api/projects/{pid}/qual/decisions", json={"suggestion_id": sid, "decision": "accept"})
+    assert r.status_code == 422
+    assert client.get(f"/api/projects/{pid}/qual/codebook").json() == {"codes": {}}
+    listed = client.get(f"/api/projects/{pid}/qual/excerpts").json()
+    assert listed[0]["suggestions"][0]["status"] == "pending"
+
+
 def test_the_codebook_audit_events_hold_names_not_definitions(project, monkeypatch):
     client, pid = project
     _patch(monkeypatch, FakeHttp(_reply("trust")), _settings())
@@ -258,3 +325,18 @@ def test_the_codebook_audit_events_hold_names_not_definitions(project, monkeypat
         for event in events:
             assert "from the excerpt" not in str(event.payload_json)
 
+
+
+def test_every_stored_suggestion_records_the_model_and_the_pinned_prompt_version(project, monkeypatch):
+    # Integrity rule 5: an AI output records model_id and prompt_version (X.121).
+    client, pid = project
+    _patch(monkeypatch, FakeHttp(_reply("trust", "silence")), _settings())
+    body = client.post(f"/api/projects/{pid}/qual/suggest", json={"excerpt": EXCERPT}).json()
+    expected = ("qwen2.5:7b-instruct", "qual_code_suggestions@1")
+    assert [(s["model_id"], s["prompt_version"]) for s in body["suggestions"]] == [expected, expected]
+    with SessionLocal() as db:
+        rows = db.scalars(select(QualSuggestion).where(QualSuggestion.excerpt_id == uuid.UUID(body["id"]))).all()
+        assert [(r.model_id, r.prompt_version) for r in rows] == [expected, expected]
+        event = db.scalars(select(AuditEvent).where(AuditEvent.action == "qual.suggested",
+                                                    AuditEvent.project_id == uuid.UUID(pid))).one()
+        assert (event.model_id, event.prompt_version) == expected

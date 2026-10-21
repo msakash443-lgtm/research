@@ -18,15 +18,16 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import audit, ledger, manuscript_guard, number_citation, provenance_store, section_approval, section_draft_task, suggestions
+from app import audit, ledger, manuscript_guard, number_citation, overclaim_check, provenance_store, section_approval, section_draft_task, suggestions
 from app.database import get_db
 from app.lookups import project_document_or_404
 from app.similarity_task import latest_version
 from app.task_handlers import SECTION_DRAFT
 from app.task_queue import enqueue_task
-from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_access, project_role
+from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_access, project_role, refuse_if_archived
 from app.gates import GateCode, required_roles
 from app.models import (
+    AiInvolvement,
     AiSuggestion,
     AnalysisRun,
     ArtifactStatus,
@@ -287,10 +288,13 @@ def _store(
     problems = ledger.validate_schema(content)
     if problems:
         _refuse(problems)
+    number_runs = _number_run_outputs(db, project)
+    content = ledger.pin_stat_values(content, number_runs)
     accepted, texts = _ai_context(db, project, document)
     problems = ledger.check_integrity(
         previous, content, actor=actor, accepted=accepted, suggestion_texts=texts,
-        citable_source_ids=_citable_source_ids(db, project), number_run_outputs=_number_run_outputs(db, project), restored=restored,
+        citable_source_ids=_citable_source_ids(db, project), number_run_outputs=number_runs, restored=restored,
+        ai_wording_allowed=project.ai_involvement == AiInvolvement.full,
     )
     if problems:
         _refuse(problems)
@@ -623,6 +627,36 @@ def section_link_check(document_id: uuid.UUID, project: Project = Depends(projec
     )
 
 
+class OverclaimFinding(BaseModel):
+    kind: str
+    subject: str
+    message: str
+
+
+class OverclaimCheckRead(BaseModel):
+    document_id: uuid.UUID
+    version_id: uuid.UUID | None
+    design: str
+    ok: bool
+    findings: list[OverclaimFinding]
+
+
+@router.get("/{document_id}/overclaim-check", response_model=OverclaimCheckRead)
+def section_overclaim_check(document_id: uuid.UUID,
+                            design: str = Query("observational", pattern="^(observational|experimental|unspecified)$"),
+                            project: Project = Depends(project_access(READ_ROLES)), db: Session = Depends(get_db)):
+    """Causal wording in a non-experimental study and claims that reach past any sample, in the latest saved version of
+    this section (M6.7, spec 5.10). Advisory: it reads one saved version, changes nothing and does not block export."""
+    document = project_document_or_404(db, project, document_id)
+    version = latest_version(db, document.id)
+    content = version.content_json if version is not None else {"type": "doc", "content": []}
+    report = overclaim_check.check_text(ledger.plain_text(content), design)
+    return OverclaimCheckRead(
+        document_id=document.id, version_id=version.id if version is not None else None, design=report.design,
+        ok=report.ok, findings=[OverclaimFinding(kind=f.kind, subject=f.subject, message=f.message) for f in report.findings],
+    )
+
+
 class SectionApprovalCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     note: str | None = None
@@ -668,6 +702,7 @@ def approve_section(
     Only an owner or supervisor (G10's required role) may approve. The section needs a current, non-stale
     section provenance report (`POST .../provenance-reports`, scope `section`) covering its current saved
     version first: the AI-involvement numbers are copied from that report, never computed here."""
+    refuse_if_archived(project)
     document = project_document_or_404(db, project, document_id)
     role = project_role(db, project, user)
     if role not in required_roles(GateCode.G10):

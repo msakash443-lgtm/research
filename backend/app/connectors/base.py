@@ -48,6 +48,12 @@ def citation_count(value: Any) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
 
 
+def language_code(value: Any) -> str | None:
+    """A service's language as a lower-case two-letter ISO 639-1 code, or None when missing or not that shape."""
+    code = value.strip().lower() if isinstance(value, str) else ""
+    return code if len(code) == 2 and code.isalpha() else None
+
+
 def clean_text(value: Any, limit: int) -> str | None:
     """A string with whitespace runs collapsed to one space, cut to `limit`; None when blank or not a string."""
     return " ".join(value.split())[:limit] or None if isinstance(value, str) and value.strip() else None
@@ -87,6 +93,7 @@ class PaperRecord(BaseModel):
     quality_flags: tuple[str, ...] = ()  # e.g. ("preprint", "retracted")
     # Times cited, as this service counts it (M2.13). None = the service gave no count; never read it as 0.
     cited_by_count: int | None = Field(default=None, ge=0)
+    language: str | None = Field(default=None, min_length=2, max_length=2)  # ISO 639-1; None = not reported (X.86)
 
     @field_validator("doi")
     @classmethod

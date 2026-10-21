@@ -4,8 +4,9 @@ import { request, projectApi } from "./js/api.js";
 import { STAGES, STEPS, GROUPS, GUIDES, STEP_IDS, stepStatus, setStageChain, stageLabel, stagesWithoutScreen } from "./js/workflow.js";
 import { renderMemory } from "./js/memory.js";
 import { aiLevel } from "./js/aiLevels.js";
-import { renderInbox } from "./js/inbox.js";
+import { renderInbox, refreshInboxAfterSync } from "./js/inbox.js";
 import { parseInboxRoute } from "./js/inboxLogic.js";
+import { readMemoryCollapsed, writeMemoryCollapsed } from "./js/memoryPanelLogic.js";
 import { enqueueCapture, flushOutbox, pendingCount, registerOfflineSync } from "./js/offlineOutbox.js";
 
 import overview from "./js/steps/overview.js";
@@ -37,8 +38,8 @@ const state = {
   pollTimer: null,
 };
 
-async function sendOutbox(path, payload) {
-  return request(path, { method: "POST", body: JSON.stringify(payload) });
+async function sendOutbox(path, payload, method = "POST") {
+  return request(path, { method, body: JSON.stringify(payload) });
 }
 
 async function syncOfflineCaptures() {
@@ -48,6 +49,8 @@ async function syncOfflineCaptures() {
   };
   const result = await flushOutbox(sendOutbox, chooseConflict);
   if (result.sent) toast(`Synced ${result.sent} offline capture${result.sent === 1 ? "" : "s"}.`);
+  // A sent or conflict-resolved edit changes the note the Inbox shows; the Inbox decides whether it can redraw (X.94).
+  await refreshInboxAfterSync(result);
   return result;
 }
 
@@ -382,13 +385,13 @@ window.addEventListener("hashchange", () => {
   if (parsed.stepId !== state.currentStep) setStep(parsed.stepId, false);
 });
 
-if (localStorage.getItem("ra.memoryCollapsed") === "1") document.body.classList.add("memory-collapsed");
+if (readMemoryCollapsed()) document.body.classList.add("memory-collapsed");
 
 $("#nav-toggle").addEventListener("click", () => setDrawer(document.body.classList.contains("nav-open") ? null : "nav"));
 $("#memory-toggle").addEventListener("click", () => {
   if (window.matchMedia("(min-width: 1280px)").matches) {
     document.body.classList.toggle("memory-collapsed");
-    localStorage.setItem("ra.memoryCollapsed", document.body.classList.contains("memory-collapsed") ? "1" : "0");
+    writeMemoryCollapsed(document.body.classList.contains("memory-collapsed"));
   } else {
     setDrawer(document.body.classList.contains("memory-open") ? null : "memory");
   }

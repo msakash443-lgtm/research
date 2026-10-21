@@ -52,6 +52,23 @@ def test_merge_refuses_self_unknown_and_missing_actor():
     with pytest.raises(ValueError):
         qc.merge(_book(), "cost", "trust", actor="")
 
+def test_a_merged_away_name_cannot_be_reused_by_accept_or_rename():
+    state = qc.merge(_book(), "cost", "trust", actor="c")
+    with pytest.raises(ValueError):
+        qc.accept(state, "cost", "again", actor="c")
+    with pytest.raises(ValueError):
+        qc.rename(state, "trust", "cost", actor="c")
+
+
+def test_rename_refuses_a_name_already_in_use_by_another_code():
+    with pytest.raises(ValueError):
+        qc.rename(_book(), "trust", "cost", actor="c")
+
+
+def test_merge_refuses_an_unknown_target_even_when_the_source_exists():
+    with pytest.raises(ValueError):
+        qc.merge(_book(), "cost", "ghost", actor="c")
+
 
 def test_resolve_follows_chains_and_refuses_unknown_labels():
     state = qc.rename(_book(), "trust", "t2", actor="c")

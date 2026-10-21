@@ -4,8 +4,10 @@ import assert from "node:assert/strict";
 import {
   aiLines,
   coverageLine,
+  disclosureUrl,
   exportUrl,
   pastedLines,
+  reportSectionsPayload,
   sectionFilterPayload,
   shareRows,
   staleNotice,
@@ -99,4 +101,22 @@ test("unchecking everything sends an empty filter rather than silently falling b
 
 test("no sections at all is treated as no filter", () => {
   assert.equal(sectionFilterPayload([], []), null);
+});
+
+test("every report section checked sends no filter, same request as before the picker existed", () => {
+  assert.equal(reportSectionsPayload(["produced", "ai", "pasted", "statement", "limits"]), null);
+});
+
+test("checking a subset of report sections scopes the report, in REPORT_SECTION_OPTIONS order", () => {
+  assert.deepEqual(reportSectionsPayload(["limits", "produced"]), ["produced", "limits"]);
+});
+
+test("unchecking every report section sends an empty filter rather than silently falling back to all", () => {
+  assert.deepEqual(reportSectionsPayload([]), []);
+});
+
+test("the disclosure download names the report and the chosen style, encoded", () => {
+  assert.equal(disclosureUrl("p1", "r1", "elsevier_style"), "/api/projects/p1/provenance-reports/r1/ai-disclosure?style=elsevier_style&format=txt");
+  assert.equal(disclosureUrl("p1", "r1", "a&b=c"), "/api/projects/p1/provenance-reports/r1/ai-disclosure?style=a%26b%3Dc&format=txt");
+  assert.throws(() => disclosureUrl("p1", "r1", ""), /Choose a style/);
 });

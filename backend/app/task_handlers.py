@@ -551,7 +551,30 @@ def _own_paper_lookup_write_terminal(db, project_id: uuid.UUID, payload: dict, t
     )
 
 
-@register(OWN_PAPER_LOOKUP)
+def _own_paper_lookup_abandoned(task: ClaimedTask) -> None:
+    """The queue gave up on this lookup (every retry hit a connector error). Write the terminal `failed`
+    row the GET endpoint reports, so the person is told instead of seeing "not resolved yet" forever."""
+    payload = task.payload or {}
+    try:
+        project_id = uuid.UUID(str(payload["project_id"]))
+    except (KeyError, ValueError, TypeError):
+        return  # a malformed payload has no project to report to
+    db = SessionLocal()
+    try:
+        if db.scalar(select(OwnPaperLookup.id).where(OwnPaperLookup.task_id == task.id)) is not None:
+            return  # already ended with its own explanation
+        if db.get(Project, project_id) is None:
+            return
+        _own_paper_lookup_write_terminal(
+            db, project_id, payload, task.id, status="failed", reason="retries_exhausted",
+            detail=f"The lookup services kept failing; gave up after {task.attempt} attempts. Try again later.",
+        )
+        db.commit()
+    finally:
+        db.close()
+
+
+@register(OWN_PAPER_LOOKUP, on_failure=_own_paper_lookup_abandoned)
 def handle_own_paper_lookup(task: ClaimedTask) -> None:
     """Resolve a queued DOI-only/title-only own-paper lookup (M2.14.1) through the enabled lookup
     connectors, then include it the same way `POST .../sources/own` does (`app/own_paper.py`).

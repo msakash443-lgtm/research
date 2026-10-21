@@ -30,8 +30,8 @@ class ScriptedLLM(OpenAICompatibleLLM):
         return reply if isinstance(reply, str) else json.dumps(reply)
 
 
-def answer(decision="include", reason=None, confidence=0.9, rationale="It matches the criteria."):
-    return {"decision": decision, "reason_code": reason, "confidence": confidence, "rationale": rationale}
+def answer(decision="include", reason=None, confidence=0.9, rationale="It matches the criteria.", quote="Paper"):
+    return {"decision": decision, "reason_code": reason, "confidence": confidence, "rationale": rationale, "evidence_quote": quote}
 
 
 @pytest.fixture
@@ -161,7 +161,7 @@ def test_flags_are_audited_with_the_model_and_prompt_version(world):
         db.commit()
     run(world, [answer("maybe", None, 0.9)] * 3)
     events = [e for e in world["owner"].get(f"/api/projects/{world['pid']}/audit").json() if e["action"] == "screening.ai_suggested"]
-    assert len(events) == 3 and {e["prompt_version"] for e in events} == {"screening_prescreen@1"} and {e["model_id"] for e in events} == {"test-model"}
+    assert len(events) == 3 and {e["prompt_version"] for e in events} == {"screening_prescreen@2"} and {e["model_id"] for e in events} == {"test-model"}
     assert any("ignore_instructions" in e["payload_json"]["flags"] for e in events)
 
 
@@ -179,7 +179,7 @@ def test_a_rationale_that_repeats_the_prompts_internals_is_rejected():
 
 
 def test_the_prompt_is_pinned_and_the_config_default_is_sane():
-    assert load_prescreen_prompt().ref == "screening_prescreen@1"
+    assert load_prescreen_prompt().ref == "screening_prescreen@2"
     assert 0 <= get_settings().prescreen_min_confidence <= 1
 
 
@@ -347,3 +347,69 @@ def test_run_prescreen_refuses_when_already_disabled(world):
     with pytest.raises(PrescreenError, match="Disabled by the project owner"):
         run(world, [])
     assert rows(world) == []
+
+
+# ---- evidence quote and confidence level (X.77) -------------------------------------------------------------
+
+ABSTRACT = "We surveyed 200 nurses.\nWorkload was linked to burnout in every ward."
+
+
+def _with_abstract(world, abstract=ABSTRACT):
+    with SessionLocal() as db:
+        for source_id in world["ids"]:
+            db.get(Source, uuid.UUID(source_id)).abstract = abstract
+        db.commit()
+
+
+def test_a_quote_is_found_ignoring_case_and_line_breaks_and_returned_as_the_record_spells_it():
+    from app.prescreen import locate_quote
+
+    assert locate_quote("workload was LINKED to burnout", "Paper", ABSTRACT) == ("abstract", "Workload was linked to burnout")
+    assert locate_quote("we surveyed 200 nurses. workload", "Paper", ABSTRACT) == ("abstract", "We surveyed 200 nurses. Workload")  # across the line break
+    assert locate_quote("paper", "Paper 1", None) == ("title", "Paper")
+    assert locate_quote("Workload caused burnout", "Paper", ABSTRACT) is None  # different words
+    assert locate_quote("   ", "Paper", ABSTRACT) is None
+
+
+def test_confidence_levels():
+    from app.prescreen import confidence_level
+
+    assert [confidence_level(c) for c in (0.95, 0.8, 0.79, 0.5, 0.49, 0.0)] == ["high", "high", "medium", "medium", "low", "low"]
+    assert confidence_level(None) is None
+
+
+def test_an_include_or_exclude_without_a_quote_is_rejected_and_a_maybe_may_have_none(world):
+    _with_abstract(world)
+    result, _ = run(world, [answer("include", "I1", quote=None), answer("exclude", "E1", quote="   "), answer("maybe", None, quote=None)])
+    assert (result.suggested, result.failed) == (1, 2)
+    assert [r.decision for r in rows(world)] == ["maybe"]
+
+
+def test_a_quote_that_is_not_in_the_record_is_rejected_not_corrected(world):
+    _with_abstract(world)
+    result, _ = run(world, [answer("include", "I1", quote="Workload caused burnout in every ward."),
+                            answer("include", "I1", quote="Workload was linked to burnout"), answer("maybe", None, quote=None)])
+    assert (result.suggested, result.failed) == (2, 1)
+    failure = next(e for e in world["owner"].get(f"/api/projects/{world['pid']}/audit").json() if e["action"] == "screening.ai_failed")
+    assert "evidence quote is not in the record" in failure["payload_json"]["reason"]
+
+
+def test_the_queue_shows_the_stored_quote_where_it_was_found_and_a_confidence_level(world):
+    _with_abstract(world)
+    by_marker = {"Title: Paper 0\n": answer("include", "I1", 0.9, quote="workload was linked to burnout"),
+                 "Title: Paper 1\n": answer("exclude", "E1", 0.7, quote="Paper"),
+                 "Title: Paper 2\n": answer("maybe", None, 0.4, quote=None)}
+
+    class ByTitle(ScriptedLLM):  # the sources are created together, so the order they are screened in is not fixed
+        def complete(self, system_prompt, user_prompt):
+            return json.dumps(next(reply for marker, reply in by_marker.items() if marker in user_prompt))
+
+    with SessionLocal() as db:
+        run_prescreen(db, db.get(Project, uuid.UUID(world["pid"])), llm=ByTitle([]), min_confidence=0.6, actor="tester")
+
+    queue = world["owner"].get(f"/api/projects/{world['pid']}/screening/queue?stage=title_abstract").json()["items"]
+    by_title = {i["title"]: i["ai_suggestion"] for i in queue}
+    assert by_title["Paper 0"]["evidence_quote"] == "Workload was linked to burnout" and by_title["Paper 0"]["evidence_source"] == "abstract"
+    assert by_title["Paper 0"]["confidence_level"] == "high"
+    assert (by_title["Paper 1"]["evidence_quote"], by_title["Paper 1"]["evidence_source"], by_title["Paper 1"]["confidence_level"]) == ("Paper", "title", "medium")
+    assert "evidence_quote" not in by_title["Paper 2"] and by_title["Paper 2"]["confidence_level"] == "low"

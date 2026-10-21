@@ -23,6 +23,7 @@ from typing import Any
 from urllib.parse import quote
 
 from app.connectors.base import (
+    language_code,
     ConnectorBase,
     ConnectorError,
     FullText,
@@ -138,6 +139,7 @@ def to_record(work: dict[str, Any]) -> PaperRecord | None:
         source_ids=source_ids,
         quality_flags=tuple(flags),
         cited_by_count=citation_count(work.get("cited_by_count")),
+        language=language_code(work.get("language")),
     )
 
 

@@ -64,6 +64,9 @@ REQUIRED_GATES: dict[str, GateCode] = {}
 # Task types whose stored payload holds private text: returns the payload to keep once the task
 # ends `completed` or `failed` (a task that will be retried keeps its payload, because it needs it).
 PAYLOAD_SCRUBS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {}
+# Task types whose handler may run this many seconds at most. Past that the worker stops renewing the
+# lease, so a hung handler's task is reaped and handed to another worker (X.115). Unset = no limit.
+MAX_RUN_SECONDS: dict[str, float] = {}
 
 
 def register(
@@ -71,6 +74,7 @@ def register(
     on_failure: FailureHook | None = None,
     requires_gate: GateCode | None = None,
     scrub_payload: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    max_run_seconds: float | None = None,
 ) -> Callable[[Handler], Handler]:
     def decorator(handler: Handler) -> Handler:
         if task_type in HANDLERS:
@@ -82,6 +86,8 @@ def register(
             REQUIRED_GATES[task_type] = requires_gate
         if scrub_payload is not None:
             PAYLOAD_SCRUBS[task_type] = scrub_payload
+        if max_run_seconds is not None:
+            MAX_RUN_SECONDS[task_type] = max_run_seconds
         return handler
 
     return decorator

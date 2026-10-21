@@ -44,6 +44,8 @@ jobs:
       run: pytest -q
     - name: Apply Alembic migrations to PostgreSQL
       env:
+        # Settings requires ENVIRONMENT (X.105); migrations/env.py reads DATABASE_URL through Settings.
+        ENVIRONMENT: development
         DATABASE_URL: postgresql+psycopg://research_ai_test:research_ai_test@localhost:5432/research_ai_test
       run: |
         alembic -c alembic.ini upgrade head

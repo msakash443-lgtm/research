@@ -71,12 +71,29 @@ export const schema = new Schema({
       group: "inline",
       atom: true,
       selectable: true,
-      attrs: { analysis_run_id: { default: "" }, path: { default: "" } },
+      // `value` is a display cache only, set from the number panel's already-fetched value (numberPanelLogic.js
+      // ::statAttrs) so the live editor can show what was inserted without a network round trip. It is never the
+      // source of truth: ledger.check_integrity/manuscript_export always resolve the real value from the run's
+      // output_json by `analysis_run_id`+`path` (app/number_citation.py), both at save time and at export time.
+      attrs: { analysis_run_id: { default: "" }, path: { default: "" }, value: { default: null } },
       parseDOM: [{
         tag: "span[data-analysis-run-id]",
-        getAttrs: (dom) => ({ analysis_run_id: dom.getAttribute("data-analysis-run-id") || "", path: dom.getAttribute("data-path") || "" }),
+        getAttrs: (dom) => {
+          const raw = dom.getAttribute("data-value");
+          const value = raw === null || raw === "" ? null : Number(raw);
+          return {
+            analysis_run_id: dom.getAttribute("data-analysis-run-id") || "",
+            path: dom.getAttribute("data-path") || "",
+            value: Number.isFinite(value) ? value : null,
+          };
+        },
       }],
-      toDOM: (node) => ["span", { class: "stat", "data-analysis-run-id": node.attrs.analysis_run_id, "data-path": node.attrs.path }],
+      toDOM: (node) => ["span", {
+        class: "stat",
+        "data-analysis-run-id": node.attrs.analysis_run_id,
+        "data-path": node.attrs.path,
+        ...(node.attrs.value === null || node.attrs.value === undefined ? {} : { "data-value": node.attrs.value }),
+      }],
     },
   },
   marks: {

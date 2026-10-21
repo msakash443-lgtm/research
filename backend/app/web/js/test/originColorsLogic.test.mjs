@@ -29,3 +29,9 @@ test("blocked localStorage getter falls back without throwing", () => {
   });
   assert.equal(originStorage(globalObject), null);
 });
+
+test("the toggle write path (originStorage + writeOriginColors) survives a throwing localStorage getter", () => {
+  const globalObject = {};
+  Object.defineProperty(globalObject, "localStorage", { get() { throw new Error("blocked"); } });
+  assert.doesNotThrow(() => writeOriginColors(originStorage(globalObject), "p1", false));
+});

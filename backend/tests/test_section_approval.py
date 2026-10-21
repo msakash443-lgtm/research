@@ -85,6 +85,23 @@ def test_approving_freezes_the_ai_share_from_the_current_report(writer):
     assert body["stale"] is False
 
 
+def test_approving_works_from_a_report_that_excluded_the_ai_and_produced_sections(writer):
+    # X.31.24: the researcher can hide the "AI contributions"/"How produced" sections from a report's display,
+    # but the full breakdown is always kept on the row (section_approval.py reads it directly), so approval
+    # still freezes the correct ai_share_pct/ai_shares regardless of what the report chose to show.
+    response = writer.client.post(
+        f"/api/projects/{writer.project_id}/provenance-reports",
+        json={"scope": "section", "document_id": writer.intro, "sections": ["pasted", "statement", "limits"]},
+    )
+    assert response.status_code == 201, response.text
+    assert "ai" not in response.json()["report"] and "shares" not in response.json()["report"]
+
+    approval = writer.client.post(f"/api/projects/{writer.project_id}/documents/{writer.intro}/approve").json()
+    assert approval["ai_share_pct"] == 0.0
+    assert approval["ai_shares"]["typed"] == 100.0
+
+
+
 def test_approving_a_second_time_writes_a_new_row_not_an_edit(writer):
     _report(writer.client, writer.project_id, writer.intro)
     first = writer.client.post(f"/api/projects/{writer.project_id}/documents/{writer.intro}/approve").json()

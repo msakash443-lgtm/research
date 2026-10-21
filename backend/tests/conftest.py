@@ -98,6 +98,7 @@ class FakeLLMEndpoint:
 
     def __init__(self):
         self.requests = []
+        self.sleeps = []
         self.handler = lambda request: chat_reply("Fake answer [S1].")
 
     def respond(self, request):
@@ -132,4 +133,6 @@ def fake_llm(monkeypatch):
         return httpx.Client(transport=transport, **kwargs)
 
     monkeypatch.setattr(llm, "httpx", types.SimpleNamespace(Client=client_factory, HTTPError=httpx.HTTPError))
+    # Retry backoff (X.109) is recorded, not slept.
+    monkeypatch.setattr(llm, "_sleep", endpoint.sleeps.append, raising=False)
     return endpoint

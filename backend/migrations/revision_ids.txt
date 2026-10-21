@@ -87,3 +87,9 @@
 20261019_0080 robustness_checks
 20261019_0081 section_approvals
 20261019_0082 interpretation_findings
+20261019_0083 project_archived_at
+20261020_0084 provenance_report_sections
+20261020_0085 extraction_ai_fields
+20261020_0086 source_language
+20261020_0087 deviation_logs
+20261022_0088 qual_suggestion_provenance

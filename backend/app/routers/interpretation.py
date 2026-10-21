@@ -3,7 +3,10 @@
 `app.interpretation_map` does the real work: generating the map from stored analysis runs and verified
 extractions, persisting it as an append-only batch, and tracking whether a person has confirmed each
 finding. Nothing here lets an AI confirm a finding, and G9 itself refuses to approve until every finding
-in the current batch is confirmed (`routers/gates.py::_OWN_GATE_ROW`, EC-12.3).
+in the current batch is confirmed (`routers/gates.py::_OWN_GATE_ROW`, EC-12.3). The discussion-draft
+suggestion itself is withheld until G9 is approved: `POST /draft` returns 409 until then. Once G9 is
+approved, the map it approved is frozen: regenerating it or reviewing a finding is refused until G9 is
+reopened, so the approval never sits over findings no person confirmed.
 """
 
 from __future__ import annotations
@@ -18,10 +21,10 @@ from pydantic import BaseModel, ConfigDict
 
 from sqlalchemy.orm import Session
 
-from app import audit, interpretation, interpretation_map
+from app import audit, gates, interpretation, interpretation_map
 from app.database import get_db
 from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_access
-from app.models import InterpretationFinding, Project, User
+from app.models import GateCode, InterpretationFinding, Project, User
 from app.suggestion_store import create_suggestion
 
 router = APIRouter(prefix="/projects/{project_id}/interpretation", tags=["interpretation"])
@@ -66,6 +69,16 @@ def _finding_read(db: Session, row: InterpretationFinding) -> FindingRead:
     )
 
 
+def _refuse_if_g9_approved(db: Session, project: Project) -> None:
+    """The map G9 approved can't change under it: a new batch or a later dispute would leave the gate
+    approved over findings nobody confirmed (review 2026-10-20)."""
+    if gates.gate_is_approved(db, project.id, GateCode.G9):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Gate G9 is approved, so the findings map it approved can't change; reopen G9 first",
+        )
+
+
 @router.post("/generate", response_model=list[FindingRead], status_code=status.HTTP_201_CREATED)
 def generate_findings(
     project: Project = Depends(project_access(WRITE_ROLES)),
@@ -74,6 +87,7 @@ def generate_findings(
 ) -> list[FindingRead]:
     """Build a fresh findings-to-literature map from every stored analysis run and this project's
     verified extractions, and persist it as a new append-only batch."""
+    _refuse_if_g9_approved(db, project)
     actor = audit.user_actor(user)
     try:
         rows = interpretation_map.generate_map(db, project, actor=actor)
@@ -115,6 +129,7 @@ def review_finding(
     row = interpretation_map.finding_in_project(db, project.id, finding_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="finding not found")
+    _refuse_if_g9_approved(db, project)
     actor = audit.user_actor(user)
     interpretation_map.record_review(db, project.id, row, decision=body.decision, reviewed_by=actor, note=body.note)
     audit.record(
@@ -141,13 +156,26 @@ def draft_discussion(
     items with `stat`/`cite` nodes only, never free prose numbers. Deterministically assembled from
     already-computed classifications (`model_id="deterministic"`): nothing here asks a model to judge
     agreement. The suggestion must be accepted, edited or discarded by a person like any other AI
-    proposal (`app.section_draft`'s pattern); it is never written to a document automatically."""
+    proposal (`app.section_draft`'s pattern); it is never written to a document automatically.
+
+    Refuses until G9 is approved: the discussion text is the written interpretation of the results, so
+    it is never released before a person has approved that interpretation (EC-12.3's confirmed findings
+    map), the same ordering the gate itself enforces for the map's reviews."""
+    if not gates.gate_is_approved(db, project.id, GateCode.G9):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Gate G9 must be approved before the discussion draft can be released",
+        )
     batch = interpretation_map.current_batch(db, project.id)
     if not batch:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="no findings-to-literature map has been generated yet; generate one first",
         )
+    # G9 approved is not enough on its own: the batch drafted from must still be the fully confirmed one.
+    readiness = interpretation_map.g9_readiness(db, project.id)
+    if not readiness.ready:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=readiness.reason)
     items = [interpretation_map.to_item(row) for row in batch]
     content = interpretation.draft_content(items)
     actor = audit.user_actor(user)

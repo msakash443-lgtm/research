@@ -97,6 +97,20 @@ input:focus,textarea:focus,select:focus { outline:2px solid #b9dfd8; border-colo
 .evidence-excerpt,.source-locator,.empty-card p,.run-card p { color:var(--muted); line-height:1.55; margin:7px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; }
 .evidence-excerpt { border-left:3px solid #c8e4de; padding-left:11px; }
 .source-locator { font-size:13px; }
+.usage-notice { margin:8px 0; padding:8px 11px; border-radius:6px; font-size:13px; font-weight:650; }
+.usage-near { background:#fff4d6; color:#8a5a00; }
+.usage-over { background:#fbe3e0; color:#a3332b; }
+.screen-evidence { margin-top:10px; }
+.screen-evidence blockquote { margin:6px 0; padding:6px 10px; border-left:3px solid var(--teal); background:var(--warm); }
+.confidence-high { color:var(--teal); font-weight:650; }
+.confidence-medium { color:#8a5a00; font-weight:650; }
+.confidence-low { color:#a3332b; font-weight:650; }
+mark { background:#fff1b8; }
+.coverage { margin:6px 0; }
+.coverage-badge { display:inline-block; padding:2px 9px; border-radius:999px; font-size:12px; font-weight:700; background:var(--warm); }
+.coverage-good { color:var(--teal); }
+.coverage-warn { color:#8a5a00; }
+.coverage-bad { color:#a3332b; }
 .provenance-badge { display:grid; grid-template-columns:max-content minmax(0,1fr); gap:3px 12px; margin:10px 0 0; padding:9px 11px; border:1px solid var(--line); border-radius:6px; background:var(--warm); font-size:13px; }
 .provenance-badge dt { color:var(--muted); font-weight:650; }
 .provenance-badge dd { margin:0; color:var(--ink); overflow-wrap:anywhere; }
@@ -380,10 +394,15 @@ dialog .helper { margin:0; }
 .screen-conflict-list { padding-left:18px; }
 
 /* Shared AI suggestion panel (X.46.4). */
-.suggestion-panel { display:grid; gap:14px; border-style:dashed; }
+.suggestion-panel { display:grid; grid-template-columns:minmax(0,1fr); gap:14px; border-style:dashed; }
 .suggestion-toggle { display:flex; align-items:center; gap:6px; font-weight:500; white-space:nowrap; }
 .suggestion-toggle input { width:auto; }
-.suggestion-card { border:1px solid var(--line); border-radius:8px; padding:12px 14px; background:white; }
+.suggestion-panel { min-width:0; }
+.suggestion-panel .section-title { flex-wrap:wrap; gap:8px 16px; }
+.suggestion-panel .section-title h2 { min-width:0; overflow-wrap:anywhere; }
+.suggestion-evidence li { overflow-wrap:anywhere; }
+.suggestion-card { border:1px solid var(--line); border-radius:8px; padding:12px 14px; background:white; min-width:0; }
+.suggestion-card p { overflow-wrap:anywhere; }
 .suggestion-card.suggestion-accepted { border-color:var(--teal); }
 .suggestion-card.suggestion-discarded,.suggestion-card.suggestion-superseded,.suggestion-card.suggestion-locked { opacity:.75; }
 .suggestion-text { margin:0 0 8px; white-space:pre-wrap; overflow-wrap:anywhere; }
@@ -420,6 +439,9 @@ dialog .helper { margin:0; }
 .write-editor { background:white; border:1px solid var(--line); border-radius:10px; padding:18px 22px; min-height:320px; }
 .write-prose { outline:none; min-height:280px; line-height:1.65; font-size:1.02rem; }
 .write-prose p { margin:.6em 0; }
+.write-word-diff del { color:#9b1c1c; text-decoration:line-through; }
+.write-word-diff ins { color:#0b4f8a; text-decoration:underline; }
+.sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
 .prov-typed { background: color-mix(in srgb, var(--surface) 72%, var(--accent)); }
 .prov-pasted { background: color-mix(in srgb, var(--surface) 72%, var(--warning)); border-bottom:2px dashed #8a5a00; }
 .prov-from_note { background: color-mix(in srgb, var(--surface) 72%, var(--c2)); }
@@ -438,6 +460,12 @@ dialog .helper { margin:0; }
 .write-panel-body li { margin:6px 0; }
 .write-focus .write-panel, .write-focus .write-sections { display:none; }
 .write-flag { border-left:3px solid var(--line); padding-left:10px; }
+/* cite/stat are atom nodes (editor/schema.js) with no text content of their own; without a content rule they
+   render as empty spans. `cite` shows the linked source id; `stat` shows its path and the value cached at
+   insertion time (numberPanelLogic.js::statAttrs) — the ledger/export always re-resolve the real value server side. */
+.cite,.stat { display:inline-block; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.85em; background:var(--warm); border:1px solid var(--line); border-radius:4px; padding:0 4px; margin:0 1px; }
+.cite::before { content:"@" attr(data-source-id); }
+.stat::before { content:attr(data-path) "=" attr(data-value); }
 .unlinked-statement { text-decoration:underline dotted; text-decoration-color:var(--muted, #888); text-underline-offset:3px; }
 .write-passage-form { display:grid; gap:6px; margin-top:8px; }
 .write-passages { margin-top:6px; }
@@ -464,6 +492,9 @@ dialog .helper { margin:0; }
 .inbox-actions select,.promote-form select,.decision-project select { padding:6px 8px; border:1px solid var(--line); border-radius:7px; max-width:100%; }
 .promote-form { width:100%; display:grid; gap:10px; border-top:1px solid var(--line); padding-top:10px; }
 .promote-form label,.decision-project { display:grid; gap:4px; font-size:14px; }
+.note-edit-compare { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:10px; }
+.note-edit-compare pre { margin:0; white-space:pre-wrap; padding:8px; border:1px solid var(--line); border-radius:7px; }
+.note-edit-conflict { display:grid; gap:8px; }
 .promote-form textarea { min-height:4.5em; padding:8px; border:1px solid var(--line); border-radius:7px; }
 .decision-row { background:#fff; }
 .decision-content { margin:0; font-weight:650; color:var(--navy); overflow-wrap:anywhere; }

@@ -1,9 +1,11 @@
 """Performance budgets from spec §10 (plan X.19), checked as regression tests.
 
-* Screening: ≥ 1,000 abstracts/hour AI-assisted. The model call is the slow part and it is not
-  measured here (no real model in tests). What this proves is the budget the application code
-  leaves for it: prompt building, the decision and audit writes and the per-source commit must take
-  well under the 3.6 s each abstract gets at 1,000/hour.
+* Screening: AI-assisted throughput. Owner decision 2026-10-21: the 1,000/hour third-party-API
+  target is dropped; the reference is the measured local Ollama rate of 113.8 abstracts/hour
+  (`milestone-reports/X.19-real-model-benchmark-2026-10-19.md`), i.e. 31.6 s per abstract. The model
+  call is the slow part and it is not measured here (no real model in tests). What this proves is the
+  budget the application code leaves for it: prompt building, the decision and audit writes and the
+  per-source commit must take under 1% of the 31.6 s each abstract gets at the reference rate.
 * Full-text indexing: 500 papers in under one hour. "Indexing" here is what M2.7.3 does for a stored
   PDF: `extract_pdf_text` (page and section anchors) plus a quote lookup, which M3.4 relies on.
 
@@ -29,7 +31,8 @@ from app.prescreen import run_prescreen
 from test_fulltext import make_pdf
 
 SCREEN_COUNT = 1000
-SCREEN_BUDGET_PER_HOUR = 1000
+SCREEN_BUDGET_PER_HOUR = 113.8
+MAX_APP_OVERHEAD_SHARE = 0.01
 FULLTEXT_COUNT = 500
 FULLTEXT_BUDGET_SECONDS = 3600
 
@@ -38,9 +41,9 @@ class CyclingLLM(OpenAICompatibleLLM):
     """The real adapter (schema validation included) with the HTTP call replaced by a fixed rotation of answers."""
 
     ANSWERS = [
-        {"decision": "include", "reason_code": "I1", "confidence": 0.9, "rationale": "Empirical study."},
-        {"decision": "exclude", "reason_code": "E1", "confidence": 0.95, "rationale": "Opinion piece."},
-        {"decision": "maybe", "reason_code": None, "confidence": 0.5, "rationale": "Unclear from the abstract."},
+        {"decision": "include", "reason_code": "I1", "confidence": 0.9, "rationale": "Empirical study.", "evidence_quote": "Benchmark paper"},
+        {"decision": "exclude", "reason_code": "E1", "confidence": 0.95, "rationale": "Opinion piece.", "evidence_quote": "Benchmark paper"},
+        {"decision": "maybe", "reason_code": None, "confidence": 0.5, "rationale": "Unclear from the abstract.", "evidence_quote": None},
     ]
 
     def __init__(self):
@@ -69,7 +72,7 @@ def _screening_project() -> uuid.UUID:
 
 
 @pytest.mark.slow
-def test_screening_leaves_the_model_most_of_the_1000_per_hour_budget():
+def test_screening_leaves_the_model_nearly_all_of_the_local_rate_budget():
     pid = _screening_project()
     abstract = "We study how teams share knowledge across projects using a survey of 412 engineers. " * 8
     with SessionLocal() as db:
@@ -93,10 +96,10 @@ def test_screening_leaves_the_model_most_of_the_1000_per_hour_budget():
         assert stored is not None
 
     per_hour = SCREEN_COUNT / elapsed * 3600
-    per_abstract_budget = 3600 / SCREEN_BUDGET_PER_HOUR
+    per_abstract_budget = 3600 / SCREEN_BUDGET_PER_HOUR * MAX_APP_OVERHEAD_SHARE
     assert elapsed / SCREEN_COUNT < per_abstract_budget, (
-        f"app-side overhead {elapsed / SCREEN_COUNT * 1000:.1f} ms per abstract; the budget leaves "
-        f"{per_abstract_budget:.1f} s each for the model call at {SCREEN_BUDGET_PER_HOUR}/hour "
+        f"app-side overhead {elapsed / SCREEN_COUNT * 1000:.1f} ms per abstract; the budget allows "
+        f"{per_abstract_budget * 1000:.0f} ms ({MAX_APP_OVERHEAD_SHARE:.0%} of the time each abstract gets at {SCREEN_BUDGET_PER_HOUR}/hour) "
         f"(measured {per_hour:.0f}/hour without model latency)"
     )
 

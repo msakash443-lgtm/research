@@ -87,23 +87,32 @@ function knownItemsBox(ctx) {
 // on ctx.cache so toggling sort/filter below does not refetch. `min_citations=0` asks the server for
 // every record (a threshold of 0 hides nothing, see app/citation_rank.py): the hiding/sorting itself
 // is done client-side with citationSortFilterLogic.js, same rules as the server's.
+// A failed request is reported as `failure` and is NOT cached, so the next render retries it; it is
+// never shown as an empty result list.
 async function fetchSearchResultRecords(ctx, searches) {
   ctx.cache = ctx.cache || {};
   ctx.cache.searchResults = ctx.cache.searchResults || {};
   const cache = ctx.cache.searchResults;
   const keyed = searches.map((s) => ({ s, key: `${s.search_id}:${s.version}` }));
   const missing = keyed.filter(({ key }) => !(key in cache));
+  let failure = null;
   if (missing.length) {
     const fetched = await Promise.all(
       missing.map(({ s }) =>
-        request(projectApi(ctx.project.id, `/searches/${s.search_id}/results?version=${s.version}&min_citations=0`)).catch(() => null)
+        request(projectApi(ctx.project.id, `/searches/${s.search_id}/results?version=${s.version}&min_citations=0`)).then(
+          (body) => ({ body }),
+          (error) => ({ error })
+        )
       )
     );
     missing.forEach(({ key }, i) => {
-      cache[key] = fetched[i];
+      if (fetched[i].error) failure = failure || fetched[i].error;
+      else cache[key] = fetched[i].body;
     });
   }
-  return keyed.flatMap(({ s, key }) => (cache[key]?.results || []).map((r) => ({ ...r, database: s.database })));
+  if (failure) return { records: [], failure };
+  const records = keyed.flatMap(({ s, key }) => (cache[key]?.results || []).map((r) => ({ ...r, database: s.database })));
+  return { records, failure: null };
 }
 
 // Raw search-result records ranked/filtered by citation count (M2.13.2), so a researcher can spot
@@ -112,7 +121,11 @@ async function fetchSearchResultRecords(ctx, searches) {
 async function searchResultsBox(ctx, searches, rerender) {
   const box = el("div", { className: "panel" });
   box.append(el("h2", { text: "Search results by citation" }));
-  const records = await fetchSearchResultRecords(ctx, searches);
+  const { records, failure } = await fetchSearchResultRecords(ctx, searches);
+  if (failure) {
+    box.append(el("p", { className: "warning-text", text: `Could not load the search results (${failure.message || "request failed"}). Reload this step to try again.` }));
+    return box;
+  }
   if (records.length === 0) {
     box.append(el("p", { className: "muted small", text: "No stored result records for these searches yet." }));
     return box;

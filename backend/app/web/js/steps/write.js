@@ -4,8 +4,9 @@ import { request, projectApi } from "../api.js";
 import { errorCard } from "./common.js";
 import { schema } from "../editor/schema.js";
 import { AI_INSERT_META, PROVENANCE_META, newSid, provenancePlugin, resolvePaste, spansOf, summarize } from "../editor/provenance.js";
-import { aiLevel } from "../aiLevels.js";
+import { aiLevel, draftInsertAllowed } from "../aiLevels.js";
 import { suggestionPanel } from "../suggestion.js";
+import { withSeparators, wordDiff } from "../wordDiffLogic.js";
 import { clearDraft, loadDraft, saveDraft } from "../editor/draft.js";
 import { planConflictResolution, textOf } from "../editor/conflictLogic.js";
 import { flagsFor, institutionalCheck, summaryLine } from "../similarityLogic.js";
@@ -766,7 +767,7 @@ async function openSection(root, ctx, section) {
         input.addEventListener("change", () => {
           s.originColors = input.checked;
           editorEl.classList.toggle("origin-colors-off", !s.originColors);
-          writeOriginColors(window.localStorage, ctx.project.id, s.originColors);
+          writeOriginColors(originStorage(window), ctx.project.id, s.originColors);
         });
         labelNode.append(input, document.createTextNode(" Show origin colours"));
         return labelNode;
@@ -903,8 +904,30 @@ async function openSection(root, ctx, section) {
       targetId: section.id,
       onChange: mountResults,
       extraActions: insertActions,
+      extraContent: diffContent,
     });
     if (s.resultsEl === host) host.replaceChildren(panel);
+  }
+
+  // M6.8: on a clearer-wording card, show what the proposal changes against the text selected now. Client-side only;
+  // nothing is stored. The label says "current selection", so an old card is not read as a diff of the sent text.
+  function diffContent(suggestion) {
+    if (suggestion.action !== "clearer_sentence") return [];
+    const { from, to } = s.view.state.selection;
+    const current = s.view.state.doc.textBetween(from, to, "\n").trim();
+    if (!current) return [el("p", { className: "muted small", text: "Select the sentence to see the changes against it." })];
+    const shown = suggestion.state === "accepted" ? suggestion.accepted_text : suggestion.content;
+    const parts = withSeparators(wordDiff(current, shown)).map((segment) => {
+      if (segment.type === "same" || segment.type === "sep") return document.createTextNode(segment.text);
+      const label = segment.type === "del" ? "removed: " : "added: ";
+      return el(segment.type === "del" ? "del" : "ins", {
+        children: [el("span", { className: "sr-only", text: label }), document.createTextNode(segment.text)],
+      });
+    });
+    return [
+      el("p", { className: "muted small", text: "Changes against the current selection:" }),
+      el("p", { className: "write-word-diff", attrs: { "aria-label": "Word changes against the current selection" }, children: parts }),
+    ];
   }
 
   function insertActions(suggestion) {
@@ -915,6 +938,7 @@ async function openSection(root, ctx, section) {
       return [insert];
     }
     if (suggestion.action === "draft") {
+      if (!draftInsertAllowed(ctx.project.ai_involvement)) return [];
       const insert = el("button", { type: "button", className: "quiet-button", text: "Insert at cursor" });
       insert.addEventListener("click", () => insertDraftAccepted(suggestion));
       return [insert];

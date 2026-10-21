@@ -1,6 +1,7 @@
 import { el, emptyCard, toast } from "../dom.js";
 import { request, projectApi } from "../api.js";
 import { provenanceBadge } from "../provenance.js";
+import { coverageBadge } from "./common.js";
 import { suggestionPanel } from "../suggestion.js";
 
 function show(value) {
@@ -22,7 +23,7 @@ async function renderReview(root, ctx, item) {
     src: `${base}/pdf`, title: `Stored PDF for ${item.title}`, loading: "lazy"
   } }));
   const fieldsPane = el("section", { className: "panel" });
-  fieldsPane.append(el("h2", { text: "Extraction review" }),
+  fieldsPane.append(el("h2", { text: "Extraction review" }), coverageBadge(item.coverage),
     el("p", { className: "muted small", text: `${extraction.schema_version} · ${extraction.verified_by_human ? "Verified by a person" : "Awaiting human verification"}` }));
   if (extraction.extracted_by === "ai") fieldsPane.append(provenanceBadge({
     producer: "AI extraction", model: extraction.model_id, promptVersion: extraction.prompt_version,
@@ -42,7 +43,11 @@ async function renderReview(root, ctx, item) {
     if (field.critical && !extraction.verified_by_human) {
       const label = el("label", { className: "verification-check" });
       const input = el("input", { type: "checkbox", attrs: { value: field.key } });
-      label.append(input, document.createTextNode(` I checked ${field.key} against the PDF${span ? "" : " and confirmed it is not reported"}`));
+      const notReported = extraction.fields_json[field.key] === null || extraction.fields_json[field.key] === undefined;
+      input.dataset.notReported = notReported ? "true" : "false";
+      label.append(input, document.createTextNode(notReported
+        ? ` I searched the PDF and confirm ${field.key} is not reported in this paper`
+        : ` I checked ${field.key} against the PDF`));
       card.append(label);
       checks.push(input);
     }
@@ -55,7 +60,10 @@ async function renderReview(root, ctx, item) {
     verify.addEventListener("click", async () => {
       verify.disabled = true;
       try {
-        await request(`${base}/verify`, { method: "POST", body: JSON.stringify({ confirmed_critical_fields: checks.map((input) => input.value) }) });
+        await request(`${base}/verify`, { method: "POST", body: JSON.stringify({
+          confirmed_critical_fields: checks.map((input) => input.value),
+          confirmed_not_reported_fields: checks.filter((input) => input.dataset.notReported === "true").map((input) => input.value)
+        }) });
         toast("Extraction verified by you.");
         await render(root, ctx);
       } catch (error) { toast(error.message); verify.disabled = false; }

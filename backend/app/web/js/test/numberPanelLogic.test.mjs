@@ -44,6 +44,6 @@ test("the run label is the id's first 8 characters", () => {
   assert.equal(runLabel(""), "");
 });
 
-test("stat attrs carry exactly the run id and path, nothing else", () => {
-  assert.deepEqual(statAttrs(OPTIONS[0]), { analysis_run_id: "run-1", path: "descriptives.age.mean" });
+test("stat attrs carry the run id, path and the value shown in the panel", () => {
+  assert.deepEqual(statAttrs(OPTIONS[0]), { analysis_run_id: "run-1", path: "descriptives.age.mean", value: 34.2 });
 });

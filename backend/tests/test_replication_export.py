@@ -148,6 +148,40 @@ def test_every_table_is_either_exported_or_excluded_with_a_reason():
     assert Note.__tablename__ in excluded  # notes are per-user
 
 
+def test_the_package_carries_known_items_recall_report_and_bibtex_of_verified_sources_only(world):
+    """X.8.4: the reproducibility files the spec asks for, identical to what the live endpoints return;
+    only metadata-verified sources reach the .bib (plan rule 24)."""
+    owner, pid = world["owner"], world["pid"]
+    seed = owner.post(f"/api/projects/{pid}/seeds", json={"title": "A Known Gold Paper", "year": 2020})
+    assert seed.status_code in (200, 201), seed.text
+    verified = owner.post(f"/api/projects/{pid}/sources", json={
+        "title": "Verified Paper", "authors": ["Smith, Jo"], "year": 2021, "doi": "10.1000/verified"}).json()["id"]
+    with SessionLocal() as db:
+        from app.models import Source
+
+        db.get(Source, uuid.UUID(verified)).metadata_verified = True
+        db.commit()
+    archive = download(world)
+    names = set(archive.namelist())
+    assert {"derived/known_items.json", "derived/recall_report.json", "derived/references.bib"} <= names
+    assert json.loads(archive.read("derived/known_items.json")) == owner.get(f"/api/projects/{pid}/known-items").json()
+    recall = json.loads(archive.read("derived/recall_report.json"))
+    assert recall == owner.get(f"/api/projects/{pid}/recall-report").json()
+    assert (recall["gold_papers"], recall["status"], recall["meets_target"]) == (1, "not_searched", None)  # no search ran: not a pass
+    bib = archive.read("derived/references.bib").decode()
+    assert "Verified Paper" in bib and "10.1000/verified" in bib
+    assert "HYPERLINK" not in bib  # the unverified source from the fixture is left out
+    manifest = json.loads(archive.read("manifest.json"))
+    assert {"derived/known_items.json", "derived/recall_report.json", "derived/references.bib"} <= set(manifest["files"])
+
+
+def test_an_empty_gold_set_still_gives_a_package_with_all_three_files(world):
+    archive = download(world)
+    assert archive.read("derived/references.bib") == b""  # fixture source is unverified
+    assert json.loads(archive.read("derived/recall_report.json"))["status"] == "no_gold_set"
+    assert "derived/known_items.json" in archive.namelist()
+
+
 def test_the_export_carries_kappa_and_the_conflicts_it_was_computed_from(world):
     """Two reviewers on four sources: they agree on three (include, include, exclude), disagree on one.
     Hand-computed: p_o = 3/4; p_a(include) = 3/4, p_b(include) = 2/4, so p_e = 3/4*2/4 + 1/4*2/4 = 1/2 and

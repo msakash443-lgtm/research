@@ -4,13 +4,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app import audit, research_types
+from app import audit, project_lifecycle, research_types
 from app.agent.context import select_agent_context
 from app.ai_item_locks import CONTEXT_ITEM_KIND, locked_ids
 from app.database import get_db
 from app.gates import new_gates
 from app.dependencies import MANAGE_ROLES, READ_ROLES, WRITE_ROLES, current_user, project_access
 from app.models import ContextKind, Gate, GateStatus, Project, ProjectMember, ProjectRole, ResearchContextItem, ProjectStage, User
+from app.object_storage import ObjectStorageError
 from app.schemas import ContextItemCreate, ContextItemRead, ProjectCreate, ProjectRead, ResearchTypeRead, ResearchTypeUpdate
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -48,11 +49,18 @@ def update_research_type(
 
 
 @router.get("", response_model=list[ProjectRead])
-def list_projects(user: User = Depends(current_user), db: Session = Depends(get_db)):
+def list_projects(
+    include_archived: bool = Query(default=False),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
     member_of = select(ProjectMember.project_id).where(ProjectMember.user_id == user.id)
-    return db.scalars(
-        select(Project).where(or_(Project.owner_id == user.id, Project.id.in_(member_of))).order_by(Project.updated_at.desc())
-    ).all()
+    query = select(Project).where(or_(Project.owner_id == user.id, Project.id.in_(member_of)))
+    if not include_archived:
+        # Archived projects are read-only and hidden from the default list (X.4.7.3); `GET
+        # /{id}` still returns one directly, for the owner's export/audit access.
+        query = query.where(Project.archived_at.is_(None))
+    return db.scalars(query.order_by(Project.updated_at.desc())).all()
 
 
 @router.post("", response_model=ProjectRead, status_code=status.HTTP_201_CREATED)
@@ -117,3 +125,57 @@ def add_context(
     db.commit()
     db.refresh(item)
     return item
+
+
+@router.post("/{project_id}/archive", response_model=ProjectRead)
+def archive_project_route(
+    project: Project = Depends(project_access(MANAGE_ROLES, allow_archived=True)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Owner-only, reversible read-only state transition (X.4.7.3). Hidden from the default
+    project list once set; `POST .../unarchive` restores it."""
+    try:
+        project_lifecycle.archive_project(db, project, user)
+    except project_lifecycle.ArchiveBlocked as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    db.commit()
+    db.refresh(project)
+    return project
+
+
+@router.post("/{project_id}/unarchive", response_model=ProjectRead)
+def unarchive_project_route(
+    project: Project = Depends(project_access(MANAGE_ROLES, allow_archived=True)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        project_lifecycle.unarchive_project(db, project, user)
+    except project_lifecycle.ArchiveBlocked as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    db.commit()
+    db.refresh(project)
+    return project
+
+
+@router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_project_route(
+    project: Project = Depends(project_access(MANAGE_ROLES, allow_archived=True)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Owner-only hard delete (X.4.7.3, Q23). Refuses with 409 while the project still has any
+    append-only-guarded audit/history row (see `app/project_lifecycle.py`); archiving is the
+    normal way to retire a project with real activity."""
+    try:
+        project_lifecycle.delete_project(db, project, user)
+    except project_lifecycle.DeletionBlocked as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except ObjectStorageError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Stored files could not be deleted; the project was not deleted. Try again.",
+        ) from exc
+    db.commit()

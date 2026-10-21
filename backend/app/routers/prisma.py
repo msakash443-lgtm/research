@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Any
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app import prisma
+from app import discipline, prisma, reporting_checklists
 from app.database import get_db
 from app.dependencies import READ_ROLES, project_access
 from app.models import Project
@@ -17,3 +18,14 @@ router = APIRouter(prefix="/projects/{project_id}/prisma", tags=["prisma"])
 def get_prisma_flow(project: Project = Depends(project_access(READ_ROLES)), db: Session = Depends(get_db)) -> dict[str, Any]:
     """PRISMA flow numbers computed from the stored search runs (read-only)."""
     return prisma.flow_counts(db, project)
+
+
+@router.get("/checklist")
+def get_reporting_checklist(project: Project = Depends(project_access(READ_ROLES))) -> dict[str, Any]:
+    """The reporting-guideline checklist for the project's effective guideline (read-only).
+
+    `shipped` is false when the guideline has no checklist written in the app yet; `items` is then empty.
+    """
+    guideline = discipline.effective_settings(project.discipline, project.config_json).reporting_guideline
+    items = reporting_checklists.checklist_for(guideline)
+    return {"guideline": guideline, "shipped": items is not None, "items": [asdict(item) for item in items or ()]}

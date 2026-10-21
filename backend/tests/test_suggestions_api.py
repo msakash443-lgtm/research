@@ -166,6 +166,16 @@ def test_ask_again_without_a_producer_is_refused_and_changes_nothing():
     assert row["state"] == "pending" and len(client.get(_url(p) + "?show_discarded=true").json()) == 1
 
 
+def test_the_list_says_whether_ask_again_has_a_producer_for_the_suggestion_kind(monkeypatch):
+    client, p = _owner()
+    _suggest(p)
+    [row] = client.get(_url(p)).json()
+    assert row["can_ask_again"] is False  # no producer registered for "demo" (X.98)
+    monkeypatch.setitem(suggestion_store.PRODUCERS, "demo", lambda db, previous, fenced: None)
+    [row] = client.get(_url(p)).json()
+    assert row["can_ask_again"] is True
+
+
 def test_ask_again_replaces_the_suggestion_and_sends_the_guidance_fenced_as_untrusted(monkeypatch):
     seen = []
 

@@ -9,13 +9,14 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import active_learning, ai_quality, audit, suggestion_store, suggestions
+from app import active_learning, ai_quality, audit, fulltext_coverage, suggestion_store, suggestions
 from app.ai_controls import require_ai_on
 from app.artifacts import register_artifact
 from app.config import get_settings
 from app.database import get_db
 from app.lookups import live_source_or_404
 from app.dependencies import APPROVE_ROLES, MANAGE_ROLES, READ_ROLES, WRITE_ROLES, current_user, project_access, project_role
+from app.prescreen import confidence_level
 from app.models import AiSuggestion, AutoExcludeAudit, Project, ProjectRole, ProjectStage, ScreeningDecision, SeedCheckRun, Source, Task, TaskStatus, User
 from app.task_handlers import SCREENING_PRESCREEN, SEED_FALSE_EXCLUSION_CHECK
 from app.task_queue import enqueue_task
@@ -116,6 +117,8 @@ class SuggestionRead(BaseModel):
     reason_code: str | None
     confidence: float | None
     rationale: str | None
+    evidence_quote: str | None = None  # words of the title/abstract the AI says decided it, checked to be there (X.77)
+    evidence_source: str | None = None  # "title" or "abstract"
     @model_serializer
     def _serialize(self) -> dict:
         result = {
@@ -124,11 +127,24 @@ class SuggestionRead(BaseModel):
             "confidence": self.confidence,
             "rationale": self.rationale,
         }
+        if self.confidence is not None:
+            result["confidence_level"] = confidence_level(self.confidence)
+        if self.evidence_quote:
+            result["evidence_quote"] = self.evidence_quote
+            result["evidence_source"] = self.evidence_source
         if self.id is not None:
             result["id"] = self.id
         if self.state is not None:
             result["state"] = self.state
         return result
+
+
+def _stored_evidence(shared: AiSuggestion | None) -> dict[str, str]:
+    """The quote the pre-screen stored next to its suggestion, when it gave one (second evidence item, X.77)."""
+    for item in (shared.evidence_json or [])[1:] if shared else []:
+        if isinstance(item, dict) and isinstance(item.get("quote"), str) and item["quote"]:
+            return {"evidence_quote": item["quote"], "evidence_source": item.get("source") if isinstance(item.get("source"), str) else "abstract"}
+    return {}
 
 
 class QueueItem(BaseModel):
@@ -140,6 +156,7 @@ class QueueItem(BaseModel):
     abstract: str | None  # untrusted text from a connector: show it as text only
     fulltext_access: dict | None = None  # full-text stage only: last fetch/upload outcome, so a reviewer can find the PDF
     found_via: dict | None = None  # e.g. snowballing: which paper, direction and round (M1.9.2)
+    coverage: dict | None = None  # full text / abstract only / not accessible (X.76)
     ai_suggestion: SuggestionRead | None  # a suggestion only; it never counts as a decision
 
 
@@ -367,7 +384,7 @@ def get_queue(
             QueueItem(
                 source_id=source.id, title=source.title, authors=source.authors, year=source.year, doi=source.doi,
                 abstract=source.abstract, fulltext_access=source.fulltext_access if stage == "full_text" else None,
-                found_via=source.found_via,
+                found_via=source.found_via, coverage=fulltext_coverage.coverage(source),
                 ai_suggestion=SuggestionRead(
                     id=shared.id if shared else None,
                     state=suggestions.state_of(event.kind for event in shared.events) if shared else None,
@@ -375,6 +392,7 @@ def get_queue(
                     reason_code=suggestion.reason_code if suggestion else None,
                     confidence=suggestion.confidence if suggestion else None,
                     rationale=suggestion.note if suggestion else None,
+                    **_stored_evidence(shared),
                 ) if suggestion or shared else None,
             )
         )

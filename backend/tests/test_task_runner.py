@@ -3,6 +3,7 @@ import threading
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -183,6 +184,40 @@ def test_the_worker_loop_runs_tasks_and_no_longer_claims_runs_directly():
     assert "run_one_task" in source and "reap_expired_tasks" in source
     assert "claim_next_run" not in source and "reap_stale_runs" not in source
 
+def _quiet_worker(monkeypatch):
+    # Stub the sweeps and the poll interval so the loop runs without a database.
+    for name in ("reap_expired_tasks", "release_gated_tasks", "sweep_due_query_alerts", "sweep_run_snapshot_retention"):
+        monkeypatch.setattr(worker, name, lambda: 0)
+    monkeypatch.setattr(worker, "get_settings", lambda: SimpleNamespace(research_worker_poll_seconds=0))
+
+
+def test_a_database_error_in_one_loop_pass_does_not_stop_the_worker(monkeypatch):
+    _quiet_worker(monkeypatch)
+    stop = threading.Event()
+    calls = []
+
+    def flaky_pass():
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("database connection dropped")
+        stop.set()
+        return False
+
+    monkeypatch.setattr(worker, "run_one_task", flaky_pass)
+    worker.run_forever(stop)
+
+    assert len(calls) == 2  # the error was logged and the loop carried on to the next pass
+
+
+def test_a_stop_request_ends_the_worker_before_it_claims_more_work(monkeypatch):
+    _quiet_worker(monkeypatch)
+    stop = threading.Event()
+    stop.set()  # e.g. SIGTERM arrived while the previous task was finishing
+    monkeypatch.setattr(worker, "run_one_task", lambda: pytest.fail("must not claim new work after a stop request"))
+
+    worker.run_forever(stop)
+
+
 
 # ---- research runs on the queue ----------------------------------------------------------
 
@@ -362,6 +397,24 @@ def test_a_refused_heartbeat_marks_the_task_lost_without_a_database_check(monkey
     monkeypatch.setattr(q, "owns_task", lambda *a, **k: pytest.fail("must not need the database"))
     with pytest.raises(registry.TaskOwnershipLost):
         task.ensure_owned()
+
+def test_the_heartbeat_stops_renewing_once_the_type_max_run_time_has_passed(monkeypatch):
+    # A hung handler must not hold its task forever: past the limit the lease is left to expire,
+    # so the reaper can hand the task to another worker.
+    task = ClaimedTask(uuid.uuid4(), uuid.uuid4(), "hung", None, 1)
+    renewals = []
+    monkeypatch.setattr(task_runner, "heartbeat", lambda task_id, attempt: renewals.append(attempt) or True)
+    stop = threading.Event()  # never set: the handler is still running
+    beat = threading.Thread(
+        target=task_runner._heartbeat_loop, args=(task, stop, 0.01), kwargs={"max_run_seconds": 0.1}, daemon=True
+    )
+    beat.start()
+    beat.join(timeout=3)
+
+    assert not beat.is_alive()
+    assert len(renewals) >= 1 and not task.lost.is_set()
+    stop.set()
+
 
 
 def test_a_worker_that_lost_its_task_reports_nothing(temp_handlers):

@@ -7,7 +7,8 @@
 // This module is the first real caller of `offlineOutbox.js`'s `resolveConflict` (built for X.31.5's note-capture
 // outbox but never wired to anything that returns a 409 there): a document conflict reuses the same mine/theirs/both
 // decision instead of a second implementation. `resolveConflict` works on a `body` string, so this bridges a
-// ProseMirror `content_json` doc to plain text for the decision and, for "both", back to a doc.
+// ProseMirror `content_json` doc to plain text for the decision; "both" then merges the two docs themselves
+// (`mergeBoth`) so every run keeps its provenance mark.
 import * as PM from "../../vendor/prosemirror/prosemirror.bundle.js";
 import { schema } from "./schema.js";
 import { resolveConflict as resolveOutboxConflict } from "../offlineOutbox.js";
@@ -23,14 +24,35 @@ export function textOf(contentJson) {
   }
 }
 
-// A minimal paragraph-per-line doc built from plain text, used for the "both" merge's combined content. It carries
-// no provenance marks: the merge is a starting point the researcher keeps editing, not a finished, attributed save.
-function docFromLines(text) {
-  const lines = text.split("\n").filter((line) => line.length > 0);
-  const paragraphs = (lines.length ? lines : [""]).map((line) => ({
-    type: "paragraph", content: line ? [{ type: "text", text: line }] : [],
-  }));
-  return { type: "doc", content: paragraphs };
+// Every span id (`prov.attrs.sid`) used by a text run in a doc.
+function spanIds(node, ids = new Set()) {
+  const sid = node.type === "text" ? (node.marks || []).find((mark) => mark.type === "prov")?.attrs?.sid : null;
+  if (sid) ids.add(sid);
+  for (const child of node.content || []) spanIds(child, ids);
+  return ids;
+}
+
+// `node` without the text runs whose span is already in the saved version, or null when no text of its own is left.
+// Blocks keep their other inline nodes (citations, numbers) only when some local text survives with them.
+function localOnly(node, savedIds) {
+  if (node.type === "text") {
+    const sid = (node.marks || []).find((mark) => mark.type === "prov")?.attrs?.sid;
+    return sid && savedIds.has(sid) ? null : node;
+  }
+  if (!node.content) return null;
+  const kept = node.content.map((child) => localOnly(child, savedIds)).filter(Boolean);
+  const hasText = (child) => child.type === "text" || (child.content || []).some(hasText);
+  return kept.some(hasText) ? { ...node, content: kept } : null;
+}
+
+// "Keep both" as a saveable doc: the saved version exactly as it is, then the blocks holding text only this browser
+// wrote. Every run keeps the `prov` mark it already has (the server refuses unmarked text, `ledger.validate_schema`),
+// so nothing is relabelled as the researcher's own, and runs whose span the saved version already holds are left out
+// so no span id appears twice. Relabelled merge text would misstate the writing record.
+function mergeBoth(mineContentJson, theirsContentJson) {
+  const savedIds = spanIds(theirsContentJson);
+  const mineOnly = (mineContentJson.content || []).map((block) => localOnly(block, savedIds)).filter(Boolean);
+  return { ...theirsContentJson, content: [...(theirsContentJson.content || []), ...mineOnly] };
 }
 
 // Builds what the compare view should do for one of the three choices. Returns either
@@ -41,6 +63,6 @@ export function planConflictResolution(mineContentJson, theirsContentJson, choic
   const theirs = { body: textOf(theirsContentJson) };
   const resolved = resolveOutboxConflict(mine, theirs, choice);
   if (resolved.action === "drop") return { action: "drop", content_json: theirsContentJson };
-  if (choice === "both") return { action: "retry", content_json: docFromLines(resolved.payload.body) };
+  if (choice === "both") return { action: "retry", content_json: mergeBoth(mineContentJson, theirsContentJson) };
   return { action: "retry", content_json: mineContentJson };
 }

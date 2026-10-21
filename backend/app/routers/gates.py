@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app import audit, exit_conditions, prisma, section_approval
 from app.database import get_db
 from app.extraction_verification import g4_problem
-from app.dependencies import READ_ROLES, current_user, project_access, project_role
+from app.dependencies import READ_ROLES, current_user, project_access, project_role, refuse_if_archived
 from app.artifacts import stage_index
 from app.gates import (
     GATE_STAGES, approved_later_gates, ensure_gates, pending_earlier_gates, reblock_tasks_for_gate, release_tasks_for_gate,
@@ -228,6 +228,7 @@ def approve_gate(
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
+    refuse_if_archived(project)
     return decide_gate(
         db, project, user, code, GateStatus.approved,
         payload.note if payload else None,
@@ -243,6 +244,7 @@ def reject_gate(
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
+    refuse_if_archived(project)
     return decide_gate(db, project, user, code, GateStatus.rejected, payload.note if payload else None)
 
 
@@ -260,6 +262,7 @@ def reopen_gate(
     stage the gate completes and no later gate is approved. The gate goes back to pending, queued tasks
     waiting on it are held again, and the audit log keeps the previous decision.
     """
+    refuse_if_archived(project)
     role = project_role(db, project, user)
     if role not in required_roles(code):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Gate {code.value} cannot be reopened by your role")

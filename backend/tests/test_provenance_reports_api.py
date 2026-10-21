@@ -138,6 +138,58 @@ def test_export_as_markdown_and_json(writer):
     assert "# Writing provenance report" in markdown.text
     assert as_json.json()["id"] == report_id
 
+def test_a_report_includes_every_section_by_default():
+    client, user_id = _login("sections.default@example.org")
+    project_id = _project(client)
+    intro = _document(project_id, user_id, "Introduction", 1)
+    assert _save(client, project_id, intro, _doc(_typed("Remote work changed wages.", "s1", user_id)), 0).status_code == 201
+
+    body = _report(client, project_id, scope="section", document_id=intro).json()
+
+    assert sorted(body["included_sections"]) == ["ai", "limits", "pasted", "produced", "statement"]
+    assert "shares" in body["report"] and "sessions" in body["report"]
+    assert "ai" in body["report"] and "pasted" in body["report"] and "limits" in body["report"]
+    assert body["statement_text"]
+    markdown = client.get(f"/api/projects/{project_id}/provenance-reports/{body['id']}?format=md").text
+    for heading in ("How the saved text was produced", "AI contributions", "Pasted and quoted material", "AI-use statement", "What this report cannot show"):
+        assert heading in markdown
+
+
+def test_excluded_sections_are_omitted_from_json_and_markdown():
+    client, user_id = _login("sections.exclude@example.org")
+    project_id = _project(client)
+    intro = _document(project_id, user_id, "Introduction", 1)
+    assert _save(client, project_id, intro, _doc(_typed("Remote work changed wages.", "s1", user_id)), 0).status_code == 201
+
+    response = _report(client, project_id, scope="section", document_id=intro, sections=["produced", "limits"])
+    assert response.status_code == 201, response.text
+    body = response.json()
+
+    assert sorted(body["included_sections"]) == ["limits", "produced"]
+    assert "shares" in body["report"] and "sessions" in body["report"] and "limits" in body["report"]
+    assert "ai" not in body["report"] and "pasted" not in body["report"]
+    assert body["statement_text"] == ""
+
+    markdown = client.get(f"/api/projects/{project_id}/provenance-reports/{body['id']}?format=md").text
+    assert "How the saved text was produced" in markdown and "What this report cannot show" in markdown
+    assert "AI contributions" not in markdown
+    assert "Pasted and quoted material" not in markdown
+    assert "AI-use statement" not in markdown
+
+    as_json = client.get(f"/api/projects/{project_id}/provenance-reports/{body['id']}").json()
+    assert sorted(as_json["included_sections"]) == ["limits", "produced"]
+    assert "ai" not in as_json["report"]
+
+
+def test_sections_must_be_non_empty_when_given(writer):
+    response = _report(writer.client, writer.project_id, scope="section", document_id=writer.intro, sections=[])
+    assert response.status_code == 422
+
+
+def test_unknown_section_name_is_rejected(writer):
+    response = _report(writer.client, writer.project_id, scope="section", document_id=writer.intro, sections=["not_a_section"])
+    assert response.status_code == 422
+
 
 def test_saving_a_covered_section_marks_its_report_stale(writer):
     client, project_id = writer.client, writer.project_id

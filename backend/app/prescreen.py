@@ -38,21 +38,25 @@ from app.prompt_registry import Prompt, load_prompt
 from app.screening import ai_human_agreement, ai_suggestion, autoexclude_threshold, check_reason, final_decision, next_seq, rows_for_stage, screenable_sources
 from app.untrusted_text import clean_untrusted
 
-PRESCREEN_PROMPT = ("screening_prescreen", 1)
+PRESCREEN_PROMPT = ("screening_prescreen", 2)
 AI_DECIDER = "agent:prescreen"
 MAX_TITLE_CHARS = 300
 MAX_ABSTRACT_CHARS = 4000
 MAX_RATIONALE_CHARS = 600
+MAX_QUOTE_CHARS = 300
+HIGH_CONFIDENCE = 0.8
+MEDIUM_CONFIDENCE = 0.5
 
 SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["decision", "reason_code", "confidence", "rationale"],
+    "required": ["decision", "reason_code", "confidence", "rationale", "evidence_quote"],
     "properties": {
         "decision": {"enum": ["include", "exclude", "maybe"]},
         "reason_code": {"type": ["string", "null"], "maxLength": 10},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
         "rationale": {"type": "string", "minLength": 1, "maxLength": MAX_RATIONALE_CHARS},
+        "evidence_quote": {"type": ["string", "null"], "maxLength": MAX_QUOTE_CHARS},
     },
 }
 
@@ -70,6 +74,8 @@ class Suggestion:
     model_id: str | None
     prompt_ref: str
     flags: tuple[str, ...]  # instruction-like text etc. found in the record
+    evidence_quote: str | None = None  # words of the record that decided it, checked to be really there (X.77)
+    evidence_source: str | None = None  # "title" or "abstract": where that quote was found
 
 
 def load_prescreen_prompt() -> Prompt:
@@ -82,6 +88,28 @@ def _criteria_text(criteria: list[ScreeningCriterion]) -> str:
         lines.append(f"{heading}:")
         lines.extend(f"- {c.code}: {c.text}" for c in criteria if c.kind == kind)
     return "\n".join(lines)
+
+
+def confidence_level(confidence: float | None) -> str | None:
+    """A plain label for a confidence number, shown next to a suggestion (X.77): high, medium or low."""
+    if confidence is None:
+        return None
+    return "high" if confidence >= HIGH_CONFIDENCE else "medium" if confidence >= MEDIUM_CONFIDENCE else "low"
+
+
+def locate_quote(quote: str, title: str, abstract: str | None) -> tuple[str, str] | None:
+    """Where `quote` appears word for word in the record, as (source, the record's own spelling), or None.
+
+    Whitespace and letter case are ignored (a model often capitalises the start of a sentence); the words are not."""
+    wanted = " ".join(quote.split()).casefold()
+    if not wanted:
+        return None
+    for source, text in (("title", title), ("abstract", abstract or "")):
+        flat = " ".join(text.split())
+        at = flat.casefold().find(wanted)
+        if at >= 0:
+            return source, flat[at : at + len(wanted)]
+    return None
 
 
 def build_prompts(prompt: Prompt, criteria: list[ScreeningCriterion], source: Source, nonce: str) -> tuple[str, str, tuple[str, ...]]:
@@ -107,6 +135,7 @@ def prescreen_source(
     nonce = secrets.token_hex(8)
     system_prompt, user_prompt, flags = build_prompts(prompt, criteria, source, nonce)
     reply = llm.complete_json(system_prompt, user_prompt, SCHEMA)
+    quote_text = reply.get("evidence_quote")
     leaked = check_answer(str(reply.get("rationale", "")), system_prompt=system_prompt, nonce=nonce)
     if "<<<" in reply["rationale"]:
         leaked = leaked or "the record markers"
@@ -118,12 +147,22 @@ def prescreen_source(
     problem = check_reason(decision, reason, {c.code: c.kind for c in criteria})
     if problem:
         raise PrescreenError(f"The model's answer was rejected: {problem}")
+    evidence_quote = evidence_source = None
+    if quote_text is not None and quote_text.strip():
+        title_text = clean_untrusted(source.title, MAX_TITLE_CHARS).text
+        abstract_text = clean_untrusted(source.abstract, MAX_ABSTRACT_CHARS).text if source.abstract else None
+        found = locate_quote(quote_text, title_text, abstract_text)
+        if found is None:
+            raise PrescreenError("The model's answer was rejected: its evidence quote is not in the record's title or abstract.")
+        evidence_source, evidence_quote = found
+    elif decision in ("include", "exclude"):
+        raise PrescreenError(f"The model's answer was rejected: it suggested '{decision}' without an evidence quote from the record.")
     rationale = " ".join(reply["rationale"].split())
     confidence = float(reply["confidence"])
     if confidence < min_confidence and decision != "maybe":
         rationale = f"Low confidence ({confidence:.2f}): the model first answered '{decision}'. {rationale}"[:MAX_RATIONALE_CHARS + 120]
         decision, reason = "maybe", None  # a hesitant model never suggests excluding or including
-    return Suggestion(decision, reason, confidence, rationale, llm._model, prompt.ref, flags)
+    return Suggestion(decision, reason, confidence, rationale, llm._model, prompt.ref, flags, evidence_quote, evidence_source)
 
 
 @dataclass
@@ -216,6 +255,7 @@ def run_prescreen(
                 db, project=project, source=source, decision=suggestion.decision, reason_code=suggestion.reason_code,
                 confidence=suggestion.confidence, rationale=suggestion.rationale, model_id=suggestion.model_id,
                 prompt_version=suggestion.prompt_ref, producing_agent=AI_DECIDER.removeprefix("agent:"),
+                evidence_quote=suggestion.evidence_quote, evidence_source=suggestion.evidence_source,
             )
             if project.ai_autoexclude_enabled and ai_quality.is_autoexclude_eligible(suggestion.decision, suggestion.confidence, threshold):
                 ordinal = db.scalar(
@@ -255,4 +295,4 @@ def run_prescreen(
     return result
 
 
-__all__ = ["PRESCREEN_PROMPT", "AI_DECIDER", "PrescreenError", "PrescreenResult", "Suggestion", "prescreen_source", "run_prescreen", "build_prompts"]
+__all__ = ["PRESCREEN_PROMPT", "AI_DECIDER", "PrescreenError", "PrescreenResult", "Suggestion", "confidence_level", "locate_quote", "prescreen_source", "run_prescreen", "build_prompts"]

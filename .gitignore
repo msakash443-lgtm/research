@@ -1,6 +1,8 @@
 # Databases
 *.db
 *.db.bak
+*.db.bak*
+omp-session-*.html
 
 # Python
 __pycache__/
@@ -19,6 +21,9 @@ venv/
 # Scratch pytest dirs (M3 work)
 .pytest-m3-*/
 .pytest-*/
+
+# Local review scratch output
+local-review-*.txt
 
 # Node dev dependencies (JS tests)
 node_modules/

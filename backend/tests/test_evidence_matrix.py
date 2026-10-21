@@ -109,3 +109,23 @@ def test_xlsx_removes_xml_forbidden_controls_from_valid_text():
     with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
         tree = ElementTree.fromstring(archive.read("xl/worksheets/sheet1.xml"))
         assert any(node.text == "ABC" for node in tree.iter() if node.text)
+
+
+def _link_for(client, project, source, **fields):
+    with SessionLocal() as db:
+        row = db.get(Source, uuid.UUID(source))
+        for name, value in fields.items():
+            setattr(row, name, value)
+        db.commit()
+    cells = client.get(f"/api/projects/{project}/evidence-matrix").json()["papers"][0]["cells"]
+    links = {cell["original_url"] for cell in cells.values()}
+    assert len(links) == 1  # every cell of a paper points at the same original
+    return links.pop()
+
+
+def test_every_cell_links_to_the_original_paper_by_doi_then_page_and_never_a_script():
+    client, project, source = _world()
+    assert _link_for(client, project, source) is None  # no DOI or URL: no link, the UI says so
+    assert _link_for(client, project, source, url="javascript:alert(1)") is None
+    assert _link_for(client, project, source, url="https://publisher.example/paper/1") == "https://publisher.example/paper/1"
+    assert _link_for(client, project, source, doi="https://doi.org/10.1234/ABC.5") == "https://doi.org/10.1234/abc.5"

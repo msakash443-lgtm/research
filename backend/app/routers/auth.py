@@ -2,7 +2,7 @@ from typing import Any
 
 from authlib.integrations.starlette_client import OAuth
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -12,6 +12,7 @@ from app.database import get_db
 from app.dependencies import session_user
 from app.erasure import ErasureBlocked, erase_account
 from app.models import ExternalIdentity, User
+from app.personal_data_export import export_personal_data
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
@@ -116,6 +117,17 @@ def logout_everywhere(request: Request, db: Session = Depends(get_db)):
     user.session_epoch += 1
     db.commit()
     request.session.clear()
+
+
+@router.get("/export-my-data")
+def export_my_data(request: Request, db: Session = Depends(get_db)):
+    """Download the signed-in user's own personal data as JSON (X.4.8); each export is audited."""
+    user = session_user(request, db)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not signed in")
+    data = export_personal_data(db, user)
+    db.commit()
+    return JSONResponse(data, headers={"Content-Disposition": 'attachment; filename="my-personal-data.json"'})
 
 
 class EraseAccount(BaseModel):

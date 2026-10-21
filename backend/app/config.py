@@ -2,7 +2,7 @@ import ipaddress
 import os
 import re
 from functools import lru_cache
-from typing import Any, get_args
+from typing import Any, Literal, get_args
 from urllib.parse import parse_qs, urlsplit
 
 from pydantic import Field, SecretStr, model_validator
@@ -60,7 +60,10 @@ def _file_secret_fields(settings_cls: type[BaseSettings]) -> list[str]:
 
 class Settings(BaseSettings):
     database_url: str = "sqlite:///./research_ai.db"
-    environment: str = "development"
+    # Required, and exactly one of these (X.105): the production checks run only for "production", so any
+    # other value (a typo, a different case, "prod") refuses to start instead of silently running without
+    # them. No default: an unset value would otherwise turn on the development and X-User-Id logins.
+    environment: Literal["development", "production"]
     session_secret: SecretStr = SecretStr("development-only-change-me")
     # Browser session lifetime (X.4.3). Starlette's own default is 14 days.
     session_max_age_seconds: int = Field(default=14 * 24 * 60 * 60, gt=0)
@@ -122,6 +125,10 @@ class Settings(BaseSettings):
     # clears `ResearchRun.input_snapshot` for finished runs (completed/failed/needs_sources/needs_configuration)
     # whose `completed_at` is older than this many days. The answer text, status and audit trail are untouched.
     research_run_snapshot_retention_days: int | None = Field(default=None, ge=1)
+    # X.4.10: installation-wide privacy profile (app/privacy_profiles/<name>.toml) and the region the database
+    # and object store are hosted in. The profile supplies defaults; an explicit setting above wins.
+    privacy_profile: str = "default"
+    data_residency_region: str | None = None
     task_lease_seconds: int = 300
     task_retry_base_seconds: int = 5
     task_retry_max_seconds: int = 300
@@ -280,8 +287,19 @@ class Settings(BaseSettings):
             key = self.pseudonym_key.get_secret_value().strip()
             if not key or key.startswith("replace-with-"):
                 raise ValueError("PSEUDONYM_KEY must be a real secret, or left unset; the example placeholder is not a key")
+            if len(key) < 16:
+                raise ValueError("PSEUDONYM_KEY must be at least 16 characters; a short key can be guessed and reverses pseudonyms")
+        from app.privacy_profile import PrivacyProfileError, load_privacy_profile, residency_problem
+
+        try:
+            privacy = load_privacy_profile(self.privacy_profile)
+        except PrivacyProfileError as exc:
+            raise ValueError(str(exc)) from None
         if self.environment != "production":
             return self
+        problem = residency_problem(privacy, self.data_residency_region)
+        if problem:
+            raise ValueError(problem)
 
         secret = self.session_secret.get_secret_value()
         placeholders = {"", "development-only-change-me", "replace-with-a-long-random-value"}

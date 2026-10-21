@@ -79,6 +79,15 @@ class BlockingFinding:
     kind: str
     subject: str
     message: str
+    # Why an unverified citation is unverifiable: the citation verifier's last verdict (`mismatch`, `not_found`,
+    # `unavailable`, `incomplete`) or `not_checked` when no check was ever stored. None for other kinds.
+    verification: str | None = None
+
+
+def verification_verdict(verification: dict[str, Any] | None) -> str:
+    """The stored citation-verifier verdict of a source, or `not_checked` when it was never checked."""
+    verdict = (verification or {}).get("verdict")
+    return verdict if isinstance(verdict, str) and verdict else "not_checked"
 
 
 def export_blockers(db: Session, project_id: uuid.UUID, sections: list[tuple[Document, dict[str, Any]]]) -> list[BlockingFinding]:
@@ -88,10 +97,15 @@ def export_blockers(db: Session, project_id: uuid.UUID, sections: list[tuple[Doc
         report = section_report(db, project_id, document, content)
         for finding in report.findings:
             if finding.kind in BLOCKING_KINDS:
+                verification = None
+                if finding.kind == "unverified_citation":
+                    source_id = _uuid_or_none(finding.subject)
+                    source = db.get(Source, source_id) if source_id is not None else None
+                    verification = verification_verdict(source.verification if source is not None else None)
                 out.append(
                     BlockingFinding(
                         document_id=str(document.id), document_title=document.title,
-                        kind=finding.kind, subject=finding.subject, message=finding.message,
+                        kind=finding.kind, subject=finding.subject, message=finding.message, verification=verification,
                     )
                 )
     return out

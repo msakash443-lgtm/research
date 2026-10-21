@@ -116,6 +116,15 @@ def test_ai_text_must_match_the_accepted_proposal():
     assert codes(ledger.check_integrity(EMPTY, after, actor="u1", **ai)) == ["ai_text_mismatch"]
 
 
+def test_below_full_a_new_ai_span_is_refused_but_a_saved_or_restored_one_is_kept():
+    span = doc(block(run("The accepted sentence.", "a", origin="ai_suggested", sug="s1")))
+    ai = {"accepted": {"s1": "The accepted sentence."}, "suggestion_texts": [], "citable_source_ids": set()}
+
+    assert codes(ledger.check_integrity(EMPTY, span, actor="u1", ai_wording_allowed=False, **ai)) == ["ai_wording_not_allowed"]
+    assert ledger.check_integrity(span, span, actor="u1", ai_wording_allowed=False, **ai) == []
+    assert ledger.check_integrity(EMPTY, span, actor="u1", restored=span, ai_wording_allowed=False, **ai) == []
+
+
 def test_accepted_ai_text_that_matches_is_allowed():
     after = doc(block(run("The accepted sentence.", "a", origin="ai_edited", sug="s1")))
     ai = {"accepted": {"s1": "The accepted sentence."}, "suggestion_texts": [], "citable_source_ids": set()}
@@ -261,3 +270,23 @@ def test_typed_text_is_never_matched_as_a_paste():
     typed = doc(block(run("women carry most unpaid care work, and this shapes who can work full time.", "p", origin="typed")))
 
     assert ledger.detect_pasted(EMPTY, typed, [("source", "src-1", SOURCE_TEXT)]) == {}
+
+
+def test_a_client_sent_stat_value_is_replaced_by_the_number_the_run_holds():
+    outputs = {"run1": {"results": {"pearson_r": 0.41}}}
+    forged = doc(block({"type": "stat", "attrs": {"analysis_run_id": "run1", "path": "results.pearson_r", "value": 0.99}}))
+
+    pinned = ledger.pin_stat_values(forged, outputs)
+
+    assert pinned["content"][0]["content"][0]["attrs"]["value"] == 0.41
+    assert forged["content"][0]["content"][0]["attrs"]["value"] == 0.99  # the input is not mutated
+
+
+def test_a_stat_value_for_a_path_that_does_not_resolve_is_dropped_and_then_refused():
+    outputs = {"run1": {"results": {"pearson_r": 0.41}}}
+    forged = doc(block({"type": "stat", "attrs": {"analysis_run_id": "run1", "path": "results.nope", "value": 0.99}}))
+
+    pinned = ledger.pin_stat_values(forged, outputs)
+
+    assert "value" not in pinned["content"][0]["content"][0]["attrs"]
+    assert codes(ledger.check_integrity(EMPTY, pinned, actor="u1", number_run_outputs=outputs, **NO_AI)) == ["unresolved_number"]

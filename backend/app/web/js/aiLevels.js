@@ -18,6 +18,12 @@ export function aiLevel(value) {
   return AI_LEVELS.find((level) => level.value === value) || AI_LEVELS[1];
 }
 
+// Q27: only the Full level lets AI wording into the manuscript. A drafted paragraph is AI wording, so it may be
+// inserted only then; at Suggestions only it stays on screen as a suggestion.
+export function draftInsertAllowed(value) {
+  return value === "full";
+}
+
 export const AI_ROUTES = [
   { value: "standard", label: "Standard model" },
   { value: "local", label: "Local model only" },

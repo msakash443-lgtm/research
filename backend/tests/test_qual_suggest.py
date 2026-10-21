@@ -74,3 +74,16 @@ def test_a_blank_excerpt_is_refused_before_any_model_call():
     with pytest.raises(qs.SuggestionError):
         qs.suggest_codes(llm, {}, "   ")
     assert llm.calls == []
+
+
+def test_the_request_uses_the_pinned_registry_prompt():
+    # X.121: the wording lives in a versioned prompt file, so a stored prompt_version names the exact text sent.
+    from app.prompt_registry import load_prompt
+
+    prompt = load_prompt(*qs.PROMPT)
+    llm = FakeLLM("[]")
+    qs.suggest_codes(llm, {"trust": "belief in others"}, EXCERPT)
+    system, user = llm.calls[0]
+    assert system == prompt.system
+    assert user == prompt.render_user(codebook="- trust: belief in others", excerpt=EXCERPT)
+    assert f'at most {qs.MAX_SUGGESTIONS} codes' in prompt.system

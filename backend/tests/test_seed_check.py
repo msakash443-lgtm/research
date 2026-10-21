@@ -89,7 +89,7 @@ class KeyedLLM(OpenAICompatibleLLM):
 
 
 def answer(decision="include", reason=None, confidence=0.9):
-    return {"decision": decision, "reason_code": reason, "confidence": confidence, "rationale": "Because."}
+    return {"decision": decision, "reason_code": reason, "confidence": confidence, "rationale": "Because.", "evidence_quote": LONG}
 
 
 @pytest.fixture
@@ -152,10 +152,10 @@ def test_a_source_set_to_never_for_this_item_is_not_sent_to_the_model_and_is_rep
 
 def test_the_run_records_the_model_prompt_and_settings_and_audits_it_with_ids_and_counts_only(world):
     run, _ = check(world, {"ALPHA": answer(), "BRAVO": answer(), "CHARLIE": answer()})
-    assert (run.model_id, run.prompt_version, run.min_confidence, run.autoexclude_threshold) == ("test-model", "screening_prescreen@1", 0.6, 0.9)
+    assert (run.model_id, run.prompt_version, run.min_confidence, run.autoexclude_threshold) == ("test-model", "screening_prescreen@2", 0.6, 0.9)
     with SessionLocal() as db:
         event = db.scalar(select(AuditEvent).where(AuditEvent.action == "screening.seed_check_run", AuditEvent.project_id == uuid.UUID(world["pid"])))
-    assert event.model_id == "test-model" and event.prompt_version == "screening_prescreen@1"
+    assert event.model_id == "test-model" and event.prompt_version == "screening_prescreen@2"
     assert event.payload_json == {"run_id": str(run.id), "status": "below_limit", "checked": 3, "excluded": 0, "failed": 0}
 
 
@@ -260,5 +260,5 @@ def test_the_latest_stored_run_is_returned_with_its_counts_and_provenance(world,
     run_id = uuid.uuid4()
     handlers.handle_seed_false_exclusion_check(_claimed(world, run_id, monkeypatch))
     latest = world["owner"].get(_url(world)).json()["latest"]
-    assert latest["id"] == str(run_id) and latest["model_id"] == "test-model" and latest["prompt_version"] == "screening_prescreen@1"
+    assert latest["id"] == str(run_id) and latest["model_id"] == "test-model" and latest["prompt_version"] == "screening_prescreen@2"
     assert latest["summary"]["excluded"] == 1 and latest["summary"]["rough"] is True and len(latest["entries"]) == 4

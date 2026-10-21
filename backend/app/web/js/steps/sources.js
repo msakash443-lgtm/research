@@ -8,6 +8,7 @@ import {
   buildManualOwnPaperPayload,
   buildOwnPaperLookupPayload,
   describeOwnPaperLookup,
+  describePollBudgetExhausted,
   isLookupPending,
 } from "../ownPaperLogic.js";
 
@@ -398,11 +399,15 @@ function ownPaperErrorNode(message) {
 
 function ownPaperLookupStatusNode() {
   if (!ownPaperLookup) return null;
-  return el("p", { className: `own-paper-lookup-status own-paper-lookup-${ownPaperLookup.kind} small`, text: ownPaperLookup.text });
+  const status = el("p", { className: `own-paper-lookup-status own-paper-lookup-${ownPaperLookup.kind} small`, text: ownPaperLookup.text });
+  if (!ownPaperLookup.resume) return status;
+  const checkAgain = el("button", { className: "quiet-button", text: "Check again", attrs: { type: "button" } });
+  checkAgain.addEventListener("click", () => ownPaperLookup.resume());
+  return el("div", { className: "source-actions", children: [status, checkAgain] });
 }
 
 const OWN_PAPER_LOOKUP_POLL_MS = 2500;
-const OWN_PAPER_LOOKUP_MAX_ATTEMPTS = 40; // ~100s before telling the person to check back later
+const OWN_PAPER_LOOKUP_MAX_ATTEMPTS = 40; // ~100s of polling, then the panel waits for the person to check again
 
 function pollOwnPaperLookup(ctx, taskId, statusSlot, onIncluded, attempt = 0) {
   ownPaperLookupTimer = window.setTimeout(async () => {
@@ -416,14 +421,20 @@ function pollOwnPaperLookup(ctx, taskId, statusSlot, onIncluded, attempt = 0) {
         await onIncluded();
       }
     } catch (error) {
-      if (isLookupPending(error) && attempt < OWN_PAPER_LOOKUP_MAX_ATTEMPTS) {
-        pollOwnPaperLookup(ctx, taskId, statusSlot, onIncluded, attempt + 1);
-        return;
+      if (isLookupPending(error)) {
+        if (attempt < OWN_PAPER_LOOKUP_MAX_ATTEMPTS) {
+          pollOwnPaperLookup(ctx, taskId, statusSlot, onIncluded, attempt + 1);
+          return;
+        }
+        const resume = () => {
+          ownPaperLookup = { taskId, ...describeOwnPaperLookup(null) };
+          statusSlot.replaceChildren(ownPaperLookupStatusNode());
+          pollOwnPaperLookup(ctx, taskId, statusSlot, onIncluded);
+        };
+        ownPaperLookup = { ...describePollBudgetExhausted(taskId), resume };
+      } else {
+        ownPaperLookup = { taskId, kind: "failed", text: error.message };
       }
-      ownPaperLookup = {
-        taskId, kind: "failed",
-        text: isLookupPending(error) ? "Still looking after a while; check back later." : error.message,
-      };
       statusSlot.replaceChildren(ownPaperLookupStatusNode());
     }
   }, OWN_PAPER_LOOKUP_POLL_MS);

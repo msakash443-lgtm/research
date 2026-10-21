@@ -8,6 +8,7 @@ the project's own sources. The save and restore routes in `routers/documents.py`
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import unicodedata
@@ -78,6 +79,24 @@ def content_hash(document: dict[str, Any]) -> str:
 def normalise(text: str) -> str:
     """What "the same text" means for paste detection: Unicode-normalised, case-folded, single spaces."""
     return " ".join(unicodedata.normalize("NFKC", text).casefold().split())
+
+
+def pin_stat_values(document: dict[str, Any], number_run_outputs: dict[str, Any] | None) -> dict[str, Any]:
+    """A copy of `document` whose `stat` nodes carry the number the analysis run really holds as their display
+    `value`. The editor shows `value`, so a client-sent value is never trusted: it is replaced by the resolved
+    number, or dropped when the path does not resolve (check_integrity then refuses a new unresolved number)."""
+    pinned = copy.deepcopy(document)
+    runs = number_run_outputs or {}
+    for node in _nodes(pinned):
+        if node.get("type") != "stat":
+            continue
+        attrs = node.setdefault("attrs", {})
+        number = resolve_number(runs.get(attrs.get("analysis_run_id")), attrs.get("path"))
+        if number is None:
+            attrs.pop("value", None)
+        else:
+            attrs["value"] = number
+    return pinned
 
 
 def _nodes(node: dict[str, Any]) -> Iterator[dict[str, Any]]:
@@ -227,11 +246,13 @@ def check_integrity(
     citable_source_ids: Iterable[str],
     number_run_outputs: dict[str, Any] | None = None,
     restored: dict[str, Any] | None = None,
+    ai_wording_allowed: bool = True,
 ) -> list[Problem]:
     """The rules a save must pass. `accepted` maps accepted suggestion ids to the text a person accepted;
     `suggestion_texts` is every AI output for this document; `citable_source_ids` are the project's verified,
     unmerged sources; `number_run_outputs` maps this project's `AnalysisRun` ids to their stored `output_json`.
-    Empty list means the save may be written."""
+    `ai_wording_allowed` is false below the Full AI level (Q27): a new AI span is then refused, while AI spans
+    already saved or brought back by a restore are kept. Empty list means the save may be written."""
     before = collect_spans(previous)
     after = collect_spans(new)
     restored_ids = set(collect_spans(restored)) if restored is not None else set()
@@ -249,6 +270,8 @@ def check_integrity(
             problems.append(Problem("foreign_author", f"span {sid} was written by someone else"))
         if span.origin in AI_ORIGINS:
             problems.extend(_ai_span_problems(span, accepted))
+            if not ai_wording_allowed and sid not in before and sid not in restored_ids:
+                problems.append(Problem("ai_wording_not_allowed", f"AI span {sid} needs the Full AI level"))
 
     new_spans = [span for sid, span in after.items() if sid not in before]
     for span in new_spans:

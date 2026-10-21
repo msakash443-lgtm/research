@@ -49,10 +49,14 @@ APPROVE_SECTION = {"owner", "supervisor"}  # G10's required role (M6.11)
 # (method, path template, roles allowed, status for an allowed call)
 MATRIX = [
     ("GET", "/api/projects/{p}", ALL, 200),
+    ("POST", "/api/projects/{p}/archive", MANAGE, 200),  # disposable per-call project; never the shared one
+    ("POST", "/api/projects/{p}/unarchive", MANAGE, 200),  # disposable per-call project; never the shared one
+    ("DELETE", "/api/projects/{p}", MANAGE, 204),  # disposable per-call project with no audit history; never the shared one
     ("GET", "/api/projects/{p}/context", ALL, 200),
     ("POST", "/api/projects/{p}/context", WRITE, 201),
     ("GET", "/api/projects/{p}/sources", ALL, 200),
     ("GET", "/api/projects/{p}/sources/by-citations", ALL, 200),
+    ("GET", "/api/projects/{p}/prisma/checklist", ALL, 200),
     ("GET", "/api/projects/{p}/usage", ALL, 200),
     ("PUT", "/api/projects/{p}/usage/budget", MANAGE, 200),  # owner only: sets this project's own token-budget override
     ("GET", "/api/projects/{p}/ai-settings", ALL, 200),
@@ -71,6 +75,7 @@ MATRIX = [
     ("GET", "/api/projects/{p}/documents/{doc}/ledger", ALL, 200),
     ("GET", "/api/projects/{p}/documents/{doc}/outline", ALL, 200),
     ("GET", "/api/projects/{p}/documents/{doc}/link-check", ALL, 200),
+    ("GET", "/api/projects/{p}/documents/{doc}/overclaim-check", ALL, 200),
     ("POST", "/api/projects/{p}/documents/{doc}/versions", WRITE, 201),
     ("POST", "/api/projects/{p}/documents/{doc}/versions/{v}/restore", WRITE, 200),
     ("POST", "/api/projects/{p}/documents/{doc}/paragraph-from-note", WRITE, 200),
@@ -85,6 +90,9 @@ MATRIX = [
     ("POST", "/api/projects/{p}/provenance-reports", ALL, 201),
     ("GET", "/api/projects/{p}/provenance-reports", ALL, 200),
     ("GET", "/api/projects/{p}/provenance-reports/{rep}", ALL, 200),
+    ("GET", "/api/projects/{p}/provenance-reports/{rep}/ai-disclosure", ALL, 200),
+    ("GET", "/api/projects/{p}/ai-disclosure-styles", ALL, 200),
+    ("GET", "/api/projects/{p}/accuracy-report", ALL, 200),
     ("GET", "/api/projects/{p}/manuscript/export", ALL, 200),
     ("GET", "/api/projects/{p}/manuscript/statements", ALL, 200),
     ("PUT", "/api/projects/{p}/manuscript/statements", WRITE, 200),
@@ -179,6 +187,7 @@ MATRIX = [
     ("PUT", "/api/projects/{p}/extraction-schemas/{n}", WRITE, 200),
     ("GET", "/api/projects/{p}/clusters", ALL, 200),
     ("GET", "/api/projects/{p}/coverage-matrix", ALL, 200),
+    ("GET", "/api/projects/{p}/bias-warnings", ALL, 200),
     ("GET", "/api/projects/{p}/design/method-recommendation", ALL, 200),
     ("GET", "/api/projects/{p}/design/sample-size", ALL, 200),
     ("GET", "/api/projects/{p}/design/saturation-guidance", ALL, 200),
@@ -217,6 +226,9 @@ MATRIX = [
     ("POST", "/api/projects/{p}/analysis-plans/{ap}/runs/{run}/robustness", MANAGE, 404),  # M5.4.2: no run exists for the fake id in the matrix world; role gate first
     ("GET", "/api/projects/{p}/analysis-plans/{ap}/runs/{run}/robustness", ALL, 404),  # M5.4.2
     ("GET", "/api/projects/{p}/analysis-plans/{ap}/runs/{run}/notebook", ALL, 404),  # M5.4.2
+    ("GET", "/api/projects/{p}/analysis-plans/{ap}/runs/{run}/tables", ALL, 404),  # M5.8.3: no run exists for the fake id in the matrix world
+    ("POST", "/api/projects/{p}/analysis-plans/{ap}/deviation-logs", WRITE, 409),  # M5.8.4: the matrix world's plan is unlocked; role gate first
+    ("GET", "/api/projects/{p}/analysis-plans/{ap}/deviation-logs", ALL, 200),  # M5.8.4: stored logs only (none in the matrix world)
     ("POST", "/api/projects/{p}/interpretation/generate", WRITE, 409),  # M6.9: no analysis run exists in the matrix world; role gate first
     ("GET", "/api/projects/{p}/interpretation/findings", ALL, 200),
     ("POST", "/api/projects/{p}/interpretation/findings/{finding_id}/review", WRITE, 404),  # M6.9: no such finding in the matrix world; role gate first
@@ -326,6 +338,7 @@ BODIES = {
     ("POST", "/api/projects/{p}/transcripts/anonymise"): {"text": "Ann met Bo.", "terms": ["Ann"]},
     ("POST", "/api/projects/{p}/datasets/{ds}/analysis-plans"): {"tests": ["descriptives"], "variables": ["a"], "seed": 1},
     ("POST", "/api/projects/{p}/analysis-plans/{ap}/runs/{run}/robustness"): {"kind": "rerun_identity"},
+    ("POST", "/api/projects/{p}/analysis-plans/{ap}/deviation-logs"): {"actual_run_id": "00000000-0000-0000-0000-000000000000", "reasons": {}},
     ("POST", "/api/projects/{p}/research-questions"): {"text": "How does trust affect collaboration?", "type": "relational", "gap_ids": []},
     ("PATCH", "/api/projects/{p}/research-questions/{rq}"): {"type": "exploratory"},
     ("POST", "/api/projects/{p}/hypotheses"): {"research_question_id": "{rq}", "statement": "Trust predicts collaboration.", "direction": "positive", "theoretical_basis": "Theory", "empirical_support": "Evidence"},
@@ -351,7 +364,8 @@ BODIES = {
     ("PUT", "/api/projects/{p}/screening/auto-exclude"): {"enabled": True, "confidence_threshold": 0.9},
     ("PUT", "/api/projects/{p}/screening/ai-prescreen"): {"disabled": True},
     ("PUT", "/api/projects/{p}/screening/active-learning"): {"enabled": True},
-    ("POST", "/api/projects/{p}/extractions/{e}/verify"): {"confirmed_critical_fields": ["measures", "sample", "key_findings"]},
+    ("POST", "/api/projects/{p}/extractions/{e}/verify"): {"confirmed_critical_fields": ["measures", "sample", "key_findings"],
+                                                                         "confirmed_not_reported_fields": ["measures", "sample", "key_findings"]},
     ("POST", "/api/projects/{p}/extractions/ai"): {"source_id": ""},
     ("POST", "/api/projects/{p}/meta-analysis"): {"outcome": "Outcome", "primary_model": "fixed", "studies": [{"extraction_id": "00000000-0000-0000-0000-000000000001", "finding_index": 0}, {"extraction_id": "00000000-0000-0000-0000-000000000002", "finding_index": 0}]},
 }
@@ -610,6 +624,33 @@ def _seed_report(project_id, owner_id, document_id):
 
 def _call(world, principal, method, template):
     path = template.format(**world["ids"])
+    if (method, template) in (
+        ("POST", "/api/projects/{p}/archive"), ("POST", "/api/projects/{p}/unarchive"), ("DELETE", "/api/projects/{p}"),
+    ):
+        # A disposable project per call, built directly (no `project.created` audit row, so a
+        # delete call can actually succeed), membered to match the principal under test, so a
+        # real archive/unarchive/delete can never touch the shared matrix project or any other
+        # principal's row.
+        owner_user_id = world["ids"]["author"]
+        role_for = {
+            "owner_member": ProjectRole.owner, "co_author": ProjectRole.co_author,
+            "supervisor": ProjectRole.supervisor, "reviewer": ProjectRole.reviewer,
+        }
+        # Fetched before opening the DB session below: a nested TestClient call sharing the same
+        # single StaticPool SQLite connection while this session has a pending transaction corrupts it.
+        caller_id = world["clients"][principal].get("/api/auth/me").json().get("id") if principal in role_for else None
+        with SessionLocal() as db:
+            fresh = Project(owner_id=uuid.UUID(owner_user_id), title="Lifecycle matrix target")
+            db.add(fresh)
+            db.flush()
+            if caller_id is not None:
+                db.add(ProjectMember(project_id=fresh.id, user_id=uuid.UUID(caller_id), role=role_for[principal]))
+            if template == "/api/projects/{p}/unarchive":
+                fresh.archived_at = utcnow()
+            db.commit()
+            fresh_id = str(fresh.id)
+        path = path.replace(f"/projects/{world['ids']['p']}", f"/projects/{fresh_id}")
+        return world["clients"][principal].request(method, path)
     if method == "GET" and template.endswith("/stage/conditions"):
         path += "?target=scoped"
     if method == "GET" and template.endswith("/design/method-recommendation"):

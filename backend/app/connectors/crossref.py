@@ -24,6 +24,7 @@ from typing import Any
 from urllib.parse import quote
 
 from app.connectors.base import (
+    language_code,
     ConnectorBase,
     ConnectorError,
     FullText,
@@ -129,6 +130,7 @@ def to_record(item: dict[str, Any]) -> PaperRecord | None:
         source_ids={NAME: doi},
         quality_flags=tuple(flags),
         cited_by_count=citation_count(item.get("is-referenced-by-count")),
+        language=language_code(item.get("language")),
     )
 
 

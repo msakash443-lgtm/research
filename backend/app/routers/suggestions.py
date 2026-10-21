@@ -42,6 +42,7 @@ class SuggestionRead(BaseModel):
     target_id: str
     target_field: str | None
     action: str | None = None  # the workspace AI action that made it (X.31.11); None for other features
+    can_ask_again: bool  # a producer is registered for this kind, so "ask again" can answer (X.98)
     content: str
     confidence: float | None
     model_id: str
@@ -107,6 +108,7 @@ def _read(suggestion: AiSuggestion) -> SuggestionRead:
         target_id=suggestion.target_id,
         target_field=suggestion.target_field,
         action=suggestion.action,
+        can_ask_again=suggestion.target_kind in suggestion_store.PRODUCERS,
         content=suggestion.content,
         confidence=suggestion.confidence,
         model_id=suggestion.model_id,

@@ -1,5 +1,5 @@
 {
-  "screening_prescreen@1": {
+  "screening_prescreen@2": {
     "eval": "screening",
     "status": "unevaluated",
     "reason": "The gold set is empty until the scholar supplies it (plan X.15, Q10)."
@@ -9,8 +9,9 @@
     "reason": "No gold dataset type for synthesis answers yet; its citations are checked on every run by the citation guard (M1.10)."
   },
   "evidence_extraction@1": {
-    "eval": "none",
-    "reason": "No extraction gold set is available yet; field-level extraction precision and recall will be evaluated when the scholar supplies one."
+    "eval": "extraction",
+    "status": "unevaluated",
+    "reason": "The gold set has no verified extractions yet (plan X.15, Q10); run `python -m evals.run_eval extraction` once the scholar supplies them."
   },
   "synonym_suggestions@1": {
     "eval": "none",
@@ -35,5 +36,9 @@
   "section_draft@1": {
     "eval": "none",
     "reason": "Section-drafting proposals from a claim outline (X.46.8/M6.1.a, Q27 suggestions-only). No gold dataset type exists for draft prose; every draft is a shared AiSuggestion the researcher must explicitly accept, and the reply is schema- and leak-checked in code before it is ever stored."
+  },
+  "qual_code_suggestions@1": {
+    "eval": "none",
+    "reason": "Qualitative code proposals for one participant excerpt (M5.5.2, X.121). No gold dataset type exists for qualitative codes; every suggestion stays pending until a person accepts or rejects it, and the reply is schema-checked in code before it is stored."
   }
 }

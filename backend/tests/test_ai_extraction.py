@@ -182,6 +182,7 @@ def test_ai_extraction_runs_only_on_stored_pdf_and_persists_unverified_provenanc
         assert extraction is not None
         assert extraction.fields_json["research_question"] == "We study burnout among nurses."
         assert extraction.confidence_json == {"research_question": 0.93}
+        assert extraction.ai_fields_json == extraction.fields_json  # the AI's first values are kept for the accuracy report (X.80)
         assert extraction.schema_version == "project:brief@1"
         assert extraction.model_id == "fake-model" and extraction.prompt_version == "evidence_extraction@1"
         assert extraction.extracted_by == "ai" and extraction.verified_by_human is False

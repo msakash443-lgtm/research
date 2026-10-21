@@ -20,6 +20,8 @@ services:
     build: .
     env_file: .env
     environment:
+      # X.105: required, no default; `development` or `production` (copied from .env.example).
+      ENVIRONMENT: ${ENVIRONMENT:?set ENVIRONMENT in .env (development or production)}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-research_ai}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-research_ai}
       RUN_RESEARCH_INLINE: "false"
       OBJECT_STORAGE_ROOT: /data/objects
@@ -41,6 +43,7 @@ services:
     command: ["python", "-m", "app.worker"]
     env_file: .env
     environment:
+      ENVIRONMENT: ${ENVIRONMENT:?set ENVIRONMENT in .env (development or production)}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-research_ai}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-research_ai}
       RUN_RESEARCH_INLINE: "false"
       OBJECT_STORAGE_ROOT: /data/objects

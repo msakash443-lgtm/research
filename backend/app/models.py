@@ -161,6 +161,10 @@ class Project(Timestamped, Base):
     data_availability_statement: Mapped[str | None] = mapped_column(Text)
     conflict_of_interest_statement: Mapped[str | None] = mapped_column(Text)
     ethics_statement: Mapped[str | None] = mapped_column(Text)
+    # Reversible read-only state (X.4.7.3, Q23): owner-only, audited. An archived project rejects new
+    # writes (project_access blocks everything but READ_ROLES and the archive/unarchive/delete routes
+    # themselves) and is hidden from the default project list; unarchiving restores it. NULL = active.
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     owner: Mapped[User] = relationship(back_populates="projects")
     context_items: Mapped[list["ResearchContextItem"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     sources: Mapped[list["Source"]] = relationship(back_populates="project", cascade="all, delete-orphan")
@@ -315,6 +319,8 @@ class Source(Timestamped, Base):
     citation_count: Mapped[int | None] = mapped_column(Integer)
     citation_count_source: Mapped[str | None] = mapped_column(String(50))
     citation_count_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Language the service reports, as a lower-case two-letter ISO 639-1 code (X.86). NULL = not reported, never assumed.
+    language: Mapped[str | None] = mapped_column(String(2))
     project: Mapped[Project] = relationship(back_populates="sources")
     excerpts: Mapped[list["SourceExcerpt"]] = relationship(
         back_populates="source", cascade="all, delete-orphan", order_by="SourceExcerpt.created_at"
@@ -620,6 +626,10 @@ class Extraction(Timestamped, Base):
     fields_json: Mapped[dict] = mapped_column(JSON)
     evidence_spans: Mapped[dict] = mapped_column(JSON)
     confidence_json: Mapped[dict | None] = mapped_column(JSON)  # per-field confidence for AI extractions; NULL for human entries
+    # What the AI first returned (X.80). `fields_json` is overwritten by a person's edit; this copy is not, so the
+    # accuracy report can compare the AI with the person's final values. NULL for human entries and for AI rows
+    # made before the column existed (those cannot be scored).
+    ai_fields_json: Mapped[dict | None] = mapped_column(JSON)
     agreement_json: Mapped[dict | None] = mapped_column(JSON)  # second sampled extraction and field agreement; NULL when unsampled
     verified_by_human: Mapped[bool] = mapped_column(default=False, server_default=false())
     verified_by: Mapped[str | None] = mapped_column(String(100))
@@ -892,6 +902,23 @@ class RobustnessCheck(Timestamped, Base):
     created_by: Mapped[str] = mapped_column(String(100))
 
 
+class DeviationLog(Timestamped, Base):
+    """A deviation log (M5.8.4, spec 5.9): the differences between a locked, pre-registered plan and the run actually
+    made, each with the researcher's written reason. Immutable once written; the hashes freeze what was compared."""
+
+    __tablename__ = "deviation_logs"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    planned_plan_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("analysis_plans.id"), index=True)
+    actual_run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("analysis_runs.id"))
+    planned_plan_sha256: Mapped[str] = mapped_column(String(64))
+    actual_plan_sha256: Mapped[str] = mapped_column(String(64))
+    planned_dataset_sha256: Mapped[str] = mapped_column(String(64))
+    actual_dataset_sha256: Mapped[str] = mapped_column(String(64))
+    log_json: Mapped[list] = mapped_column(JSON)  # [{"key", "kind", "detail", "reason"}], as deviation_log.build_log returns
+    created_by: Mapped[str] = mapped_column(String(100))
+
+
 class ExclusionRule(Timestamped, Base):
     """A case-exclusion rule for one dataset version (M5.7.1, spec 5.8 gate). A rule is proposed, then a human with
     approve rights approves it; only approved rules can drop rows, and only through a logged cleaning version."""
@@ -929,6 +956,9 @@ class QualSuggestion(Timestamped, Base):
     code: Mapped[str] = mapped_column(String(200))
     is_new: Mapped[bool] = mapped_column(Boolean)
     rationale: Mapped[str] = mapped_column(Text)
+    # Provenance (X.121). NULL only on rows stored before these columns existed.
+    model_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    prompt_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
     status: Mapped[str] = mapped_column(String(12))  # "pending", "accepted" or "rejected"
     decided_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -1268,7 +1298,9 @@ class OwnPaperLookup(Base):
 class ProvenanceReport(Base):
     """A frozen writing provenance report (X.31.12). Append-only (enforced by `ledger_guard`): a report is never
     edited, and a regenerated report is a new row. Its Artifact (`kind="provenance_report"`) goes stale when a
-    covered section is saved again. `report_json` holds counts, ids and timestamps, never manuscript or source text."""
+    covered section is saved again. `report_json` always holds the full computed report (counts, ids and
+    timestamps, never manuscript or source text) — `included_sections` (X.31.24) is what the researcher chose to
+    show when this report was made; reads/exports narrow to it, `report_json` itself is never narrowed."""
 
     __tablename__ = "provenance_reports"
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -1281,6 +1313,13 @@ class ProvenanceReport(Base):
     statement_template: Mapped[str] = mapped_column(String(60))
     report_hash: Mapped[str] = mapped_column(String(64))
     generated_by: Mapped[str] = mapped_column(String(100))
+    # Literal, not imported from app.provenance_report.REPORT_SECTIONS: this module stays free of that import,
+    # and the two are expected to agree (test_provenance_report.py checks app.provenance_report.REPORT_SECTIONS
+    # matches this default).
+    included_sections: Mapped[list] = mapped_column(
+        JSON, default=lambda: ["produced", "ai", "pasted", "statement", "limits"],
+        server_default='["produced", "ai", "pasted", "statement", "limits"]',
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

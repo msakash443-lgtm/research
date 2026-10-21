@@ -36,14 +36,33 @@ function transaction(mode, action) {
   }));
 }
 
-export async function enqueueCapture(payload, path = "/api/notes") {
-  const item = { path, client_id: payload.client_id, payload, created_at: new Date().toISOString() };
+export async function enqueueCapture(payload, path = "/api/notes", method = "POST", clientId = payload.client_id) {
+  const item = { path, method, client_id: clientId, payload, created_at: new Date().toISOString() };
   try {
     await transaction("readwrite", (store) => store.put(item));
     return true;
   } catch {
     return false;
   }
+}
+
+// An edit made offline to a saved note: replayed as PATCH against the revision it was made from, so a
+// server-side change in the meantime surfaces as the 409 that flushOutbox hands to the conflict resolver.
+// The PATCH body is exactly the API's schema (no client_id); the outbox key is kept separately.
+export function noteEditItem(note, body) {
+  return { clientId: `edit-${note.id}-${note.revision}`, payload: { body, base_revision: note.revision } };
+}
+
+export async function enqueueNoteEdit(note, body) {
+  const { clientId, payload } = noteEditItem(note, body);
+  // A second offline edit of the same revision replaces the first: the outbox keeps one entry per client id.
+  for (const item of await listOutbox()) if (item.client_id === clientId) await removeOutbox(item.id);
+  return enqueueCapture(payload, `/api/notes/${note.id}`, "PATCH", clientId);
+}
+
+// After a keep-mine/keep-both choice the retried edit is rebased onto the server's current revision.
+export function rebaseEdit(payload, serverCopy) {
+  return serverCopy?.revision ? { ...payload, base_revision: serverCopy.revision } : payload;
 }
 
 export async function listOutbox() {
@@ -78,7 +97,7 @@ export async function flushOutbox(send, chooseConflict = () => "mine") {
   const result = { sent: 0, blocked: 0, failed: 0 };
   for (const item of items) {
     try {
-      await send(item.path, item.payload);
+      await send(item.path, item.payload, item.method || "POST");
       await removeOutbox(item.id);
       result.sent += 1;
     } catch (error) {
@@ -93,7 +112,10 @@ export async function flushOutbox(send, chooseConflict = () => "mine") {
       }
       const resolution = resolveConflict(item.payload, serverCopy, chooseConflict(item.payload, serverCopy));
       if (resolution.action === "drop") await removeOutbox(item.id);
-      else await transaction("readwrite", (store) => store.put({ ...item, payload: resolution.payload }));
+      else {
+        const payload = item.method === "PATCH" ? rebaseEdit(resolution.payload, serverCopy) : resolution.payload;
+        await transaction("readwrite", (store) => store.put({ ...item, payload }));
+      }
       result.blocked += 1;
     }
   }

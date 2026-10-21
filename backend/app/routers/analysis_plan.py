@@ -16,13 +16,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import analysis_plan as rules
-from app import analysis_runner, audit, datasets, notebook_export, robustness
+from app import analysis_runner, audit, datasets, deviation_log, journal_tables, notebook_export, robustness
 from app import robustness_suite as suite
 from app.config import get_settings
 from app.database import get_db
 from app.dependencies import MANAGE_ROLES, READ_ROLES, WRITE_ROLES, current_user, project_access
 from app.gates import gate_is_approved
-from app.models import AnalysisPlan, AnalysisRun, DatasetVersion, GateCode, Project, RobustnessCheck, User
+from app.models import AnalysisPlan, AnalysisRun, DatasetVersion, DeviationLog, GateCode, Project, RobustnessCheck, User
 from app.models import utcnow
 
 router = APIRouter(prefix="/projects/{project_id}", tags=["analysis-plans"])
@@ -440,3 +440,102 @@ def get_notebook(
     return {"plan_id": str(plan.id), "run_id": str(run.id),
             "filename": f"analysis_{str(run.id)[:8]}_notebook.ipynb", "notebook": notebook}
 
+
+
+@router.get("/analysis-plans/{analysis_plan_id}/runs/{run_id}/tables")
+def get_journal_tables(
+    analysis_plan_id: uuid.UUID,
+    run_id: uuid.UUID,
+    project: Project = Depends(project_access(READ_ROLES)),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Journal-style tables for a stored run (M5.8.3). Values are copied from the recorded output and rounded for
+    display only; nothing is recomputed or stored."""
+    run = _run(db, project, analysis_plan_id, run_id)
+    try:
+        tables = journal_tables.build_tables(run.output_json)
+    except journal_tables.TableError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    return {"run_id": str(run.id), "output_sha256": run.output_sha256, "tables": tables}
+
+
+class DeviationLogIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    actual_run_id: uuid.UUID
+    reasons: dict[str, str] = Field(default_factory=dict)
+
+
+def _deviation_log_read(row: DeviationLog) -> dict[str, Any]:
+    return {
+        "id": str(row.id),
+        "planned_plan_id": str(row.planned_plan_id),
+        "actual_run_id": str(row.actual_run_id),
+        "planned_plan_sha256": row.planned_plan_sha256,
+        "actual_plan_sha256": row.actual_plan_sha256,
+        "planned_dataset_sha256": row.planned_dataset_sha256,
+        "actual_dataset_sha256": row.actual_dataset_sha256,
+        "deviations": row.log_json,
+        "created_by": row.created_by,
+        "created_at": row.created_at.isoformat() if isinstance(row.created_at, datetime) else None,
+    }
+
+
+@router.post("/analysis-plans/{analysis_plan_id}/deviation-logs", status_code=status.HTTP_201_CREATED)
+def create_deviation_log(
+    analysis_plan_id: uuid.UUID,
+    body: DeviationLogIn,
+    project: Project = Depends(project_access(WRITE_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Record the deviations between a locked plan (the pre-registered one) and a stored run of another plan (M5.8.4).
+    Every deviation needs the researcher's reason; a missing or stray reason refuses the whole log, nothing is stored."""
+    planned = _plan(db, project, analysis_plan_id)
+    if planned.locked_at is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Lock the pre-registered analysis plan before logging deviations from it.")
+    planned_dataset = db.get(DatasetVersion, planned.dataset_id)
+    if datasets.sha256_hex(planned_dataset.content) != planned_dataset.sha256 or not _plan_intact(planned, planned_dataset):
+        raise HTTPException(status.HTTP_409_CONFLICT, "The plan or its dataset no longer matches its hash; no log is recorded.")
+    actual_run = db.scalar(select(AnalysisRun).where(AnalysisRun.id == body.actual_run_id, AnalysisRun.project_id == project.id))
+    if actual_run is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Analysis run not found in this project.")
+    actual_plan = db.get(AnalysisPlan, actual_run.analysis_plan_id)
+    try:
+        log = deviation_log.build_log(
+            planned.spec_json, actual_plan.spec_json, planned_dataset.sha256, actual_run.dataset_sha256, body.reasons,
+        )
+    except deviation_log.DeviationError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+    row = DeviationLog(
+        project_id=project.id,
+        planned_plan_id=planned.id,
+        actual_run_id=actual_run.id,
+        planned_plan_sha256=planned.plan_sha256,
+        actual_plan_sha256=actual_run.plan_sha256,
+        planned_dataset_sha256=planned_dataset.sha256,
+        actual_dataset_sha256=actual_run.dataset_sha256,
+        log_json=[{"key": d.key, "kind": d.kind, "detail": d.detail, "reason": d.reason} for d in log],
+        created_by=str(user.id),
+    )
+    db.add(row)
+    db.flush()
+    audit.record(db, actor=audit.user_actor(user), action="analysis.deviation_logged", project_id=project.id,
+                 payload={"log_id": str(row.id), "plan_id": str(planned.id), "run_id": str(actual_run.id),
+                          "deviation_count": len(log)})
+    db.commit()
+    db.refresh(row)
+    return _deviation_log_read(row)
+
+
+@router.get("/analysis-plans/{analysis_plan_id}/deviation-logs")
+def list_deviation_logs(
+    analysis_plan_id: uuid.UUID,
+    project: Project = Depends(project_access(READ_ROLES)),
+    db: Session = Depends(get_db),
+) -> list[dict[str, Any]]:
+    row = _plan(db, project, analysis_plan_id)
+    rows = db.scalars(
+        select(DeviationLog).where(DeviationLog.planned_plan_id == row.id).order_by(DeviationLog.created_at.asc())
+    ).all()
+    return [_deviation_log_read(log) for log in rows]

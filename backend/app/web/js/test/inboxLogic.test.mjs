@@ -1,6 +1,9 @@
 // Run with: node --test backend/app/web/js/test   (no packages; pytest does not run these)
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   decisionRows,
   loadDismissed,
@@ -11,6 +14,8 @@ import {
   rememberDismissed,
   suggestionChips,
   writableProjects,
+  outboxSyncChangedNotes,
+  inboxRefreshAfterSync,
 } from "../inboxLogic.js";
 
 test("only projects the caller owns or co-authors can receive a filed note", () => {
@@ -141,4 +146,61 @@ test("the promote form starts from the note's own words, and a clip starts from 
     content: "Women's LFPR fell to 32%",
     rationale: "",
   });
+});
+
+import { canEditNote, editConflict, isOfflineFailure, planNoteEdit } from "../inboxLogic.js";
+
+test("saving a note edit sends the trimmed text with the revision it was made from", () => {
+  const note = { body: "old", revision: 4, status: "inbox" };
+  assert.deepEqual(planNoteEdit(note, "  new words \n"), { action: "send", body: "new words", baseRevision: 4 });
+});
+
+test("an empty or unchanged edit is not sent", () => {
+  const note = { body: "same", revision: 2, status: "inbox" };
+  assert.deepEqual(planNoteEdit(note, "   "), { action: "invalid" });
+  assert.deepEqual(planNoteEdit(note, "same "), { action: "unchanged" });
+});
+
+test("archived notes cannot be edited", () => {
+  assert.equal(canEditNote({ status: "archived" }), false);
+  assert.equal(canEditNote({ status: "inbox" }), true);
+  assert.equal(canEditNote({ status: "filed" }), true);
+});
+
+test("only a request that never reached the server is queued offline", () => {
+  assert.equal(isOfflineFailure(new Error("Can't reach the server.")), true);
+  assert.equal(isOfflineFailure(Object.assign(new Error("x"), { status: 422 })), false);
+  assert.equal(isOfflineFailure(Object.assign(new Error("x"), { status: 409 })), false);
+});
+
+test("a stale-revision refusal exposes the server's note; other errors do not", () => {
+  const current = { id: "n1", body: "server", revision: 6 };
+  const stale = Object.assign(new Error("x"), { status: 409, detail: { code: "note_conflict", current } });
+  assert.deepEqual(editConflict(stale), { current });
+  assert.equal(editConflict(Object.assign(new Error("x"), { status: 409, detail: "other" })), null);
+  assert.equal(editConflict(Object.assign(new Error("x"), { status: 500 })), null);
+  assert.equal(editConflict(new Error("offline")), null);
+});
+
+test("an outbox sync that sent or blocked anything asks for an Inbox rerender, a quiet one does not (X.94)", () => {
+  assert.equal(outboxSyncChangedNotes({ sent: 1, blocked: 0, failed: 0 }), true);
+  assert.equal(outboxSyncChangedNotes({ sent: 0, blocked: 1, failed: 0 }), true);
+  assert.equal(outboxSyncChangedNotes({ sent: 0, blocked: 0, failed: 2 }), false);
+  assert.equal(outboxSyncChangedNotes({ sent: 0, blocked: 0, failed: 0 }), false);
+});
+
+test("after a sync the Inbox is redrawn only when it is on screen and no form is open (X.94)", () => {
+  const sent = { sent: 1, blocked: 0, failed: 0 };
+  assert.equal(inboxRefreshAfterSync(sent, { inboxHidden: false, formOpen: false }), true);
+  // The Inbox section is always in the page; a hidden one (another screen is showing) must not be redrawn.
+  assert.equal(inboxRefreshAfterSync(sent, { inboxHidden: true, formOpen: false }), false);
+  // Redrawing replaces the whole view, so an open edit or promote form would lose what the researcher typed.
+  assert.equal(inboxRefreshAfterSync(sent, { inboxHidden: false, formOpen: true }), false);
+  assert.equal(inboxRefreshAfterSync({ sent: 0, blocked: 0, failed: 1 }, { inboxHidden: false, formOpen: false }), false);
+});
+
+test("app.js hands the sync result to the Inbox instead of guarding on the always-present section (X.94)", () => {
+  const appJs = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "app.js"), "utf8");
+  assert.match(appJs, /await refreshInboxAfterSync\(result\)/);
+  assert.doesNotMatch(appJs, /&& \$\("#inbox-view"\)\)/);
 });

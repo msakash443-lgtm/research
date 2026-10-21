@@ -1,0 +1,8 @@
+name = "gdpr"
+version = 1
+label = "EU / UK GDPR"
+description = "General Data Protection Regulation. Storage limitation (Art. 5(1)(e)) means a retention period should be chosen and recorded; this profile does not choose one for you. Not legal advice."
+
+[settings]
+regulation = "GDPR"
+data_subject_request_days = 30

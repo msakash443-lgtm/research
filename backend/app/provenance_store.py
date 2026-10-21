@@ -40,26 +40,10 @@ def _suggestion_meta(db: Session, spans: Sequence[ledger.Span]) -> dict[str, dic
     return {str(row.id): {"model_id": row.model_id, "prompt_version": row.prompt_version, "action": row.action} for row in rows}
 
 
-def generate(
-    db: Session,
-    project: Project,
-    *,
-    user: User,
-    scope: str,
-    documents: Sequence[Document],
-    document_id: uuid.UUID | None,
-) -> ProvenanceReport:
-    """Write one report over the latest saved version of each document. The caller commits."""
-    covered: list[tuple[Document, DocumentVersion]] = []
-    for document in documents:
-        if document.current_version_id is None:
-            continue
-        version = db.get(DocumentVersion, document.current_version_id)
-        if version is not None:
-            covered.append((document, version))
-    if not covered:
-        raise NothingSaved()
+def span_rows_for(db: Session, covered: Sequence[tuple[Document, DocumentVersion]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Plain span rows (lengths and ids only, no text) and the saved-version history for the given section versions.
 
+    Shared by `generate` and by per-section exports (`app.ai_disclosure_formats`), so both read the same ledger."""
     per_section = [(document, version, list(ledger.collect_spans(version.content_json).values())) for document, version in covered]
     meta = _suggestion_meta(db, [span for _, _, spans in per_section for span in spans])
     span_rows: list[dict[str, Any]] = []
@@ -79,6 +63,40 @@ def generate(
                 "paste": span.paste, "source_id": span.src, "suggestion_id": span.sug if span.origin in ledger.AI_ORIGINS else None,
                 "model_id": info.get("model_id"), "prompt_version": info.get("prompt_version"), "action": info.get("action"),
             })
+    return span_rows, version_rows
+
+
+def generate(
+    db: Session,
+    project: Project,
+    *,
+    user: User,
+    scope: str,
+    documents: Sequence[Document],
+    document_id: uuid.UUID | None,
+    included_sections: Sequence[str] | None = None,
+) -> ProvenanceReport:
+    """Write one report over the latest saved version of each document. The caller commits.
+
+    `included_sections` (X.31.24, owner answer W6) is what the researcher chose to show in this report —
+    `None` means every section (today's default). The full report is always computed and stored
+    (`section_approval.py` reads `report_json["ai"]`/`["shares"]` unconditionally), so a narrower choice only
+    changes what reads/exports show back, never what this row keeps."""
+    included = tuple(included_sections) if included_sections is not None else pr.REPORT_SECTIONS
+    unknown = sorted(set(included) - set(pr.REPORT_SECTIONS))
+    if unknown:
+        raise ValueError(f"Unknown report section(s): {', '.join(unknown)}")
+    covered: list[tuple[Document, DocumentVersion]] = []
+    for document in documents:
+        if document.current_version_id is None:
+            continue
+        version = db.get(DocumentVersion, document.current_version_id)
+        if version is not None:
+            covered.append((document, version))
+    if not covered:
+        raise NothingSaved()
+
+    span_rows, version_rows = span_rows_for(db, covered)
 
     covered_rows = [
         {"document_id": str(document.id), "title": document.title, "version_id": str(version.id),
@@ -94,14 +112,14 @@ def generate(
     row = ProvenanceReport(
         project_id=project.id, scope=scope, document_id=document_id, covered_versions=covered_rows,
         report_json=report_json, statement_text=statement, statement_template=label,
-        report_hash=pr.report_hash(report_json, statement), generated_by=actor,
+        report_hash=pr.report_hash(report_json, statement), generated_by=actor, included_sections=list(included),
     )
     db.add(row)
     db.flush()
     register_artifact(db, project.id, ARTIFACT_KIND, row.id, project.stage, actor=actor)
     audit.record(db, actor=actor, action="provenance.generated", project_id=project.id,
                  payload={"report_id": str(row.id), "scope": scope, "sections": len(covered_rows),
-                          "statement_template": label, "report_hash": row.report_hash})
+                          "statement_template": label, "report_hash": row.report_hash, "included_sections": list(included)})
     return row
 
 

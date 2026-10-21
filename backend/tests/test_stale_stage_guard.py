@@ -156,6 +156,20 @@ def test_a_current_result_older_than_the_staleness_is_not_a_replacement(world):
         db.rollback()
 
 
+def test_a_current_result_of_the_same_kind_at_a_different_stage_does_not_replace_a_stale_one(world):
+    """The same kind can be registered at several stages (e.g. section drafts); only the stage that
+    produced the stale result can replace it, even when the other one is newer."""
+    _set_stage(world, S.synthesized)
+    stale_id = _artifact(world, "research_run", S.extracted)
+    _artifact(world, "research_run", S.synthesized)  # current, same kind, newer, different stage
+    with SessionLocal() as db:
+        stale = db.get(Artifact, stale_id)
+        stale.status, stale.stale_reason, stale.stale_at = ArtifactStatus.stale, "r", utcnow() - timedelta(hours=1)
+        project = db.get(Project, world["pid"])
+        assert [a.id for a in art.unreplaced_stale(db, project, S.synthesized)] == [stale_id]
+        db.rollback()
+
+
 def test_stale_results_of_later_stages_do_not_block_earlier_steps(world):
     _set_stage(world, S.gaps_selected)
     _artifact(world, "gap_list", S.gaps_selected)

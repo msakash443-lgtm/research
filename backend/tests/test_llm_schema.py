@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from app.agent.llm import LLMConfigurationError, LLMResponseError, LLMSchemaError, OpenAICompatibleLLM
+from app.agent.llm import TRANSIENT_ATTEMPTS, LLMConfigurationError, LLMResponseError, LLMSchemaError, OpenAICompatibleLLM
 from app.config import get_settings
 
 SCHEMA = {
@@ -80,7 +80,8 @@ def test_http_failure_is_not_retried_as_a_schema_problem(fake_llm):
     with pytest.raises(LLMResponseError) as info:
         _call()
     assert not isinstance(info.value, LLMSchemaError)
-    assert len(fake_llm.requests) == 1
+    # Only the transport retries of one call (X.109), not a schema retry on top of each.
+    assert len(fake_llm.requests) == TRANSIENT_ATTEMPTS
 
 
 def test_bad_schema_or_attempt_count_fails_before_any_call(fake_llm):

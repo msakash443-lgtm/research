@@ -11,6 +11,14 @@ import io
 from collections import Counter
 from itertools import combinations
 
+# Same spreadsheet formula-injection guard as replication_export.py and routers/audit.py.
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_cell(value) -> str:
+    cell = str(value)
+    return "'" + cell if cell.startswith(_FORMULA_PREFIXES) else cell
+
 
 def build(records: list[dict]) -> dict:
     """Count links once per citing source, using full counting."""
@@ -83,10 +91,10 @@ def citespace_csv(records: list[dict]) -> str:
     writer = csv.writer(output, lineterminator="\n")
     writer.writerow(["source_id", "title", "year", "authors", "doi", "keywords", "cited_references"])
     for record in records:
-        writer.writerow([
+        writer.writerow([_csv_cell(cell) for cell in (
             record["source_id"], record.get("title") or "", record.get("year") or "",
             "; ".join(record.get("authors") or []), record.get("doi") or "",
             "; ".join(record.get("keywords") or []),
             "; ".join(record.get("reference_ids") or []),
-        ])
+        )])
     return output.getvalue()

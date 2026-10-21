@@ -13,6 +13,17 @@ def test_placeholder_or_empty_pseudonym_key_refuses_startup(bad):
         Settings(_env_file=None, pseudonym_key=bad)
 
 
+
+@pytest.mark.parametrize("short", ["x", "abcdefghijklmno"])
+def test_a_pseudonym_key_shorter_than_16_characters_refuses_startup(short):
+    # X.93: a short key lets a guessed key reverse pseudonyms of common names, so the floor matches ARC_RETRIEVAL_TOKEN.
+    with pytest.raises(ValidationError, match="PSEUDONYM_KEY"):
+        Settings(_env_file=None, pseudonym_key=short)
+
+
+def test_a_pseudonym_key_of_exactly_16_characters_starts():
+    assert Settings(_env_file=None, pseudonym_key="abcdefghijklmnop").pseudonym_key is not None
+
 def test_a_real_pseudonym_key_starts_and_stays_secret():
     settings = Settings(_env_file=None, pseudonym_key="k8Qv2x0mZ-owner-chosen-key-not-a-placeholder")
     assert settings.pseudonym_key.get_secret_value().startswith("k8Qv2x0m")

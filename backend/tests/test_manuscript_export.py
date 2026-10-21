@@ -224,6 +224,7 @@ def test_export_is_blocked_by_a_citation_to_an_unverified_source(world):
     assert detail["citations"] == [{
         "document_id": doc, "document_title": "Discussion", "kind": "unverified_citation",
         "subject": world.unverified, "message": "Cited source is not verified: Unchecked claim",
+        "status": "unverifiable", "verification": "not_checked",
     }]
     with SessionLocal() as db:
         events = db.scalars(select(AuditEvent).where(AuditEvent.action == "manuscript.export_blocked",
@@ -231,6 +232,28 @@ def test_export_is_blocked_by_a_citation_to_an_unverified_source(world):
     assert [e.payload_json for e in events] == [{"format": "md", "citations": [
         {"document_id": doc, "kind": "unverified_citation", "subject": world.unverified}
     ]}]
+
+
+def test_a_blocked_citation_reports_the_verifiers_verdict(world):
+    doc = _new_document(world.project_id, world.user_id, "Discussion", 4)
+    content = {"type": "doc", "content": [{"type": "paragraph", "content": [_text("See ", "x", world.user_id), _cite(world.unverified)]}]}
+    with SessionLocal() as db:
+        source = db.get(Source, uuid.UUID(world.unverified))
+        source.metadata_verified = False
+        source.verification = {"verdict": "mismatch", "reasons": ["The year differs"]}
+        db.add(DocumentVersion(document_id=uuid.UUID(doc), project_id=uuid.UUID(world.project_id), number=1, content_json=content,
+                               content_text="See", content_hash="0" * 64, saved_by=world.user_id, client_save_id="mism"))
+        db.commit()
+
+    entry = _export(world, "json").json()["detail"]["citations"][0]
+
+    assert (entry["status"], entry["verification"]) == ("unverifiable", "mismatch")
+
+
+def test_json_references_carry_a_verified_status(world):
+    references = json.loads(_export(world, "json").text)["references"]
+
+    assert [r["verification"] for r in references] == [{"status": "verified", "method": "human"}]
 
 
 def test_export_is_blocked_by_a_citation_to_a_source_in_another_project(world):

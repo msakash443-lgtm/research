@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 import uuid
 from datetime import datetime
 
@@ -12,14 +13,19 @@ from app.config import get_settings
 from app.database import SessionLocal
 from app.gates import gate_is_approved
 from app.task_queue import block_claimed_task, claim_next_task, complete_task, fail_task, heartbeat
-from app.task_registry import REQUIRED_GATES, ClaimedTask, PermanentTaskError, TaskOwnershipLost, get_handler
+from app.task_registry import MAX_RUN_SECONDS, REQUIRED_GATES, ClaimedTask, PermanentTaskError, TaskOwnershipLost, get_handler
 
 logger = logging.getLogger(__name__)
 
 
-def _heartbeat_loop(task: ClaimedTask, stop: threading.Event, interval: float) -> None:
-    """Renew the lease while the handler runs, so a long task isn't reaped as dead."""
+def _heartbeat_loop(task: ClaimedTask, stop: threading.Event, interval: float, max_run_seconds: float | None = None) -> None:
+    """Renew the lease while the handler runs, so a long task isn't reaped as dead. Past `max_run_seconds`
+    it stops renewing, so a hung handler's lease lapses and the task is reaped and handed on (X.115)."""
+    started = time.monotonic()
     while not stop.wait(interval):
+        if max_run_seconds is not None and time.monotonic() - started >= max_run_seconds:
+            logger.warning("Task %s (%s) passed its %ss maximum run time; no longer renewing its lease", task.id, task.type, max_run_seconds)
+            return
         if not heartbeat(task.id, task.attempt):
             task.lost.set()  # the handler's next ensure_owned() stops it
             logger.warning("Task %s lost its lease; another worker may have taken it over", task.id)
@@ -48,7 +54,7 @@ def run_one_task(now: datetime | None = None, task_id: uuid.UUID | None = None) 
 
     stop = threading.Event()
     interval = max(get_settings().task_lease_seconds / 3, 1)
-    beat = threading.Thread(target=_heartbeat_loop, args=(task, stop, interval), daemon=True)
+    beat = threading.Thread(target=_heartbeat_loop, args=(task, stop, interval, MAX_RUN_SECONDS.get(task.type)), daemon=True)
     beat.start()
     try:
         handler(task)

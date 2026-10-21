@@ -14,7 +14,9 @@ from app.source_gate_guard import ExtractionGateLocked
 from app.stage_order import StageNotInChain
 from app.config import get_settings
 from app.middleware import ContentLengthLimitMiddleware
-from app.routers import ai_locks, ai_settings, audit, provenance_reports, workspace_ai, auth, bibliometrics, claims, clusters, connectors, coverage, criteria, design_tools, evidence_matrix, exports, extraction_schemas, extractions, gates, guide, integrity, members, notes, documents, prisma, profile, projects, replication, research_runs, scholar_metrics, screening, searches, alerts, seeds, snowball, sources, stage, suggestions, usage, zotero
+from app.routers import accuracy, ai_locks, ai_settings, audit, provenance_reports, workspace_ai, auth, bibliometrics, claims, clusters, connectors, coverage, criteria, design_tools, evidence_matrix, exports, extraction_schemas, extractions, gates, guide, integrity, members, notes, documents, prisma, profile, projects, replication, research_runs, scholar_metrics, screening, searches, alerts, seeds, snowball, sources, stage, suggestions, usage, zotero
+from app.routers import privacy
+from app.routers import bias_warnings
 from app.routers import analysis_plan, brief, conceptual_model, constructs, datasets, ethics_pack, gaps, idea_brief, instrument, interpretation, meta_analysis, preregistration, qual_coding, research_questions, transcripts
 
 # Production settings (session secret, HTTPS, Postgres, ...) are validated in Settings.
@@ -49,7 +51,7 @@ def stage_not_in_chain_handler(request, exc: StageNotInChain):
 app.add_middleware(
     ContentLengthLimitMiddleware,
     max_body_bytes=settings.max_request_body_bytes,
-    upload_path_suffix="/fulltext/upload",
+    upload_path_suffix=("/fulltext/upload", "/api/notes/voice", "/api/notes/photo"),
     upload_max_bytes=settings.object_storage_max_bytes,
 )
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
@@ -65,7 +67,7 @@ if settings.cors_origins:
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_credentials=True,
-        allow_methods=["GET", "POST", "DELETE"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
         allow_headers=["Content-Type"],
     )
 app.include_router(auth.router, prefix="/api")
@@ -73,11 +75,14 @@ app.include_router(projects.router, prefix="/api")
 app.include_router(projects.catalogue, prefix="/api")
 app.include_router(audit.router, prefix="/api")
 app.include_router(usage.router, prefix="/api")
+app.include_router(accuracy.router, prefix="/api")
 app.include_router(ai_settings.router, prefix="/api")
 app.include_router(ai_locks.router, prefix="/api")
 app.include_router(exports.router, prefix="/api")
 app.include_router(gates.router, prefix="/api")
 app.include_router(guide.router, prefix="/api")
+app.include_router(privacy.router, prefix="/api")
+app.include_router(bias_warnings.router, prefix="/api")
 app.include_router(stage.router, prefix="/api")
 app.include_router(profile.router, prefix="/api")
 app.include_router(profile.catalogue, prefix="/api")

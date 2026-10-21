@@ -48,3 +48,26 @@ test("keep-both merges without losing either side's words, and saves the merge",
 test("an unknown choice throws instead of silently keeping nobody's work", () => {
   assert.throws(() => planConflictResolution(doc("a"), doc("b"), "neither"));
 });
+
+function marked(sid, by, text) {
+  return { type: "text", text, marks: [{ type: "prov", attrs: { sid, origin: "typed", by, sug: null, note: null, paste: null, src: null } }] };
+}
+const para = (...runs) => ({ type: "paragraph", content: runs });
+
+test("keep-both keeps every run's own provenance mark and never repeats a span id", () => {
+  const shared = marked("s1", "them", "shared opening");
+  const theirs = { type: "doc", content: [para(shared), para(marked("s2", "them", "their new paragraph"))] };
+  const mine = { type: "doc", content: [para(shared, marked("s3", "me", " plus my sentence")), para(marked("s4", "me", "my new paragraph"))] };
+  const merged = planConflictResolution(mine, theirs, "both").content_json;
+
+  const runs = [];
+  (function walk(node) { if (node.type === "text") runs.push(node); (node.content || []).forEach(walk); })(merged);
+  assert.ok(runs.every((run) => (run.marks || []).some((mark) => mark.type === "prov")), "every run is marked");
+  assert.deepEqual(merged.content.slice(0, theirs.content.length), theirs.content, "the saved version comes through untouched");
+  const bySid = Object.fromEntries(runs.map((run) => [run.marks[0].attrs.sid, run.marks[0].attrs.by]));
+  assert.equal(bySid.s3, "me");
+  assert.equal(bySid.s4, "me");
+  assert.equal(bySid.s2, "them", "their words are not relabelled as mine");
+  const sids = runs.map((run) => run.marks[0].attrs.sid);
+  assert.equal(new Set(sids).size, sids.length, "no span id appears twice");
+});

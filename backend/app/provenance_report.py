@@ -20,6 +20,12 @@ TEMPLATE_PATH = Path(__file__).parent / "statements" / "ai_use_statement.v1.toml
 UNKNOWN_SESSION = "unknown"
 NOT_RECORDED = "not recorded"
 
+# The sections a researcher can choose to include in a generated report (X.31.24, owner answer W6,
+# 2026-10-15: "the report includes only the sections the researcher chooses"). A report's `scope`/`documents`/
+# `total_chars` always show (the report's identity, not a section); everything below is optional. The default,
+# when nothing is chosen, is every section — today's unfiltered report.
+REPORT_SECTIONS = ("produced", "ai", "pasted", "statement", "limits")
+
 SHARE_LABELS = {
     "typed": "Typed by authors",
     "quoted": "Quoted (with citation)",
@@ -137,39 +143,59 @@ def report_hash(report: dict[str, Any], statement: str) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def to_markdown(report: dict[str, Any], statement: str, label: str) -> str:
+def filter_report(report: dict[str, Any], included: Sequence[str]) -> dict[str, Any]:
+    """The report's JSON view, limited to the chosen sections (X.31.24). `scope`/`documents`/`total_chars` always
+    show (the report's identity line, not a section). The stored row keeps the full, unfiltered report always —
+    `app/section_approval.py` reads `report_json["ai"]`/`["shares"]` unconditionally when approving a section — so
+    this only narrows what is shown back to the researcher (API reads, Markdown/JSON export), never what is kept."""
+    keep = set(included)
+    out: dict[str, Any] = {
+        "scope": report["scope"], "documents": report["documents"], "total_chars": report["total_chars"],
+        "included_sections": list(included),
+    }
+    if "produced" in keep:
+        out["shares"] = report["shares"]
+        out["sessions"] = report["sessions"]
+    if "ai" in keep:
+        out["ai"] = report["ai"]
+    if "pasted" in keep:
+        out["pasted"] = report["pasted"]
+    if "limits" in keep:
+        out["limits"] = report["limits"]
+    return out
+
+
+def to_markdown(report: dict[str, Any], statement: str | None, label: str, included: Sequence[str] = REPORT_SECTIONS) -> str:
+    keep = set(included)
     lines = [
         "# Writing provenance report",
         "",
         f"Scope: {report['scope']}. Statement template: {label}.",
         f"Total saved characters counted: {report['total_chars']}.",
-        "",
-        "## How the saved text was produced",
-        "",
-        "| Kind | Share of characters |",
-        "|---|---|",
     ]
-    lines += [f"| {SHARE_LABELS[key]} | {report['shares'][key]:.1f}% |" for key in SHARE_LABELS]
-    sessions = report["sessions"]
-    lines += [
-        "",
-        f"Writing sessions: {sessions['count']} ({sessions['hours']} hours between first and last save in each).",
-        "",
-        "## AI contributions",
-        "",
-    ]
-    lines += [
-        f"- {ACTION_LABELS.get(item['action'], item['action']) if item['action'] else NOT_RECORDED} · "
-        f"{item['model_id'] or NOT_RECORDED} · {item['prompt_version'] or NOT_RECORDED} · "
-        f"{item['chars_kept']} characters kept"
-        for item in report["ai"]["items"]
-    ] or ["None recorded."]
-    lines += ["", "## Pasted and quoted material", ""]
-    lines += [
-        f"- {item['status']} · {item['chars']} characters · "
-        + (f"source {item['source_id']}" if item['source_id'] else "no source linked")
-        for item in report["pasted"]
-    ] or ["None recorded."]
-    lines += ["", "## AI-use statement", "", statement, "", "## What this report cannot show", ""]
-    lines += [f"- {limit}" for limit in report["limits"]]
+    if "produced" in keep:
+        lines += ["", "## How the saved text was produced", "", "| Kind | Share of characters |", "|---|---|"]
+        lines += [f"| {SHARE_LABELS[key]} | {report['shares'][key]:.1f}% |" for key in SHARE_LABELS]
+        sessions = report["sessions"]
+        lines += ["", f"Writing sessions: {sessions['count']} ({sessions['hours']} hours between first and last save in each)."]
+    if "ai" in keep:
+        lines += ["", "## AI contributions", ""]
+        lines += [
+            f"- {ACTION_LABELS.get(item['action'], item['action']) if item['action'] else NOT_RECORDED} · "
+            f"{item['model_id'] or NOT_RECORDED} · {item['prompt_version'] or NOT_RECORDED} · "
+            f"{item['chars_kept']} characters kept"
+            for item in report["ai"]["items"]
+        ] or ["None recorded."]
+    if "pasted" in keep:
+        lines += ["", "## Pasted and quoted material", ""]
+        lines += [
+            f"- {item['status']} · {item['chars']} characters · "
+            + (f"source {item['source_id']}" if item['source_id'] else "no source linked")
+            for item in report["pasted"]
+        ] or ["None recorded."]
+    if "statement" in keep and statement:
+        lines += ["", "## AI-use statement", "", statement]
+    if "limits" in keep:
+        lines += ["", "## What this report cannot show", ""]
+        lines += [f"- {limit}" for limit in report["limits"]]
     return "\n".join(lines) + "\n"

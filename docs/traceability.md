@@ -100,17 +100,10 @@
 ### §5.9 Analysis
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
 |---|---|---|---|---|---|
-<<<<<<< Updated upstream
-| 5.9 Q1–2 | Scripts from plan; pinned env, seeds; G8 | M5.3 | — | — | `[~]` scripts (M5.3.2) and sandboxed runs (M5.3.3) built `[?]`; G8 precondition M5.3.4 `[ ]`; container path not run (no Docker here) |
-| 5.9 Q3 | Robustness suite | M5.4 | — | — | `[?]` M5.4.1 helpers `[?]`; suite M5.4.2 built `[?]` (alternative specs, outlier/missing-data comparisons via governed dataset versions, re-run identity) |
-| 5.9 Q4 | **Journal-style tables/figures**; notebooks | M5.4, M5.8 *(new)* | — | — | `[?]` M5.4.2 notebook export built; M5.8 (journal-style tables/figures) `[!]` blocked separately |
-| 5.9 Qual | Coding assist, codebook, inter-coder agreement | M5.5 | — | — | `[~]` M5.5.1 logic `[?]`; AI suggestions M5.5.2 blocked on Q4 |
-=======
-| 5.9 Q1–2 | Scripts from plan; pinned env, seeds; G8 | M5.3 | analysis-plan/script/run endpoints | analysis-plan/runner/gate tests | `[~]` sandboxed runs remain under review and require runtime/image evidence |
-| 5.9 Q3 | Robustness suite | M5.4 | pure robustness helpers | `test_robustness.py` | `[~]` M5.4.1 `[x]`; full suite/notebook reruns blocked on M5.3.3 |
-| 5.9 Q4 | **Journal-style tables/figures**; notebooks | M5.4, M5.8 *(new)* | — | — | `[!]` M5.8 blocked (M5.3 not `[x]`) |
-| 5.9 Qual | Coding assist, codebook, inter-coder agreement | M5.5 | pure coding state plus optional local-model suggestion routes | qualitative coding/API tests | `[~]` M5.5.1 `[x]`; M5.5.2 remains Q4/local-model constrained |
->>>>>>> Stashed changes
+| 5.9 Q1–2 | Scripts from plan; pinned env, seeds; G8 | M5.3 | analysis-plan/script/run endpoints | analysis-plan/runner/gate tests | `[x]` M5.3 closed 2026-10-19: plan lock (M5.3.1), script generation (M5.3.2/.2a/.2b), sandboxed Docker runs (M5.3.3, live digest-pinned verification) and the G8 precondition (M5.3.4) all `[x]` |
+| 5.9 Q3 | Robustness suite | M5.4 | pure robustness helpers + robustness-suite/notebook-export routes | `test_robustness.py`, `test_robustness_suite.py` | `[x]` M5.4.1 helpers and M5.4.2 suite (alternative specs, outlier/missing-data comparisons, re-run identity, notebook export) both built and independently reviewed |
+| 5.9 Q4 | **Journal-style tables/figures**; notebooks | M5.4, M5.8 *(new)* | — | — | `[x]` M5.4.2 notebook export built; M5.8 (journal-style tables/figures) unblocked 2026-10-19 (M5.3 closed) but not yet started |
+| 5.9 Qual | Coding assist, codebook, inter-coder agreement | M5.5 | pure coding state, codebook storage, plus optional local-model suggestion routes | qualitative coding/API tests | `[?]` M5.5.1 logic and M5.5.2 codebook storage both built, need independent re-review; AI-generated suggestions remain Q4/local-model constrained |
 | 5.9 gate | G9; **pre-registration deviations documented** | M5.8 *(new)*, M6.9 *(new)* | — | — | `[ ]` |
 | 5.9 QC | Re-run gives identical numbers | M5.4 | — | — | `[?]` fingerprint helper (M5.4.1) and re-run identity check (M5.4.2) built, needs review |
 
@@ -210,7 +203,7 @@
 | Reliability (idempotent, resumable, no loss) | M0.2.1, M0.6.2, M0.6.4 | `test_worker_reaper.py` | `[?]` / `[ ]` |
 | Security (roles, encryption, secrets) | M0.3.1–M0.3.5, X.4; existing sign-in (`/api/auth/*`) | `test_auth.py`, `test_project_access.py`, `test_role_matrix.py`, `test_project_members*.py`, `test_dashboard.py` (body limit) | `[?]` / `[ ]` |
 | Auditability (immutable, exportable) | M0.4.1–M0.4.5 | `test_audit_*.py` | `[?]` |
-| **Performance** (≥ 1,000 abstracts/h; 500 papers indexed < 1 h) | X.19 | `backend/tests/test_performance_benchmark.py` (app-side overhead only; model latency not measured) | `[?]` |
+| **Performance** (screening reference 113.8 abstracts/h local Ollama, re-scoped 2026-10-21; 500 papers indexed < 1 h) | X.19 | `backend/tests/test_performance_benchmark.py` (app overhead < 1% of the 31.6 s/abstract reference; model latency itself not measured in tests, see `milestone-reports/X.19-real-model-benchmark-2026-10-19.md`) | `[?]` |
 | Scalability (multi-user, queue workers) | M0.3, M0.6 | — | `[ ]` |
 | Usability (keyboard screening, side-by-side, diffs) | M2.3.1, M3.6.1, M6.8, X.14, X.32 | frontend suite, authenticated browser smoke | `[x]` for M2 keyboard/workspace UI; M3/M6 screens remain open |
 | Portability (open export formats) | X.8, M1.11, M3.5.2, M6.5, X.34 (Obsidian vault, verified-only) | `test_obsidian_export.py` (X.34.1), `test_manuscript_export.py` (M6.5 md/docx/latex/json/bibtex) | `[ ]` (X.34.1 `[?]`; M6.5 `[?]`, built 2026-10-18 needs review) |

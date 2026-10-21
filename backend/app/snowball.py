@@ -285,7 +285,7 @@ def run_snowball(
                 project_id=project.id, title=rec.title[:500], doi=rec.doi, url=rec.url, authors=list(rec.authors) or None,
                 year=rec.year, venue=rec.venue, abstract=rec.abstract, oa_url=rec.oa_url, source_ids=dict(rec.source_ids) or None,
                 quality_flags=list(rec.quality_flags) or None, origin=SOURCE_ORIGIN_RETRIEVED, metadata_verified=False,
-                citation_count=rec.cited_by_count,
+                citation_count=rec.cited_by_count, language=rec.language,
                 citation_count_source=connector.name if rec.cited_by_count is not None else None,
                 citation_count_at=run.run_at if rec.cited_by_count is not None else None,
                 created_by=AGENT_SNOWBALL, ingest_key=_ingest_key(run_id, rec),

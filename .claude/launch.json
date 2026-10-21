@@ -84,6 +84,40 @@
         "RUN_RESEARCH_INLINE": "true",
         "DATABASE_URL": "sqlite:///C:/Users/REVATI/AppData/Local/Temp/claude/C--PROJECTS-RESEARCH-PROJECTS-research-main/8a35eff3-015b-4fd5-887b-3598c3617e2e/scratchpad/prov_check.db"
       }
+    },
+    {
+      "name": "opus-review-scratch",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "-c",
+        "import os, uvicorn; app_dir=os.path.abspath('backend'); os.chdir(os.environ['SCRATCH_CWD']); uvicorn.run('app.main:app', app_dir=app_dir, port=int(os.environ.get('PORT', '8016')))"
+      ],
+      "port": 8016,
+      "autoPort": true,
+      "env": {
+        "SCRATCH_CWD": "C:/Users/REVATI/AppData/Local/Temp/claude/C--PROJECTS-RESEARCH-PROJECTS-research-main/45cc0ca2-20b3-4afe-9f9d-64435b984243/scratchpad",
+        "ENVIRONMENT": "development",
+        "AUTO_CREATE_SCHEMA": "true",
+        "RUN_RESEARCH_INLINE": "true",
+        "SESSION_SECRET": "scratch-review-secret-0123456789",
+        "DATABASE_URL": "sqlite:///C:/Users/REVATI/AppData/Local/Temp/claude/C--PROJECTS-RESEARCH-PROJECTS-research-main/45cc0ca2-20b3-4afe-9f9d-64435b984243/scratchpad/review.db",
+        "OBJECT_STORAGE_ROOT": "C:/Users/REVATI/AppData/Local/Temp/claude/C--PROJECTS-RESEARCH-PROJECTS-research-main/45cc0ca2-20b3-4afe-9f9d-64435b984243/scratchpad/objects"
+      }
+    },
+    {
+      "name": "evidence-check",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "-c",
+        "import os, uvicorn; uvicorn.run('app.main:app', app_dir='backend', port=int(os.environ.get('PORT', '8015')))"
+      ],
+      "port": 8015,
+      "autoPort": true,
+      "env": {
+        "RUN_RESEARCH_INLINE": "true",
+        "DATABASE_URL": "sqlite:///C:/Users/REVATI/AppData/Local/Temp/claude/C--Users-REVATI--claude-spares-spare-d2ipkr/7424cdba-3653-4269-ac29-eb2a0d3ac477/scratchpad/evidence_check.db",
+        "OBJECT_STORAGE_ROOT": "C:/Users/REVATI/AppData/Local/Temp/claude/C--Users-REVATI--claude-spares-spare-d2ipkr/7424cdba-3653-4269-ac29-eb2a0d3ac477/scratchpad/objects"
+      }
     }
   ]
 }

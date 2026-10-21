@@ -9,6 +9,15 @@ from datetime import datetime, timedelta, timezone
 from app import provenance_report as pr
 
 
+def test_models_included_sections_default_matches_report_sections():
+    # app/models.py::ProvenanceReport.included_sections keeps a literal default (not imported from this module,
+    # to stay free of the import) that must agree with REPORT_SECTIONS, or a legacy/default row would read as
+    # covering a different set of sections than this module actually knows how to filter.
+    from app.models import ProvenanceReport
+    default = ProvenanceReport.__table__.c.included_sections.default
+    assert sorted(default.arg(None)) == sorted(pr.REPORT_SECTIONS)
+
+
 def _span(document_id="d1", span_id="s", chars=10, origin="typed", paste=None, suggestion_id=None,
           model_id=None, prompt_version=None, action=None, source_id=None):
     return {

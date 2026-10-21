@@ -140,3 +140,46 @@ def test_value_comparison_is_normalised_but_never_fuzzy(a, b, same):
 def test_dataset_hash_is_stable_and_content_sensitive():
     assert dataset_hash({"a": 1, "b": 2}) == dataset_hash({"b": 2, "a": 1})
     assert dataset_hash({"a": 1}) != dataset_hash({"a": 2})
+
+
+# ---- X.102: the spec's thresholds are exact, so the comparisons at the boundary must be too ------------
+
+def test_a_false_exclusion_rate_of_exactly_two_percent_fails():
+    # 50 gold includes, one of them excluded by the AI: rate == 0.02, which spec "< 2%" does not allow.
+    gold = _gold(50, 50)
+    ai = _ai_agree(gold)
+    ai["i0"] = AiScreen(decision="exclude")
+    result = screening_eval(gold, ai)
+    assert result.false_exclusion_rate == 0.02 and result.kappa > 0.8 and result.status == FAILED
+
+
+def test_a_false_exclusion_rate_just_under_two_percent_passes():
+    gold = _gold(51, 49)
+    ai = _ai_agree(gold)
+    ai["i0"] = AiScreen(decision="exclude")
+    result = screening_eval(gold, ai)
+    assert result.false_exclusion_rate < 0.02 and result.kappa > 0.8 and result.status == PASSED
+
+
+def test_critical_precision_and_recall_of_exactly_ninety_percent_pass():
+    # 10 papers, one wrong value: precision == recall == 9/10, which spec "≥ 0.9" accepts.
+    gold = {f"p{n}": {"sample_size": 100 + n} for n in range(10)}
+    ai = {f"p{n}": {"sample_size": 100 + n} for n in range(10)}
+    ai["p0"] = {"sample_size": 999}
+    result = extraction_eval(gold, ai, critical=["sample_size"])
+    s = result.fields["sample_size"]
+    assert (s.tp, s.fp, s.fn) == (9, 1, 1) and s.precision == 0.9 and s.recall == 0.9
+    assert result.status == PASSED
+
+
+def test_critical_precision_and_recall_just_under_ninety_percent_fail():
+    # 19 papers, two wrong values: precision == recall == 17/19 (about 0.895). That is under 0.9 but above 0.89,
+    # so a target lowered to 0.89 or 0.8 would wrongly pass it.
+    gold = {f"p{n}": {"sample_size": 100 + n} for n in range(19)}
+    ai = {f"p{n}": {"sample_size": 100 + n} for n in range(19)}
+    ai["p0"] = {"sample_size": 999}
+    ai["p1"] = {"sample_size": 998}
+    result = extraction_eval(gold, ai, critical=["sample_size"])
+    s = result.fields["sample_size"]
+    assert (s.tp, s.fp, s.fn) == (17, 2, 2) and s.precision < 0.9 and s.recall < 0.9
+    assert result.status == FAILED

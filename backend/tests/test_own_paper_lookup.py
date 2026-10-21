@@ -182,6 +182,36 @@ def test_a_connector_failure_is_retried_not_reported_as_not_found(services, worl
     assert outcome["status"] == "included"
 
 
+def test_a_lookup_whose_retries_run_out_is_reported_as_failed_not_left_pending_forever(services, world):
+    # review 2026-10-20: the task ended `failed` with no lookup row, so the GET said "not resolved yet" forever
+    from app.database import SessionLocal
+    from app.models import AuditEvent, TaskStatus
+    from app.models import Task as TaskModel
+
+    c, pid = world
+    services.raises = ConnectorError("service unavailable")
+    task_id = c.post(f"/api/projects/{pid}/sources/own/lookup", json={"doi": DOI}).json()["task_id"]
+    for _ in range(50):
+        with SessionLocal() as db:
+            row = db.get(TaskModel, uuid.UUID(task_id))
+            if row.status == TaskStatus.failed:
+                break
+            row.run_after = None
+            db.commit()
+        task_runner.run_one_task()
+    with SessionLocal() as db:
+        assert db.get(TaskModel, uuid.UUID(task_id)).status == TaskStatus.failed
+
+    outcome = c.get(f"/api/projects/{pid}/sources/own/lookup", params={"task_id": task_id})
+    assert outcome.status_code == 200, outcome.text
+    assert outcome.json()["status"] == "failed"
+    assert "kept failing" in outcome.json()["detail"]
+    assert outcome.json()["source_id"] is None
+    with SessionLocal() as db:
+        events = db.query(AuditEvent).filter(AuditEvent.action == "source.own_paper_lookup_failed").all()
+        assert any(e.payload_json.get("task_id") == task_id and e.payload_json.get("reason") == "retries_exhausted" for e in events)
+
+
 def test_no_enabled_lookup_connector_fails_the_lookup_permanently(monkeypatch, world):
     c, pid = world
     monkeypatch.setattr(get_settings(), "connectors_enabled", [])

@@ -70,6 +70,13 @@ export function describeOwnPaperLookup(row) {
   return { kind: "failed", text: row.detail || "The lookup failed." };
 }
 
+// The state when the panel stops polling (poll budget used up) while the task still has no resolved row.
+// It is still pending, not failed: the server's own row (or the terminal `failed` row it writes when retries
+// run out) is the only truth, so the person checks again rather than being told it failed or to come back later.
+export function describePollBudgetExhausted(taskId) {
+  return { taskId, kind: "pending", text: "Still queued or running. Check again to see the result." };
+}
+
 // Whether a `GET .../own/lookup?task_id=` error means "not resolved yet, poll again" (404, the only
 // status that endpoint ever returns for an unresolved task) rather than a genuine failure.
 export function isLookupPending(error) {

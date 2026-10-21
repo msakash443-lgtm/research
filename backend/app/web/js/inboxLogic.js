@@ -127,3 +127,42 @@ export function promoteDefaults(note) {
   const text = note.kind === "clip" ? note.quoted_text || "" : note.body || "";
   return { content: text.trim(), rationale: "" };
 }
+
+// Editing a saved note's body (X.31.25). What the Save click should do, decided before any request:
+// "invalid" (empty after trimming: the server refuses it too), "unchanged" (nothing to save), or "send" with the
+// trimmed text and the revision the edit is made from (the server's `base_revision` check).
+export function planNoteEdit(note, text) {
+  const body = (text || "").trim();
+  if (!body) return { action: "invalid" };
+  if (body === (note.body || "").trim()) return { action: "unchanged" };
+  return { action: "send", body, baseRevision: note.revision };
+}
+
+// Archived notes are read-only in the inbox, as they are for filing and promoting.
+export function canEditNote(note) {
+  return note.status !== "archived";
+}
+
+// `request()` only sets `status` when the server answered, so an error without one means the request never got
+// there (offline, server down): the edit is queued in the offline outbox instead of being lost.
+export function isOfflineFailure(error) {
+  return error?.status === undefined;
+}
+
+// A 409 from PATCH /api/notes/{id} carries the server's current note when the edit's base revision is stale.
+export function editConflict(error) {
+  const current = error?.status === 409 && error.detail?.code === "note_conflict" ? error.detail.current : null;
+  return current ? { current } : null;
+}
+
+// An outbox flush that sent or blocked an item changed what the Inbox shows (the note's saved text or its conflict
+// choice), so the Inbox must be redrawn; a flush that only failed left everything as it was (X.94).
+export function outboxSyncChangedNotes(result) {
+  return (result?.sent || 0) + (result?.blocked || 0) > 0;
+}
+
+// Redraw only an Inbox that is on screen (its section is always in the page, just hidden) and has no open edit or
+// promote form: a redraw replaces the whole view and would drop what the researcher was typing (X.94).
+export function inboxRefreshAfterSync(result, { inboxHidden, formOpen }) {
+  return outboxSyncChangedNotes(result) && !inboxHidden && !formOpen;
+}

@@ -32,6 +32,10 @@ For every prompt version the app calls:
      the prompt, the gold set or the criteria therefore fails CI until someone re-runs the evaluation
      and updates the entry. A `failed` baseline also needs `accepted_by` and a `reason`: shipping a
      known regression is a person's decision.
+4. `eval: "extraction"`: the same, but the trigger is the gold set's verified extractions
+   (`papers[].extraction`), and the report's hash must match the current gold extractions under the
+   extraction schema version the report names (`schema`). A report for a schema version the app no
+   longer has does not count.
 
 CI never calls a model (no credentials, and it would cost tokens).
 
@@ -48,5 +52,11 @@ python -m evals.run_eval screening
 
 Exit code 0 = passed, 1 = failed, 2 = incomplete. Commit the report and point the baseline entry at it.
 
-Extraction has metrics but no runner yet: there is no AI extraction step until M3.3. Gap metrics wait
-for the gap miner (M3.9) and a gold format for known gaps.
+Extraction runs the same way, over the gold set's verified extractions (`papers[].extraction`), and
+reads each gold paper's abstract:
+
+```bash
+python -m evals.run_eval extraction --schema default
+```
+
+Gap metrics wait for the gap miner (M3.9) and a gold format for known gaps.

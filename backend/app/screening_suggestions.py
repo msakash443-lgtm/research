@@ -48,6 +48,7 @@ def suggestion_text(decision: str, reason_code: str | None, rationale: str) -> s
 def store_prescreen_suggestion(
     db: Session, *, project: Project, source: Source, decision: str, reason_code: str | None, confidence: float,
     rationale: str, model_id: str, prompt_version: str, producing_agent: str,
+    evidence_quote: str | None = None, evidence_source: str | None = None,
 ) -> AiSuggestion:
     return suggestion_store.create_suggestion(
         db,
@@ -56,7 +57,9 @@ def store_prescreen_suggestion(
         target_id=str(source.id),
         content=suggestion_text(decision, reason_code, rationale),
         confidence=confidence,
-        evidence=[{"decision": decision, "reason_code": reason_code}],
+        # Item 0 is read by `_apply` (decision, reason); the quote, when the model gave one, is item 1 (X.77).
+        evidence=[{"decision": decision, "reason_code": reason_code},
+                  *([{"source": evidence_source, "quote": evidence_quote}] if evidence_quote else [])],
         model_id=model_id,
         prompt_version=prompt_version,
         producing_agent=producing_agent,

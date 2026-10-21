@@ -193,10 +193,18 @@ def test_interpretation_review_rows_cannot_be_edited(world):
 # ---- draft --------------------------------------------------------------------------------
 
 
+def _confirm_all_and_approve_g9(client, project_id):
+    for finding in client.get(f"/api/projects/{project_id}/interpretation/findings").json():
+        client.post(f"/api/projects/{project_id}/interpretation/findings/{finding['id']}/review", json={"decision": "confirmed"})
+    response = client.post(f"/api/projects/{project_id}/gates/G9/approve")
+    assert response.status_code == 200, response.text
+
+
 def test_draft_builds_a_suggestion_with_stat_and_cite_nodes_never_auto_accepted(world):
     client, project_id, _ = world
     _prep(project_id)
     client.post(f"/api/projects/{project_id}/interpretation/generate")
+    _confirm_all_and_approve_g9(client, project_id)
     response = client.post(f"/api/projects/{project_id}/interpretation/draft")
     assert response.status_code == 201, response.text
     body = response.json()
@@ -215,6 +223,79 @@ def test_draft_with_no_map_generated_is_refused(world):
     client, project_id, _ = world
     response = client.post(f"/api/projects/{project_id}/interpretation/draft")
     assert response.status_code == 409
+
+
+def test_draft_before_g9_approval_is_refused_even_with_every_finding_confirmed(world):
+    client, project_id, _ = world
+    _prep(project_id)
+    client.post(f"/api/projects/{project_id}/interpretation/generate")
+    for finding in client.get(f"/api/projects/{project_id}/interpretation/findings").json():
+        client.post(f"/api/projects/{project_id}/interpretation/findings/{finding['id']}/review", json={"decision": "confirmed"})
+    response = client.post(f"/api/projects/{project_id}/interpretation/draft")
+    assert response.status_code == 409, response.text
+    assert "G9" in response.json()["detail"]
+
+
+def test_draft_succeeds_immediately_once_g9_is_approved(world):
+    client, project_id, _ = world
+    _prep(project_id)
+    client.post(f"/api/projects/{project_id}/interpretation/generate")
+    _confirm_all_and_approve_g9(client, project_id)
+    response = client.post(f"/api/projects/{project_id}/interpretation/draft")
+    assert response.status_code == 201, response.text
+
+
+# review 2026-10-20: after G9 was approved, a regenerated or disputed map still produced a draft from
+# findings no person had confirmed, and G9 stayed approved over it.
+
+
+def test_regenerating_the_map_after_g9_is_approved_is_refused_until_g9_is_reopened(world):
+    client, project_id, _ = world
+    _prep(project_id)
+    client.post(f"/api/projects/{project_id}/interpretation/generate")
+    _confirm_all_and_approve_g9(client, project_id)
+    approved_ids = [f["id"] for f in client.get(f"/api/projects/{project_id}/interpretation/findings").json()]
+
+    refused = client.post(f"/api/projects/{project_id}/interpretation/generate")
+    assert refused.status_code == 409, refused.text
+    assert "G9" in refused.json()["detail"]
+    assert [f["id"] for f in client.get(f"/api/projects/{project_id}/interpretation/findings").json()] == approved_ids
+
+    reopened = client.post(f"/api/projects/{project_id}/gates/G9/reopen", json={"reason": "new analysis run"})
+    assert reopened.status_code == 200, reopened.text
+    assert client.post(f"/api/projects/{project_id}/interpretation/generate").status_code == 201
+    assert client.post(f"/api/projects/{project_id}/interpretation/draft").status_code == 409  # G9 pending again
+
+
+def test_disputing_a_finding_after_g9_is_approved_is_refused_and_the_draft_keeps_the_confirmed_map(world):
+    client, project_id, _ = world
+    _prep(project_id)
+    client.post(f"/api/projects/{project_id}/interpretation/generate")
+    _confirm_all_and_approve_g9(client, project_id)
+    finding = client.get(f"/api/projects/{project_id}/interpretation/findings").json()[0]
+
+    refused = client.post(f"/api/projects/{project_id}/interpretation/findings/{finding['id']}/review", json={"decision": "disputed"})
+    assert refused.status_code == 409, refused.text
+    assert "G9" in refused.json()["detail"]
+    assert client.get(f"/api/projects/{project_id}/interpretation/findings").json()[0]["confirmed"] is True
+    assert client.post(f"/api/projects/{project_id}/interpretation/draft").status_code == 201
+
+
+def test_draft_refuses_an_unconfirmed_map_even_when_g9_is_approved(world):
+    # Defence in depth: a map written behind G9's back (e.g. by an older build) still never feeds a draft.
+    from app import interpretation_map
+
+    client, project_id, _ = world
+    _prep(project_id)
+    client.post(f"/api/projects/{project_id}/interpretation/generate")
+    _confirm_all_and_approve_g9(client, project_id)
+    with SessionLocal() as db:
+        interpretation_map.generate_map(db, db.get(Project, uuid.UUID(project_id)), actor="older-build")
+        db.commit()
+
+    response = client.post(f"/api/projects/{project_id}/interpretation/draft")
+    assert response.status_code == 409, response.text
+    assert "not been confirmed" in response.json()["detail"]
 
 
 # ---- G9 gate wiring (EC-12.2, EC-12.3) ------------------------------------------------------

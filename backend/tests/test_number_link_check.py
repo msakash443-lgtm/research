@@ -132,3 +132,23 @@ def test_the_save_api_refuses_an_unresolved_number():
 
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "unresolved_number"
+
+
+def test_the_save_api_stores_the_real_number_whatever_value_the_client_sent():
+    client, _ = _login("num.save.forged@example.org")
+    pid = _project(client)
+    intro = _section(client, pid, "Introduction", 0)
+    run = _run(pid, OUTPUT)
+    forged = {**_stat(run, "descriptives.age.mean"), "attrs": {"analysis_run_id": run, "path": "descriptives.age.mean", "value": 99}}
+
+    response = client.post(
+        f"/api/projects/{pid}/documents/{intro}/versions",
+        json={"base_number": 0, "client_save_id": "forged", "client_session_id": "s",
+              "content_json": {"type": "doc", "content": [{"type": "paragraph", "content": [forged]}]}},
+    )
+
+    assert response.status_code == 201, response.text
+    with SessionLocal() as db:
+        stored = db.query(DocumentVersion).filter(DocumentVersion.client_save_id == "forged").one()
+        stat_node = stored.content_json["content"][0]["content"][0]
+    assert stat_node["attrs"]["value"] == 35.5

@@ -57,3 +57,62 @@ def test_an_extraction_value_without_a_quote_fails_validation(tmp_path):
     d = csv_to_gold_set(_papers_csv(tmp_path), "t", "s", extractions_csv=e)
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(d, json.loads((HERE / "gold_set.schema.json").read_text()))
+
+def _dataset_rows():
+    rows = [{"openalex_id": f"https://openalex.org/W{i}", "doi": f"https://doi.org/10.1/{i}",
+             "label_included": "1" if i < 2 else "0"} for i in range(10)]
+    meta = {f"W{i}": {"title": f"T{i}", "abstract": None} for i in range(10) if i != 5}
+    return rows, meta
+
+
+def test_abstract_is_rebuilt_from_the_inverted_index_in_word_order():
+    from tests.gold.loader import abstract_from_inverted_index
+    assert abstract_from_inverted_index({"b": [1], "a": [0], "c": [2, 3]}) == "a b c c"
+    assert abstract_from_inverted_index(None) is None
+
+
+def test_dataset_subset_keeps_every_include_and_a_seeded_exclude_sample():
+    from tests.gold.loader import dataset_rows_to_gold_set
+    rows, meta = _dataset_rows()
+    args = dict(n_exclude=4, seed=7, topic="t", supplied_by="s", source_note="n")
+    d = dataset_rows_to_gold_set(rows, meta, **args)
+    labels = [p["label"] for p in d["papers"]]
+    assert labels.count("include") == 2 and labels.count("exclude") == 4
+    assert all(p["known_relevant"] for p in d["papers"] if p["label"] == "include")
+    assert "W5" not in [p["id"] for p in d["papers"]]  # no title -> skipped, not invented
+    assert d == dataset_rows_to_gold_set(rows, meta, **args)  # deterministic
+    jsonschema.validate(d, json.loads((HERE / "gold_set.schema.json").read_text()))
+
+
+def test_an_included_record_without_a_title_is_refused_not_dropped():
+    from tests.gold.loader import dataset_rows_to_gold_set
+    rows, meta = _dataset_rows()
+    del meta["W0"]
+    with pytest.raises(ValueError, match="without a title"):
+        dataset_rows_to_gold_set(rows, meta, n_exclude=1, seed=1, topic="t", supplied_by="s",
+                                 source_note="n")
+
+
+def test_a_record_with_no_openalex_id_is_skipped_when_excluded_and_refused_when_included():
+    from tests.gold.loader import dataset_rows_to_gold_set
+    rows, meta = _dataset_rows()
+    rows[7]["openalex_id"] = ""
+    kw = dict(n_exclude=4, seed=1, topic="t", supplied_by="s", source_note="n")
+    assert len(dataset_rows_to_gold_set(rows, meta, **kw)["papers"]) == 6
+    rows[0]["openalex_id"] = ""
+    with pytest.raises(ValueError, match="without a title"):
+        dataset_rows_to_gold_set(rows, meta, **kw)
+
+
+def test_two_dataset_rows_for_the_same_work_become_one_paper_and_an_include_wins():
+    from tests.gold.loader import dataset_rows_to_gold_set
+    rows, meta = _dataset_rows()
+    rows.append({"openalex_id": "https://openalex.org/W0", "doi": "", "label_included": "0"})
+    rows.insert(0, {"openalex_id": "https://openalex.org/W9", "doi": "", "label_included": "0"})
+    rows.append({"openalex_id": "https://openalex.org/W9", "doi": "", "label_included": "1"})
+    d = dataset_rows_to_gold_set(rows, meta, n_exclude=5, seed=1, topic="t", supplied_by="s",
+                                 source_note="n")
+    ids = [p["id"] for p in d["papers"]]
+    assert len(ids) == len(set(ids))
+    assert next(p for p in d["papers"] if p["id"] == "W9")["label"] == "include"
+    jsonschema.validate(d, json.loads((HERE / "gold_set.schema.json").read_text()))

@@ -28,6 +28,18 @@ def tokens_used(db: Session, project_id: uuid.UUID) -> int:
     return int(db.scalar(select(func.coalesce(func.sum(LlmUsage.total_tokens), 0)).where(LlmUsage.project_id == project_id)) or 0)
 
 
+NEAR_BUDGET = 0.8  # from this share of the budget on, the status says the stop is close
+
+
+def budget_status(used: int, budget: int | None) -> dict[str, int | float | str | None]:
+    """How close a project is to its token budget (X.79.1): `no_limit`, `ok`, `near` (at least 80% used) or `over`
+    (the budget is reached, so `ProjectMeter.before_call` now refuses every call). `remaining` never goes below 0."""
+    if not budget:
+        return {"status": "no_limit", "remaining": None, "percent_used": None}
+    status = "over" if used >= budget else "near" if used >= budget * NEAR_BUDGET else "ok"
+    return {"status": status, "remaining": max(budget - used, 0), "percent_used": round(used * 100 / budget, 1)}
+
+
 def parse_usage(data: object) -> tuple[int | None, int | None, int | None]:
     """(prompt, completion, total) from a chat-completions `usage` object; None where the provider didn't say."""
     usage = data.get("usage") if isinstance(data, dict) else None

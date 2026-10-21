@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import audit, project_schemas
+from app import audit, fulltext_coverage, project_schemas
 from app.artifacts import refresh_artifact, register_artifact
 from app.database import get_db
 from app.dependencies import APPROVE_ROLES, READ_ROLES, WRITE_ROLES, current_user, project_access
@@ -174,7 +174,8 @@ def verification_queue(
                       "extraction_id": str(row.id) if row else None,
                       "verified_by_human": row.verified_by_human if row else False,
                       "schema_version": row.schema_version if row else None,
-                      "critical_fields": critical, "schema_stale": stale})
+                      "critical_fields": critical, "schema_stale": stale,
+                      "coverage": fulltext_coverage.coverage(source)})
     return items
 
 
@@ -211,6 +212,8 @@ class ExtractionVerificationIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     confirmed_critical_fields: list[str]
+    # X.63(e): a critical field the paper does not report (null) needs its own explicit confirmation.
+    confirmed_not_reported_fields: list[str] = Field(default_factory=list)
 
 
 @router.post("/{extraction_id}/verify", response_model=ExtractionRead)
@@ -236,6 +239,11 @@ def verify_extraction(
     if len(payload.confirmed_critical_fields) != len(required) or set(payload.confirmed_critical_fields) != required:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                             f"Confirm every critical field: {', '.join(sorted(required))}")
+    not_reported = {key for key in required if row.fields_json.get(key) is None}
+    if len(payload.confirmed_not_reported_fields) != len(not_reported) or set(payload.confirmed_not_reported_fields) != not_reported:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "Confirm each critical field the paper does not report, and only those: "
+                            f"{', '.join(sorted(not_reported)) or 'none'}")
     source = db.get(Source, row.source_id)
     if source is None or not source.fulltext_path:
         raise HTTPException(status.HTTP_409_CONFLICT, "This source has no stored full-text PDF for review")
@@ -245,7 +253,7 @@ def verify_extraction(
     row.verified_at = utcnow()
     audit.record(db, actor=row.verified_by, action="extraction.verified", project_id=project.id,
                  payload={"extraction_id": str(row.id), "source_id": str(source.id),
-                          "critical_fields": sorted(required)})
+                          "critical_fields": sorted(required), "confirmed_not_reported": sorted(not_reported)})
     _record_extraction(db, project, row, row.verified_by)  # X.42.1: a verified extraction goes stale on re-entry
     db.commit()
     db.refresh(row)

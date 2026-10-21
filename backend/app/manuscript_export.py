@@ -52,6 +52,7 @@ class CitedSource:
     venue: str | None
     doi: str | None
     verified: bool
+    verification_method: str | None = None  # `human` or `automatic` for a verified source
 
 
 @dataclass(frozen=True)
@@ -275,7 +276,8 @@ def to_json(
         "title": title,
         "sections": sections,
         "references": [
-            {"id": s.id, "title": s.title, "authors": list(s.authors), "year": s.year, "venue": s.venue, "doi": s.doi}
+            {"id": s.id, "title": s.title, "authors": list(s.authors), "year": s.year, "venue": s.venue, "doi": s.doi,
+             "verification": {"status": "verified", "method": s.verification_method or "human"}}
             for s in sources
         ],
     }

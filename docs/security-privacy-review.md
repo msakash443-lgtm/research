@@ -8,17 +8,21 @@ owner are Q23 and Q24 in `plan.md` §4.
 
 ## Summary
 
+The table is the state on **2026-10-21**; the findings below keep their 2026-10-07 wording, each with a
+dated status line where a follow-up task has since been built.
+
 | Area | State | Biggest gap |
 |---|---|---|
-| Encryption in transit | Partly enforced | LLM endpoint and database connection may be plain text in production |
-| Encryption at rest | Not handled by the app | Depends entirely on hosting; nothing states or checks it |
-| Secrets | Env vars, `SecretStr`, never logged | No vault; dev compose exposes Postgres with a default password |
-| Access control | Strong (per-request role checks, role-matrix test) | Sessions can't be revoked server-side |
-| Retention / erasure | Partly built | Account pseudonymisation + unfiled-note scrub + configurable (opt-in) run-snapshot purge exist; no project/file deletion yet, audit log retention still undone (append-only by design) |
-| GDPR/DPDP configurability | Absent | No policy settings; third-party processors not listed |
+| Encryption in transit | Enforced in production (X.4.1, X.4.2) | Production start-up refuses a non-HTTPS LLM endpoint and a database URL without `sslmode=require` or stronger (explicit opt-outs only); HSTS is sent. Proxy-side TLS is the host's job (`docs/DEPLOYMENT.md`) |
+| Encryption at rest | Not handled by the app | Depends on hosting; now stated as a deployment requirement (X.4.6) but the app cannot check it |
+| Secrets | Env vars and `*_FILE` secrets (X.4.5), `SecretStr`, never logged | No vault integration; dev compose now binds Postgres to localhost with no fallback password (X.4.4) |
+| Access control | Strong (per-request role checks, role-matrix test) | Sessions are revocable: a per-user session epoch, "sign out everywhere" and `SESSION_MAX_AGE_SECONDS` (X.4.3). No request rate limiting in the app (proxy job) |
+| Retention / erasure | Partly built | Account pseudonymisation, unfiled-note scrub, project archive and refuse-if-activity delete, object deletion and a configurable (opt-in) run-snapshot purge exist. Audit-note retention is still undone (append-only by design); project hard delete is refused for any project with an audit row |
+| GDPR/DPDP configurability | Built, awaiting review | Privacy profile (X.4.10), processor register and notice (X.4.9), personal-data export (X.4.8). No shipped profile picks a retention period or region |
 
-No finding is exploitable without a misconfigured or stolen credential, but the retention/erasure gap
-must be closed (or a policy decided) before real users, and certainly before any participant data (M5).
+No finding is exploitable without a misconfigured or stolen credential. The open items are the
+audit-note retention design, the deployment-side encryption at rest (Q24), and independent review of
+X.4.8–X.4.10; they must be closed before real users, and certainly before any participant data (M5).
 
 ## What is already in place (verified in code)
 
@@ -63,6 +67,11 @@ hardening.
   unless the host is a local socket/sidecar (explicit opt-out).
 - **1c (Low) No HSTS header.** HTTPS is expected from a terminating proxy, but the app never sends
   `Strict-Transport-Security`, so a first visit over HTTP can be downgraded. → **X.4.2**.
+  *Status 2026-10-21 (1a–1c):* done by X.4.1 and X.4.2. In production `config.py` refuses an
+  `LLM_API_BASE_URL` that is not `https`, a `LOCAL_LLM_API_BASE_URL` that is not `https` unless
+  `LOCAL_LLM_ALLOW_HTTP=true`, and a `DATABASE_URL` without `sslmode=require`, `verify-ca` or
+  `verify-full` unless `DATABASE_TLS_OPT_OUT=true`; `main.py` sends `Strict-Transport-Security` in
+  production. The `config.py:NN` line numbers in this report are from 2026-10-07 and have moved.
 - **1d (Low, note) Forwarded headers.** The image runs `uvicorn --proxy-headers`, which by default trusts
   `X-Forwarded-*` only from 127.0.0.1. Behind a proxy in another container the app sees `http` as the
   scheme. Today nothing depends on it (cookie `Secure` and the OAuth redirect come from settings), but
@@ -76,6 +85,8 @@ hardening.
   infrastructure encryption (managed Postgres with storage encryption, encrypted volumes or S3 SSE for
   objects) rather than application crypto, but that has to be a stated deployment requirement.
   → **Q24** (ties to Q13 hosting) and **X.4.6** (deployment doc + checklist).
+  *Status 2026-10-21:* X.4.6 put the requirement in `docs/DEPLOYMENT.md`. The app still does not
+  encrypt or verify encryption at rest; that stays with the host.
 
 ### 3. Secrets
 
@@ -96,6 +107,10 @@ hardening.
   Project access is still checked per request, so removing someone from a project works; their
   sign-in does not end. → **X.4.3**: a per-user session epoch checked in `session_user`, logout-everywhere,
   and a configurable shorter lifetime.
+  *Status 2026-10-21: fixed by X.4.3.* `User.session_epoch` is stored in the cookie at sign-in and
+  compared in `dependencies.session_user`; `POST /api/auth/logout-everywhere` increments it, which ends
+  every session at once, and so does account erasure. The cookie lifetime is
+  `SESSION_MAX_AGE_SECONDS` (default 14 days). Rotating `SESSION_SECRET` also signs everyone out.
 - **4b (Low, note) First Google sign-in links to an existing account by email**
   (`routers/auth.py:48`). Safe today because Google must assert `email_verified` and development login
   is disabled outside development. If another identity provider is added, linking by email must stay
@@ -139,6 +154,7 @@ hardening.
   (append-only, see 5a); project and file deletion are X.4.7.2/.3.
 - **5c (Medium) No data export for a person** (access/portability request). The per-project audit
   export exists, but nothing gathers what the platform holds about one user. → **X.4.8**.
+  *Status 2026-10-21:* built (`GET /api/auth/export-my-data`), awaiting independent review.
 
 ### 6. Third parties and configurability
 
@@ -147,9 +163,11 @@ hardening.
   configured contact email (`connectors/crossref.py:139-147`); the ARC service receives the topic. A
   processor register and an in-app notice are needed for GDPR Art. 13/30 / DPDP notice duties.
   → **X.4.9**.
+  *Status 2026-10-21:* built (`GET /api/privacy/processors`), awaiting independent review.
 - **6b (Medium) No GDPR/DPDP configuration.** The spec asks for compliance to be "configurable"; there is
   no setting for jurisdiction, retention periods, data residency or consent requirements. Once Q23 is
   answered this becomes a small "privacy profile" (like the discipline profile, M0.7). → **X.4.10**.
+  *Status 2026-10-21:* built (`PRIVACY_PROFILE`, `DATA_RESIDENCY_REGION`), awaiting independent review.
 - **6c (note) Participant data protection is only half-built.** The participant-data switch exists, but
   there is no participant-data model yet, so nothing classifies data as participant data. Consent
   tracking and anonymisation belong to M5.6/M5.7 and stay there.
@@ -161,6 +179,8 @@ hardening.
   next to each stored object so it can be deleted if a licence is withdrawn (feeds X.4.7).
 
 ## Follow-up tasks
+
+Priority is from 2026-10-07; X.4.1–X.4.6 are done and X.4.8–X.4.10 are awaiting review (see `plan.md`).
 
 | Task | What | Priority |
 |---|---|---|
@@ -175,36 +195,64 @@ hardening.
 | X.4.9 | Processor register + in-app privacy notice | P3 |
 | X.4.10 | Privacy profile (jurisdiction, retention defaults, residency) | P3 (after Q23) |
 
-## X.4.7.3 project archive/deletion design (2026-10-17)
+## X.4.7.3 project archive and deletion (2026-10-17 design; built 2026-10-20)
 
-The first implementation step is a reversible **archive**, not a hard delete. An archived project
-must remain readable to its owner for export and audit purposes, must be hidden from the normal active
-project list, and must reject new writes, task enqueueing, gate decisions, stage changes, and source
-uploads. Restoring an archive is an owner-only operation and must be audited. This avoids silently
-destroying the append-only evidence needed to explain a completed research process.
+Archive is a reversible, owner-only state transition (`app/project_lifecycle.py`,
+`POST .../projects/{id}/archive` / `.../unarchive`): `Project.archived_at` is set and
+`app/dependencies.py::project_access` refuses every write (409) on the project until it is
+unarchived, while reads (including the owner's own `GET .../projects/{id}`) keep working. An
+archived project is hidden from the default `GET /api/projects` list (`?include_archived=true`
+shows it) but never deleted or rewritten. Restoring is owner-only and audited
+(`project.archived` / `project.unarchived`).
 
-Hard deletion is intentionally not implemented until the owner/DPO chooses a retention rule for
-`audit_events`, `document_versions`, `authorship_events`, `similarity_checks`, and
-`provenance_reports`. Those tables have database-level append-only guards; a project delete cannot
-legitimately cascade through them. A compliant deletion design therefore needs either a retained
-project tombstone with pseudonymised content or a separately authorised retention purge outside the
-application's ordinary project-delete transaction.
+**Project-scoped table inventory**, verified 2026-10-20 by enumerating every
+`ForeignKey("projects.id")` column in `backend/app/models.py` (the 2026-10-17/2026-10-18 count
+below was incomplete):
 
-The current project-scoped foreign-key inventory is:
+- **46 direct children** (their own `project_id` foreign key to `projects.id`): `project_members`,
+  `gates`, `research_context_items`, `sources`, `screening_criteria`, `screening_decisions`,
+  `auto_exclude_audits`, `seed_papers`, `seed_check_runs`, `project_extraction_schemas`,
+  `search_queries`, `search_alerts`, `snowball_runs`, `extractions`, `meta_analysis_plans`,
+  `constructs`, `theories`, `conceptual_paths`, `claims`, `gaps`, `research_briefs`, `idea_briefs`,
+  `dataset_versions`, `analysis_plans`, `analysis_runs`, `robustness_checks`, `exclusion_rules`,
+  `qual_excerpts`, `qual_suggestions`, `qual_codes`, `research_questions`, `notes`,
+  `ai_suggestions`, `ai_item_locks`, `documents`, `own_paper_lookups`, `provenance_reports`,
+  `section_approvals`, `interpretation_findings`, `interpretation_reviews`, `research_runs`,
+  `tasks`, `artifacts`, `artifact_edges`, `source_embeddings`, `cluster_runs`. (The earlier list
+  omitted `idea_briefs`, `dataset_versions`, `analysis_plans`, `analysis_runs`, `exclusion_rules`,
+  `qual_excerpts` and `qual_suggestions`, and miscategorised `conceptual_paths` as indirect-only:
+  it has had its own `project_id` foreign key since migration `20261015_0065`.)
+- **Indirect children** (no `project_id` column of their own; reached by joining through their
+  direct-child parent): `note_revisions` and `note_attachments` (via `notes`), `source_excerpts`
+  (via `sources`), `document_versions` (via `documents`), `ai_suggestion_events` (via
+  `ai_suggestions`), `claim_evidence` (via `claims`).
+- **Project-scoped but deliberately not a foreign key** (so the row outlives a deleted project,
+  the same way `llm_usage` outlives an erased user, `app/erasure.py`): `authorship_events` and
+  `similarity_checks` carry a plain `project_id` column, not a `ForeignKey`.
+- **Stored objects**: source full-text keys and note attachment keys (`ObjectStore`, X.4.7.2).
 
-- direct project children: `project_members`, `gates`, `research_context_items`, `sources`,
-  `screening_criteria`, `screening_decisions`, `auto_exclude_audits`, `seed_papers`,
-  `seed_check_runs`, `project_extraction_schemas`, `search_queries`, `search_alerts`,
-  `snowball_runs`, `extractions`, `meta_analysis_plans`, `constructs`, `theories`, `claims`,
-  `gaps`, `research_briefs`, `research_questions`, `notes`, `ai_suggestions`, `ai_item_locks`,
-  `documents`, `provenance_reports`, `research_runs`, `tasks`, `artifacts`, `artifact_edges`,
-  `source_embeddings`, and `cluster_runs`;
-- indirect project children include `conceptual_paths` through `constructs`, plus source/context/
-  document/research-run child tables and note attachments;
-- stored objects include source full-text keys and note attachment keys. Archive does not delete
-  them. A future approved hard-delete operation must enumerate and call `ObjectStore.delete()` for
-  each key before removing the corresponding metadata rows, with failure-safe retry records.
+**Append-only guards** (`app/audit_guard.py`, `app/note_guard.py`, `app/ledger_guard.py`,
+`app/suggestion_guard.py`, `app/project_schema_guard.py`) make `audit_events`,
+`note_revisions`, `document_versions`, `authorship_events`, `similarity_checks`,
+`provenance_reports`, `own_paper_lookups`, `section_approvals`, `interpretation_findings`,
+`ai_suggestion_events` and `project_extraction_schemas` reject `UPDATE`/`DELETE` at the database
+level. `source_excerpts` is immutable on `content`/`content_hash` only (`app/excerpt_guard.py`)
+and can still be deleted; it is not in this list.
 
-Implementation boundary: X.4.7.3 may ship the archive/restore state transition and write guards.
-Hard deletion remains blocked pending the Q23 retention decision and a migration design that handles
-append-only rows without disabling their integrity triggers.
+**Deletion decision (Q23, 2026-10-19, owner via chat: no DPO review, owner signs off alone):**
+refuse the whole hard delete up front, cleanly, naming every append-only table that still holds a
+row for the project, rather than build a second, inconsistent tombstone or pseudonymisation path
+for projects. `app/project_lifecycle.py::delete_project` checks all eleven append-only tables
+above (the ones reachable from a project) before touching anything; if any has a row, it raises
+`DeletionBlocked` and nothing is deleted. Because `POST /api/projects` always records a
+`project.created` audit event, **every project made through the normal API already has an
+`audit_events` row and can never be hard-deleted** -- archiving is the only way to retire a
+project with real activity. A project with genuinely no recorded activity (only reachable by
+constructing the row directly, which is what the tests do) can be: the 46 direct-child tables are
+removed in FK dependency order (`Base.metadata.sorted_tables`, reversed), the five indirect-child
+tables are removed by joining through their parent first, every stored object is removed via
+`ObjectStore.delete()`, and finally the project row itself. `audit_events` and `llm_usage` are
+never part of the cascade (both are designed to survive the project they named). This is the
+"refuse deletion of a project that has audit rows, and say so clearly" option named in X.4.7.3's
+acceptance criteria, applied to every append-only table a project can reach, not only
+`audit_events`.

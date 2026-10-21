@@ -48,6 +48,7 @@ class ProjectRead(ProjectBase):
     discipline: str | None = None
     ai_involvement: AiInvolvement
     ai_model_route: AiModelRoute
+    archived_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -130,11 +131,13 @@ class SourceRead(BaseModel):
     source_ids: dict | None = None
     fulltext_path: str | None = None
     fulltext_access: dict | None = None
+    coverage: dict | None = None  # full text / abstract only / not accessible, derived (X.76)
     quality_flags: list | None = None
     found_via: dict | None = None  # how an automated method found it, e.g. snowballing (M1.9.2); system-set
     citation_count: int | None = None  # times cited per `citation_count_source` (M2.13); None = unknown, not 0
     citation_count_source: str | None = None
     citation_count_at: datetime | None = None
+    language: str | None = None  # two-letter code a connector reported (X.86); None = not reported
     evidence_excerpt: str | None = None
     excerpt_locator: str | None = None
     created_at: datetime

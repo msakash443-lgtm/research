@@ -519,24 +519,6 @@ def execute_research_run(
             .options(selectinload(Source.excerpts))
         ).all()
 
-        context = [
-            {"kind": item.kind.value, "content": item.content, "rationale": item.rationale or ""}
-            for item in context_rows
-        ]
-        source_snapshot = []
-        remaining_evidence_chars = MAX_TOTAL_EVIDENCE_CHARS
-        # Manual sources first (oldest first within each group): they get the lowest [S#]
-        # markers and the first claim on the evidence character budget.
-        for source in sorted(sources, key=lambda item: (item.is_automated, item.created_at)):
-            snapshot = _source_snapshot(source)
-            if snapshot["excerpt"]:
-                snapshot["excerpt"] = snapshot["excerpt"][:remaining_evidence_chars]
-                remaining_evidence_chars -= len(snapshot["excerpt"])
-            source_snapshot.append(snapshot)
-        run.research_plan = build_plan(source_snapshot)
-        run.input_snapshot = {"context": context, "sources": source_snapshot}
-        if web_retrieval is not None:
-            run.input_snapshot["web_retrieval"] = web_retrieval
         # Recheck immediately before prompt construction so a concurrent lock cannot enter the model input.
         locked_context = locked_ids(db, project.id, CONTEXT_ITEM_KIND)
         locked_sources = locked_uuids(db, project.id, "source")

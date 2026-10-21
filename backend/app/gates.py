@@ -7,7 +7,7 @@ names (ethics/design G7, analysis plan G8, final sign-off G11) need an owner.
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -89,18 +89,26 @@ def reblock_tasks_for_gate(db: Session, project_id, code: GateCode, actor: str) 
     types = [task_type for task_type, gate in REQUIRED_GATES.items() if gate == code]
     if not types:
         return 0
-    queued = db.scalars(
-        select(Task).where(Task.project_id == project_id, Task.status == TaskStatus.queued, Task.type.in_(types))
+    queued_ids = db.scalars(
+        select(Task.id).where(Task.project_id == project_id, Task.status == TaskStatus.queued, Task.type.in_(types))
     ).all()
-    for task in queued:
-        task.status = TaskStatus.blocked
-        task.blocked_by_gate = code
-    if queued:
+    # Conditional write: a worker may claim a task after it was read above; only a still-queued task is held.
+    blocked_ids = []
+    for task_id in queued_ids:
+        written = db.execute(
+            update(Task)
+            .where(Task.id == task_id, Task.status == TaskStatus.queued)
+            .values(status=TaskStatus.blocked, blocked_by_gate=code)
+            .execution_options(synchronize_session=False)
+        ).rowcount
+        if written == 1:
+            blocked_ids.append(task_id)
+    if blocked_ids:
         audit.record(
             db, actor=actor, action="task.blocked", project_id=project_id,
-            payload={"gate": code.value, "blocked": len(queued), "task_ids": [str(t.id) for t in queued], "via": "gate.reopened"},
+            payload={"gate": code.value, "blocked": len(blocked_ids), "task_ids": [str(t) for t in blocked_ids], "via": "gate.reopened"},
         )
-    return len(queued)
+    return len(blocked_ids)
 
 
 def release_tasks_for_gate(db: Session, project_id, code: GateCode, actor: str) -> int:

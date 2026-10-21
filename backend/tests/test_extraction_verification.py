@@ -53,17 +53,36 @@ def test_human_verification_rechecks_pdf_and_g4_waits_for_it(monkeypatch):
     assert "frame-ancestors 'self'" in pdf_response.headers["content-security-policy"]
     assert owner.post(base + "/gates/G4/approve").status_code == 409
     assert owner.post(base + f"/extractions/{extraction_id}/verify", json={"confirmed_critical_fields": ["sample"]}).status_code == 422
-    body = {"confirmed_critical_fields": ["measures", "sample", "key_findings"]}
+    body = {"confirmed_critical_fields": ["measures", "sample", "key_findings"], "confirmed_not_reported_fields": ["measures", "key_findings"]}
     result = owner.post(base + f"/extractions/{extraction_id}/verify", json=body)
     assert result.status_code == 200, result.text
     assert result.json()["verified_by_human"] is True and result.json()["verified_by"]
     assert owner.post(base + "/gates/G4/approve").status_code == 200
 
 
+def test_a_critical_field_not_reported_needs_its_own_confirmation(monkeypatch):
+    owner, project, source, _ = _setup(monkeypatch)
+    extraction_id = _extraction(project, source)  # `measures` and `key_findings` are null, `sample` is reported
+    url = f"/api/projects/{project}/extractions/{extraction_id}/verify"
+    critical = ["measures", "sample", "key_findings"]
+
+    missing = owner.post(url, json={"confirmed_critical_fields": critical})
+    assert missing.status_code == 422 and "key_findings, measures" in missing.json()["detail"]
+    wrong = owner.post(url, json={"confirmed_critical_fields": critical, "confirmed_not_reported_fields": ["measures", "key_findings", "sample"]})
+    assert wrong.status_code == 422  # a reported value can't be confirmed as "not reported"
+    with SessionLocal() as db:
+        assert db.get(Extraction, uuid.UUID(extraction_id)).verified_by_human is False
+
+    done = owner.post(url, json={"confirmed_critical_fields": critical, "confirmed_not_reported_fields": ["key_findings", "measures"]})
+    assert done.status_code == 200 and done.json()["verified_by_human"] is True
+    events = [e["payload_json"] for e in owner.get(f"/api/projects/{project}/audit").json() if e["action"] == "extraction.verified"]
+    assert events[0]["confirmed_not_reported"] == ["key_findings", "measures"]
+
+
 def test_verification_refuses_mismatched_pdf_quote_and_unextracted_source_blocks_g4(monkeypatch):
     owner, project, source, _ = _setup(monkeypatch)
     extraction_id = _extraction(project, source)
-    body = {"confirmed_critical_fields": ["measures", "sample", "key_findings"]}
+    body = {"confirmed_critical_fields": ["measures", "sample", "key_findings"], "confirmed_not_reported_fields": ["measures", "key_findings"]}
     with SessionLocal() as db:
         row = db.get(Extraction, uuid.UUID(extraction_id))
         row.evidence_spans = {"sample": {"quote": "a fabricated quote", "page": 1}}

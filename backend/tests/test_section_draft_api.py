@@ -184,3 +184,48 @@ def test_a_stored_draft_is_decided_through_the_shared_suggestion_endpoints(fake_
     edited = client.post(f"/api/projects/{pid}/suggestions/{row.id}/edit-accept", json={"text": "My own rewording."})
     assert edited.status_code == 200
     assert edited.json()["state"] == "accepted" and edited.json()["accepted_text"] == "My own rewording."
+
+
+def _accepted_draft(client, pid, doc, fake_llm, text="A drafted paragraph from the outline."):
+    _claim(client, pid, doc)
+    _reply(fake_llm, {"draft": text})
+    _run_task({"project_id": pid, "document_id": doc, "actor": "user:test"})
+    [row] = _suggestions(pid)
+    assert client.post(f"/api/projects/{pid}/suggestions/{row.id}/accept").status_code == 200
+    return str(row.id)
+
+
+def _save(client, pid, doc, runs, base_number):
+    user_id = client.get("/api/auth/me").json()["id"]
+    content = {"type": "doc", "content": [{"type": "paragraph", "content": [
+        {"type": "text", "text": text, "marks": [{"type": "prov", "attrs": {
+            "sid": sid, "origin": origin, "by": user_id, "sug": sug, "note": None, "paste": None, "src": None}}]}
+        for text, sid, origin, sug in runs]}]}
+    return client.post(f"/api/projects/{pid}/documents/{doc}/versions", json={
+        "base_number": base_number, "client_save_id": uuid.uuid4().hex, "client_session_id": "s", "content_json": content})
+
+
+def test_at_suggestions_only_an_accepted_draft_cannot_be_saved_into_the_section(fake_llm):
+    client, pid = _project("sd-q27-refused@example.com")
+    doc = _document(client, pid)
+    sug = _accepted_draft(client, pid, doc, fake_llm)
+
+    response = _save(client, pid, doc, [("A drafted paragraph from the outline.", "d" * 8, "ai_suggested", sug)], 0)
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "ai_wording_not_allowed"
+    with SessionLocal() as db:
+        assert db.get(Document, uuid.UUID(doc)).current_version_id is None
+
+
+def test_at_full_an_accepted_draft_is_saved_and_stays_saveable_after_the_level_is_lowered(fake_llm):
+    client, pid = _project("sd-q27-full@example.com", ai="full")
+    doc = _document(client, pid)
+    sug = _accepted_draft(client, pid, doc, fake_llm)
+    draft = ("A drafted paragraph from the outline.", "d" * 8, "ai_suggested", sug)
+
+    assert _save(client, pid, doc, [draft], 0).status_code == 201
+
+    assert client.put(f"/api/projects/{pid}/ai-settings", json={"ai_involvement": "suggestions_only"}).status_code == 200
+    kept = _save(client, pid, doc, [draft, (" My own sentence.", "t" * 8, "typed", None)], 1)
+    assert kept.status_code == 201, kept.text

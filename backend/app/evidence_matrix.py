@@ -7,15 +7,27 @@ import io
 import json
 import re
 import zipfile
+from urllib.parse import quote, urlsplit
 from xml.sax.saxutils import escape
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app import fulltext_coverage
+from app.dedupe import doi_key
 from app.extraction_schema import schema_version
 from app.models import Extraction, Project
 from app.project_schemas import resolve
 from app.thematic_clusters import clusterable_sources
+
+
+def original_url(source) -> str | None:
+    """Where a reader can open the paper itself (X.63(b)): its DOI, else its http(s) page; never the stored PDF."""
+    doi = doi_key(source.doi)
+    if doi:
+        return "https://doi.org/" + quote(doi, safe="/:()<>;")
+    parts = urlsplit((source.url or "").strip())
+    return source.url.strip() if parts.scheme in ("http", "https") and parts.netloc else None
 
 
 def build(db: Session, project: Project, name: str = "default") -> dict:
@@ -35,6 +47,7 @@ def build(db: Session, project: Project, name: str = "default") -> dict:
     papers = []
     for source_id, source in sources.items():
         row = chosen.get(source_id)
+        link = original_url(source)
         cells = {}
         for field in schema.fields:
             value = (row.fields_json or {}).get(field.key) if row else None
@@ -44,13 +57,14 @@ def build(db: Session, project: Project, name: str = "default") -> dict:
                     "checked" if row.verified_by_human else "matched"
                 ),
                 "quote": span.get("quote"), "page": span.get("page"), "section": span.get("section"),
+                "original_url": link,
                 "source_text_url": (
                     f"/api/projects/{project.id}/evidence-matrix/{row.id}/fields/{field.key}/source-text"
                     if row and value is not None else None
                 ),
             }
         papers.append({
-            "source_id": str(source_id), "title": source.title,
+            "source_id": str(source_id), "title": source.title, "coverage": fulltext_coverage.coverage(source),
             "extraction_id": str(row.id) if row else None,
             "verified_by_human": row.verified_by_human if row else False,
             "extracted_by": row.extracted_by if row else None,

@@ -6,12 +6,12 @@ import json
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
-from fastapi.responses import Response
+from fastapi.responses import StreamingResponse
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app import audit
-from app.database import get_db
+from app.database import SessionLocal, get_db
 from app.dependencies import READ_ROLES, current_user, project_access, project_role
 from app.models import AuditEvent, Project, ProjectRole, User
 from app.schemas import AuditEventRead
@@ -72,26 +72,54 @@ def export_audit_events(
     (`screening.*`) are a non-owner's own only, same as the list endpoint (2026-10-19 decision)."""
     is_owner = project_role(db, project, user) == ProjectRole.owner
     query = _project_events(project, None, None, viewer_actor=audit.user_actor(user), is_owner=is_owner)
-    events = db.scalars(query.order_by(AuditEvent.timestamp.asc(), AuditEvent.id.asc())).all()
+    query = query.order_by(AuditEvent.timestamp.asc(), AuditEvent.id.asc())
     filename = f"audit-{project.id}.{format}"
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    # Rows are streamed from a session of their own: the request session belongs to the access check,
+    # and FastAPI closes a yield-dependency session before a streamed body is sent.
     if format == "json":
-        body = json.dumps([AuditEventRead.model_validate(e).model_dump(mode="json") for e in events], indent=2)
-        return Response(body, media_type="application/json", headers=headers)
+        return StreamingResponse(_json_chunks(query), media_type="application/json", headers=headers)
+    return StreamingResponse(_csv_chunks(query), media_type="text/csv; charset=utf-8", headers=headers)
 
+
+EXPORT_BATCH_ROWS = 500
+
+
+def _stream_events(query):
+    with SessionLocal() as stream_db:
+        yield from stream_db.scalars(query.execution_options(yield_per=EXPORT_BATCH_ROWS))
+
+
+def _json_chunks(query):
+    # Same bytes as json.dumps(list, indent=2), produced one event at a time.
+    yield "["
+    first = True
+    for event in _stream_events(query):
+        item = json.dumps(AuditEventRead.model_validate(event).model_dump(mode="json"), indent=2)
+        yield ("" if first else ",") + "\n  " + item.replace("\n", "\n  ")
+        first = False
+    yield "]" if first else "\n]"
+
+
+def _csv_row(event: AuditEvent) -> list[str]:
+    return [
+        _csv_cell(event.timestamp.isoformat()),
+        _csv_cell(event.actor),
+        _csv_cell(event.action),
+        _csv_cell(event.model_id),
+        _csv_cell(event.prompt_version),
+        _csv_cell(json.dumps(event.payload_json, sort_keys=True) if event.payload_json is not None else ""),
+        _csv_cell(event.id),
+    ]
+
+
+def _csv_chunks(query):
     buffer = io.StringIO()
     writer = csv.writer(buffer)
     writer.writerow(CSV_COLUMNS)
-    for event in events:
-        writer.writerow(
-            [
-                _csv_cell(event.timestamp.isoformat()),
-                _csv_cell(event.actor),
-                _csv_cell(event.action),
-                _csv_cell(event.model_id),
-                _csv_cell(event.prompt_version),
-                _csv_cell(json.dumps(event.payload_json, sort_keys=True) if event.payload_json is not None else ""),
-                _csv_cell(event.id),
-            ]
-        )
-    return Response(buffer.getvalue(), media_type="text/csv; charset=utf-8", headers=headers)
+    yield buffer.getvalue()
+    for event in _stream_events(query):
+        buffer.seek(0)
+        buffer.truncate()
+        writer.writerow(_csv_row(event))
+        yield buffer.getvalue()

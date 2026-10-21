@@ -59,6 +59,32 @@ def test_reposting_the_same_client_id_returns_the_same_note_not_a_duplicate():
     assert first.json()["id"] == second.json()["id"]
     assert len(client.get("/api/notes").json()) == 1
 
+def test_reposting_the_same_client_id_with_different_body_is_a_409_conflict():
+    client = _login("idem-conflict@example.com")
+    first = client.post("/api/notes", json={"client_id": "retry-2", "kind": "typed", "body": "Saved once"})
+    assert first.status_code == 201
+
+    second = client.post("/api/notes", json={"client_id": "retry-2", "kind": "typed", "body": "Saved differently offline"})
+
+    assert second.status_code == 409
+    detail = second.json()["detail"]
+    assert detail["code"] == "note_conflict"
+    assert detail["current"]["id"] == first.json()["id"]
+    assert detail["current"]["body"] == "Saved once"
+    assert len(client.get("/api/notes").json()) == 1
+
+
+def test_reposting_the_same_client_id_with_identical_content_stays_200():
+    client = _login("idem-identical@example.com")
+    payload = {"client_id": "retry-3", "kind": "clip", "quoted_text": "same quote", "body": "same comment"}
+    first = client.post("/api/notes", json=payload)
+    assert first.status_code == 201
+
+    second = client.post("/api/notes", json=payload)
+
+    assert second.status_code == 200
+    assert second.json()["id"] == first.json()["id"]
+
 
 
 def test_losing_a_race_on_the_same_client_id_returns_the_winners_note(monkeypatch):
@@ -307,3 +333,52 @@ def test_voice_capture_stores_audio_without_transcription():
     assert attachment["media_type"] == "audio/wav"
     assert attachment["size"] == len(payload)
     assert get_object_store(get_settings()).get(f"notes/{body['owner_id']}/{body['id']}/voice.wav") == payload
+
+
+def test_highlight_capture_concurrent_retry_returns_existing_note(monkeypatch):
+    from app.routers import notes as notes_router
+
+    client = _login("highlight-race@example.com")
+    project_id = client.post("/api/projects", json={"title": "Race"}).json()["id"]
+    source_id = client.post(f"/api/projects/{project_id}/sources", json={"title": "Race paper"}).json()["id"]
+    with SessionLocal() as db:
+        db.get(Source, uuid.UUID(source_id)).fulltext_path = "sources/race.pdf"
+        db.commit()
+    payload = {"client_id": "highlight-race", "source_id": source_id, "quoted_text": "passage", "body": "mine"}
+    first = client.post("/api/notes/highlight", json=payload)
+    assert first.status_code == 201
+
+    # Simulate the race: the pre-check misses (the other request has not committed yet), so the insert collides.
+    real = notes_router._existing_note
+    calls = {"n": 0}
+
+    def racing(db, user, client_id):
+        calls["n"] += 1
+        return None if calls["n"] == 1 else real(db, user, client_id)
+
+    monkeypatch.setattr(notes_router, "_existing_note", racing)
+    second = client.post("/api/notes/highlight", json=payload)
+
+    assert second.status_code == 200, second.text
+    assert second.json()["id"] == first.json()["id"]
+
+
+def test_voice_and_photo_uploads_over_the_default_body_cap_are_accepted():
+    # The 1 MiB default cap is for JSON requests; raw media uploads get object_storage_max_bytes (X.31.17).
+    client = _login("bigmedia@example.com")
+    over_default = b"\0" * (get_settings().max_request_body_bytes + 1024)
+
+    voice = client.post("/api/notes/voice?client_id=big-voice", content=over_default, headers={"content-type": "audio/wav"})
+    photo = client.post("/api/notes/photo?client_id=big-photo", content=over_default, headers={"content-type": "image/png"})
+
+    assert voice.status_code == 201, voice.text
+    assert photo.status_code == 201, photo.text
+
+
+def test_ordinary_json_requests_keep_the_default_body_cap():
+    client = _login("bigjson@example.com")
+    too_big = "x" * (get_settings().max_request_body_bytes + 1024)
+
+    response = client.post("/api/notes", json={"client_id": "big-json", "kind": "typed", "body": too_big})
+
+    assert response.status_code == 413

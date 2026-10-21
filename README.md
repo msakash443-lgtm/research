@@ -64,7 +64,7 @@ For a private first deployment, run the web service and worker as two processes 
    Copy-Item .env.example .env
    ```
 
-3. Change `POSTGRES_PASSWORD` and `SESSION_SECRET` in `.env` to local-only values.
+3. Change `POSTGRES_PASSWORD` and `SESSION_SECRET` in `.env` to local-only values. Keep `ENVIRONMENT=development`: it is required (no default), must be exactly `development` or `production`, and the app, worker and Alembic refuse to start without it.
 4. Start the web service, worker, and local PostgreSQL:
 
    ```powershell
@@ -73,7 +73,7 @@ For a private first deployment, run the web service and worker as two processes 
 
 5. Open [http://localhost:8000](http://localhost:8000). While `ENVIRONMENT=development`, choose the local development account.
 
-The Docker worker processes queued research runs. For a non-Docker local run, set `RUN_RESEARCH_INLINE=true` and start the API with:
+The Docker worker processes queued research runs. For a non-Docker local run, copy `.env.example` to `.env` (or set `ENVIRONMENT=development` in the shell), set `RUN_RESEARCH_INLINE=true` and start the API with:
 
 ```powershell
 python -m pip install -r backend/requirements.txt

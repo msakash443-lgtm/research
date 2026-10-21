@@ -1,6 +1,7 @@
 import { $, el, label, toast, confirmAction } from "../dom.js";
 import { request, projectApi } from "../api.js";
 import { GATE_NAMES } from "../workflow.js";
+import { coverageSummary } from "../fulltextCoverageLogic.js";
 
 // One gate's row, reused on Scope (G1), Search (G2) and the full Approvals list.
 export function gateCard(ctx, code) {
@@ -119,4 +120,19 @@ export function errorCard(message, retry) {
   button.addEventListener("click", retry);
   card.append(button);
   return card;
+}
+
+// How much of the paper the project holds (X.76): a coloured label, what it means for the decision, the reason a
+// PDF is missing, and the open-access copy to open when there is one. Shown wherever a person decides from a paper.
+export function coverageBadge(coverage) {
+  const summary = coverageSummary(coverage);
+  const box = el("div", { className: "coverage" });
+  box.append(el("span", { className: `coverage-badge coverage-${summary.tone}`, text: summary.text }));
+  if (summary.advice) box.append(el("span", { className: "muted small", text: ` ${summary.advice}` }));
+  if (summary.reason) box.append(el("span", { className: "muted small", text: ` (${summary.reason})` }));
+  if (summary.link) {
+    box.append(document.createTextNode(" "), el("a", { className: "small", text: "Open-access copy",
+      attrs: { href: summary.link, target: "_blank", rel: "noopener noreferrer" } }));
+  }
+  return box;
 }
