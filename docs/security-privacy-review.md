@@ -8,7 +8,7 @@ owner are Q23 and Q24 in `plan.md` §4.
 
 ## Summary
 
-The table is the state on **2026-10-21**; the findings below keep their 2026-10-07 wording, each with a
+The table is the state on **2026-10-22**; the findings below keep their 2026-10-07 wording, each with a
 dated status line where a follow-up task has since been built.
 
 | Area | State | Biggest gap |
@@ -17,12 +17,12 @@ dated status line where a follow-up task has since been built.
 | Encryption at rest | Not handled by the app | Depends on hosting; now stated as a deployment requirement (X.4.6) but the app cannot check it |
 | Secrets | Env vars and `*_FILE` secrets (X.4.5), `SecretStr`, never logged | No vault integration; dev compose now binds Postgres to localhost with no fallback password (X.4.4) |
 | Access control | Strong (per-request role checks, role-matrix test) | Sessions are revocable: a per-user session epoch, "sign out everywhere" and `SESSION_MAX_AGE_SECONDS` (X.4.3). No request rate limiting in the app (proxy job) |
-| Retention / erasure | Partly built | Account pseudonymisation, unfiled-note scrub, project archive and refuse-if-activity delete, object deletion and a configurable (opt-in) run-snapshot purge exist. Audit-note retention is still undone (append-only by design); project hard delete is refused for any project with an audit row |
-| GDPR/DPDP configurability | Built, awaiting review | Privacy profile (X.4.10), processor register and notice (X.4.9), personal-data export (X.4.8). No shipped profile picks a retention period or region |
+| Retention / erasure | Partly built | Account pseudonymisation, unfiled-note scrub, project archive and refuse-if-activity delete, object deletion and a configurable (opt-in) run-snapshot purge exist. Audit notes are kept forever by decision (owner, 2026-10-21; X.4.7.7 dropped; `audit_events` stays append-only); project hard delete is refused for any project with an audit row |
+| GDPR/DPDP configurability | Built; X.4.9 awaiting review | Privacy profile (X.4.10) and personal-data export (X.4.8) accepted 2026-10-21; processor register and notice (X.4.9) awaiting review. No shipped profile picks a retention period or region |
 
 No finding is exploitable without a misconfigured or stolen credential. The open items are the
-audit-note retention design, the deployment-side encryption at rest (Q24), and independent review of
-X.4.8–X.4.10; they must be closed before real users, and certainly before any participant data (M5).
+deployment-side encryption at rest (Q24) and independent review of X.4.9 (audit-note retention is
+decided: kept forever); they must be closed before real users, and certainly before any participant data (M5).
 
 ## What is already in place (verified in code)
 
@@ -126,17 +126,18 @@ hardening.
   their full `input_snapshot` (`models.py:472`) indefinitely.
   *Status 2026-10-19 (X.4.7.4):* a run-snapshot retention period is now configurable
   (`RESEARCH_RUN_SNAPSHOT_RETENTION_DAYS`, `app/retention.py`, applied by the worker). Default is still
-  unset/indefinite — nothing purges until the owner sets a real period. Audit-note retention remains
-  undone: `audit_events` is append-only at the DB-trigger level (`app/audit_guard.py`), so no row can be
-  redacted in place; a compliant purge needs a separate design (e.g. a retained, re-attributed summary
-  written outside the ordinary append-only path), not a setting that silently does nothing.
+  unset/indefinite — nothing purges until the owner sets a real period. `audit_events` is
+  append-only at the DB-trigger level (`app/audit_guard.py`), so no row can be redacted in place.
+  *Status 2026-10-21 (X.4.7.7, dropped):* the owner decided in chat that audit notes are kept forever;
+  there is no audit-note retention period and no code change is needed.
 - **5b (High, decision) Erasure conflicts with the immutable audit log.** `audit_events` is append-only
   (triggers) and records actors by user id plus free-text notes and reasons that may contain personal
   data. GDPR Art. 17 / DPDP s.12 erasure therefore needs a defined approach. The usual one, which keeps
   research integrity: pseudonymise the person (blank email/name on `users`, keep the UUID so the audit
   trail stays intact) and state that audit notes are retained under the research-integrity exemption
-  for a fixed period. That was a policy choice for the owner/university. → **Q23**, then **X.4.7**.
-  *Status 2026-10-19: Q23 answered (owner via chat, no DPO review — she signs off alone).* The
+  (decided 2026-10-21: kept forever, no fixed period). That was a policy choice for the owner/university.
+  → **Q23**, then **X.4.7**.
+  *Status 2026-10-19: Q23 answered (owner via chat, no DPO review — the owner signs off alone).* The
   pseudonymise-and-keep-audit-trail build is no longer provisional.
   *Status 2026-10-14 (X.4.7.1):* a signed-in person can pseudonymise their own account
   (`POST /api/auth/erase-account`, typing their email to confirm). The email becomes
@@ -154,7 +155,8 @@ hardening.
   (append-only, see 5a); project and file deletion are X.4.7.2/.3.
 - **5c (Medium) No data export for a person** (access/portability request). The per-project audit
   export exists, but nothing gathers what the platform holds about one user. → **X.4.8**.
-  *Status 2026-10-21:* built (`GET /api/auth/export-my-data`), awaiting independent review.
+  *Status 2026-10-21:* built (`GET /api/auth/export-my-data`); independently reviewed and accepted
+  2026-10-21.
 
 ### 6. Third parties and configurability
 
@@ -167,7 +169,8 @@ hardening.
 - **6b (Medium) No GDPR/DPDP configuration.** The spec asks for compliance to be "configurable"; there is
   no setting for jurisdiction, retention periods, data residency or consent requirements. Once Q23 is
   answered this becomes a small "privacy profile" (like the discipline profile, M0.7). → **X.4.10**.
-  *Status 2026-10-21:* built (`PRIVACY_PROFILE`, `DATA_RESIDENCY_REGION`), awaiting independent review.
+  *Status 2026-10-21:* built (`PRIVACY_PROFILE`, `DATA_RESIDENCY_REGION`); independently reviewed and
+  accepted 2026-10-21.
 - **6c (note) Participant data protection is only half-built.** The participant-data switch exists, but
   there is no participant-data model yet, so nothing classifies data as participant data. Consent
   tracking and anonymisation belong to M5.6/M5.7 and stay there.
@@ -177,10 +180,34 @@ hardening.
 - Full text is stored only through the new object store (M0.10.2) and nothing writes to it yet; the
   licence check before storing is part of M2.7.1. No finding today; M2.7 must record the licence basis
   next to each stored object so it can be deleted if a licence is withdrawn (feeds X.4.7).
+  *Status 2026-10-22:* the object store is now written to. Open-access fetch (`oa_fetch.py:148`) and
+  arXiv fetch (`arxiv_fulltext.py:91`) store a PDF only when the reported licence is on the allowlist
+  (`oa_fetch.licence_permits_storage`), otherwise the source is recorded link-only; the licence,
+  version and host type go into `Source.fulltext_access` (`oa_fetch.py:82-86`). A manual PDF upload
+  (`routers/sources.py:370`) records the uploader, hash and size but no licence basis, so the uploader
+  carries that responsibility. Note voice attachments (`routers/notes.py:307`, `:352`) are user
+  content, not third-party text. `POST .../sources/{id}/fulltext/withdraw` (`routers/sources.py:386`)
+  deletes the stored PDF and keeps the previous access record under `previous`, which covers a
+  withdrawn licence.
+
+### 8. Third-party licences and terms of the vendored ARC service (X.141, 2026-10-22)
+
+- The vendored ARC retrieval service (`backend/arc_retrieval/`, owner decision 2026-10-13) needs
+  `PyMuPDF` and `scholarly`, now pinned in `backend/requirements-arc.txt` only. The web image
+  installs `backend/requirements.txt`, which holds neither, and `backend/app/` imports neither
+  (`test_requirements_split.py`).
+- **PyMuPDF is AGPL-3.0** (or a commercial Artifex licence). Running the ARC service as a network
+  service with PyMuPDF obliges offering its source to users of that service. **Owner decision needed
+  before any hosted deployment of the ARC service:** accept AGPL, buy the commercial licence, or
+  switch `web/pdf_extractor.py` to `pypdf` (already used by the app).
+- **`scholarly` scrapes Google Scholar**, which Google's terms do not permit and which Google
+  blocks with CAPTCHAs. **Owner decision needed before it is enabled in any deployment:** keep it
+  for local use only, or drop the Scholar source from ARC and rely on the licensed connectors
+  (OpenAlex, Crossref, Semantic Scholar, PubMed).
 
 ## Follow-up tasks
 
-Priority is from 2026-10-07; X.4.1–X.4.6 are done and X.4.8–X.4.10 are awaiting review (see `plan.md`).
+Priority is from 2026-10-07; X.4.1–X.4.6, X.4.8 and X.4.10 are done and X.4.9 is awaiting review (see `plan.md`).
 
 | Task | What | Priority |
 |---|---|---|
@@ -209,12 +236,13 @@ shows it) but never deleted or rewritten. Restoring is owner-only and audited
 `ForeignKey("projects.id")` column in `backend/app/models.py` (the 2026-10-17/2026-10-18 count
 below was incomplete):
 
-- **46 direct children** (their own `project_id` foreign key to `projects.id`): `project_members`,
+- **47 direct children** (their own `project_id` foreign key to `projects.id`; recounted 2026-10-22
+  from `models.py`, which added `deviation_logs` after the 2026-10-20 count): `project_members`,
   `gates`, `research_context_items`, `sources`, `screening_criteria`, `screening_decisions`,
   `auto_exclude_audits`, `seed_papers`, `seed_check_runs`, `project_extraction_schemas`,
   `search_queries`, `search_alerts`, `snowball_runs`, `extractions`, `meta_analysis_plans`,
   `constructs`, `theories`, `conceptual_paths`, `claims`, `gaps`, `research_briefs`, `idea_briefs`,
-  `dataset_versions`, `analysis_plans`, `analysis_runs`, `robustness_checks`, `exclusion_rules`,
+  `dataset_versions`, `analysis_plans`, `analysis_runs`, `robustness_checks`, `deviation_logs`, `exclusion_rules`,
   `qual_excerpts`, `qual_suggestions`, `qual_codes`, `research_questions`, `notes`,
   `ai_suggestions`, `ai_item_locks`, `documents`, `own_paper_lookups`, `provenance_reports`,
   `section_approvals`, `interpretation_findings`, `interpretation_reviews`, `research_runs`,
@@ -248,9 +276,11 @@ above (the ones reachable from a project) before touching anything; if any has a
 `project.created` audit event, **every project made through the normal API already has an
 `audit_events` row and can never be hard-deleted** -- archiving is the only way to retire a
 project with real activity. A project with genuinely no recorded activity (only reachable by
-constructing the row directly, which is what the tests do) can be: the 46 direct-child tables are
-removed in FK dependency order (`Base.metadata.sorted_tables`, reversed), the five indirect-child
-tables are removed by joining through their parent first, every stored object is removed via
+constructing the row directly, which is what the tests do) can be: the 47 direct-child tables are
+removed in FK dependency order (`Base.metadata.sorted_tables`, reversed), the six indirect-child
+tables (`claim_evidence`, `note_attachments`, `note_revisions`, `document_versions`,
+`ai_suggestion_events`, `source_excerpts`; `project_lifecycle.py:157-169`) are removed by joining
+through their parent first, every stored object is removed via
 `ObjectStore.delete()`, and finally the project row itself. `audit_events` and `llm_usage` are
 never part of the cascade (both are designed to survive the project they named). This is the
 "refuse deletion of a project that has audit rows, and say so clearly" option named in X.4.7.3's

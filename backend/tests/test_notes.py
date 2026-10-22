@@ -335,6 +335,21 @@ def test_voice_capture_stores_audio_without_transcription():
     assert get_object_store(get_settings()).get(f"notes/{body['owner_id']}/{body['id']}/voice.wav") == payload
 
 
+def test_voice_notes_carry_no_transcript_field_and_no_transcript_column():
+    # M5.7.4 (Q15): audio only, no transcript and no speech-to-text service for now.
+    from app.models import Note
+
+    client = _login("voice-notranscript@example.com")
+    response = client.post(
+        "/api/notes/voice?client_id=voice-notranscript",
+        content=b"RIFF\x00\x00\x00\x00WAVE audio-bytes",
+        headers={"content-type": "audio/wav"},
+    )
+    assert response.status_code == 201, response.text
+    assert not any("transcript" in key for key in response.json())
+    assert not any("transcript" in column.name for column in Note.__table__.columns)
+
+
 def test_highlight_capture_concurrent_retry_returns_existing_note(monkeypatch):
     from app.routers import notes as notes_router
 

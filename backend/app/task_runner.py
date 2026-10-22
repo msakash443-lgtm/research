@@ -54,7 +54,8 @@ def run_one_task(now: datetime | None = None, task_id: uuid.UUID | None = None) 
 
     stop = threading.Event()
     interval = max(get_settings().task_lease_seconds / 3, 1)
-    beat = threading.Thread(target=_heartbeat_loop, args=(task, stop, interval, MAX_RUN_SECONDS.get(task.type)), daemon=True)
+    max_run = MAX_RUN_SECONDS.get(task.type, get_settings().task_max_run_seconds)
+    beat = threading.Thread(target=_heartbeat_loop, args=(task, stop, interval, max_run), daemon=True)
     beat.start()
     try:
         handler(task)

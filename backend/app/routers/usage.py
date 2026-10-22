@@ -9,7 +9,7 @@ from app import audit
 from app.config import get_settings
 from app.database import get_db
 from app.dependencies import MANAGE_ROLES, READ_ROLES, current_user, project_access
-from app.llm_usage import budget_status
+from app.llm_usage import budget_status, reservation_window, reserved_tokens
 from app.models import LlmUsage, Project, User
 
 router = APIRouter(prefix="/projects/{project_id}/usage", tags=["usage"])
@@ -41,14 +41,15 @@ class BudgetOverrideUpdate(BaseModel):
 def _usage_read(project: Project, db: Session) -> UsageRead:
     rows = db.execute(
         select(LlmUsage.purpose, func.count(), func.coalesce(func.sum(LlmUsage.total_tokens), 0), func.count(LlmUsage.total_tokens))
-        .where(LlmUsage.project_id == project.id)
+        .where(LlmUsage.project_id == project.id, LlmUsage.reserved_tokens.is_(None))  # answered calls only; a reservation is not a call (X.110)
         .group_by(LlmUsage.purpose)
         .order_by(LlmUsage.purpose)
     ).all()
     default_budget = get_settings().project_token_budget
     effective = default_budget if project.token_budget_override is None else project.token_budget_override
     used = sum(int(r[2]) for r in rows)
-    status = budget_status(used, effective or None)
+    held = reserved_tokens(db, project.id, reservation_window(get_settings()))  # calls still in flight: the meter counts them
+    status = budget_status(used + held, effective or None)
     return UsageRead(
         budget_status=status["status"], tokens_remaining=status["remaining"], percent_used=status["percent_used"],
         tokens_used=used,

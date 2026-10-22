@@ -9,6 +9,9 @@ os.environ["ENVIRONMENT"] = "development"
 os.environ["AUTO_CREATE_SCHEMA"] = "true"
 os.environ["RUN_RESEARCH_INLINE"] = "true"
 os.environ["SESSION_SECRET"] = "test-session-secret-that-is-long-enough"
+# Every TestClient shares one client address, so the sign-in cap (X.143) would trip across tests;
+# test_rate_limit.py turns it back on for itself.
+os.environ["RATE_LIMIT_ENABLED"] = "false"
 for _ambient_setting in (
     "LLM_API_BASE_URL",
     "LLM_API_KEY",

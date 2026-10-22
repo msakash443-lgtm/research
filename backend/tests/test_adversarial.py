@@ -152,7 +152,7 @@ def test_the_padding_attack_is_cut_off_by_the_length_cap(fake_llm):
 
     _c, _p, run = _manual_run("adv-pad@example.com", fixture["text"])
 
-    excerpt = run["input_snapshot"]["sources"][0]["excerpt"]
+    excerpt = run["input_snapshot"]["sources"][0]["excerpts"][0]["excerpt"]
     assert len(excerpt) == executor.MAX_EXCERPT_CHARS_PER_SOURCE and excerpt.endswith("…")
     assert "PWNED-21" not in excerpt  # the payload sat beyond the cap
 

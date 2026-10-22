@@ -243,7 +243,7 @@ def _safe_body(response: httpx.Response) -> str:
     """A short, header-free excerpt of an error response — never the request we sent (no credentials)."""
     try:
         return response.text[:300]
-    except Exception:
+    except Exception:  # an undecodable body only shortens the error message we are already raising
         return ""
 
 

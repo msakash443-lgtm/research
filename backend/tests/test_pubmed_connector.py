@@ -11,7 +11,7 @@ from app.connectors.pubmed import ESEARCH_WINDOW, PubMedConnector, parse_article
 DOCTYPE = '<?xml version="1.0" ?>\n<!DOCTYPE PubmedArticleSet PUBLIC "-//NLM//DTD PubMedArticle, 1st January 2024//EN" "https://dtd.nlm.nih.gov/ncbi/pubmed/out/pubmed_240101.dtd">\n'
 
 
-def article(n=1, title="Remote work and <i>wellbeing</i>", doi="10.1000/P{n}", year="2021", types=("Journal Article",), abstract=True, pmc=None):
+def article(n=1, title="Remote work and <i>wellbeing</i>", doi="10.1000/P{n}", year="2021", types=("Journal Article",), abstract=True, pmc=None, language="eng"):
     ids = f'<ArticleId IdType="pubmed">{n}</ArticleId>'
     if doi:
         ids += f'<ArticleId IdType="doi">{doi.format(n=n)}</ArticleId>'
@@ -22,13 +22,14 @@ def article(n=1, title="Remote work and <i>wellbeing</i>", doi="10.1000/P{n}", y
         if abstract else ""
     )
     types_xml = "".join(f"<PublicationType>{t}</PublicationType>" for t in types)
+    language_xml = "".join(f"<Language>{code}</Language>" for code in language) if isinstance(language, tuple) else (f"<Language>{language}</Language>" if language else "")
     return (
         f"<PubmedArticle><MedlineCitation><PMID>{n}</PMID><Article>"
         f"<Journal><JournalIssue><PubDate><Year>{year}</Year></PubDate></JournalIssue><Title>J Occup Health</Title></Journal>"
         f"<ArticleTitle>{title}</ArticleTitle>{abstract_xml}"
         "<AuthorList><Author><LastName>Lovelace</LastName><ForeName>Ada</ForeName></Author>"
         "<Author><CollectiveName>The Remote Work Group</CollectiveName></Author></AuthorList>"
-        f"<PublicationTypeList>{types_xml}</PublicationTypeList></Article></MedlineCitation>"
+        f"{language_xml}<PublicationTypeList>{types_xml}</PublicationTypeList></Article></MedlineCitation>"
         f"<PubmedData><ArticleIdList>{ids}</ArticleIdList></PubmedData></PubmedArticle>"
     )
 
@@ -75,6 +76,22 @@ def test_article_normalisation():
     assert record.url == "https://pubmed.ncbi.nlm.nih.gov/7/"
     assert record.source_ids == {"pubmed": "7", "pmcid": "PMC123"} and record.oa_url.endswith("/PMC123/")
     assert record.quality_flags == ()
+
+
+def test_pubmed_language_is_mapped_from_three_letter_code_to_two_letters():
+    # PubMed reports ISO 639-2 (bibliographic) codes; sources store ISO 639-1 (X.86, X.127).
+    langs = {code: parse_articles(feed(article(1, language=code)))[0][0].language for code in ("eng", "fre", "ger", "chi", "dut", "spa", "jpn")}
+    assert langs == {"eng": "en", "fre": "fr", "ger": "de", "chi": "zh", "dut": "nl", "spa": "es", "jpn": "ja"}
+
+
+def test_an_unknown_or_missing_pubmed_language_stays_unreported():
+    assert parse_articles(feed(article(1, language="und")))[0][0].language is None
+    assert parse_articles(feed(article(1, language="xyz")))[0][0].language is None
+    assert parse_articles(feed(article(1, language=None)))[0][0].language is None
+
+
+def test_a_record_with_several_languages_takes_the_first_one():
+    assert parse_articles(feed(article(1, language=("spa", "eng"))))[0][0].language == "es"
 
 
 def test_flags_and_untitled_records():

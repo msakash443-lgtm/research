@@ -148,6 +148,7 @@ def get_stage(project: Project = Depends(project_access(READ_ROLES)), db: Sessio
         ],
         suggestions=[SuggestionRead(**dataclasses.asdict(s)) for s in suggestions],
         human_participants=research_types.human_participants(project),
+        research_type=project.research_type,
     )
 
 

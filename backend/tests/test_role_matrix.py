@@ -59,6 +59,7 @@ MATRIX = [
     ("GET", "/api/projects/{p}/prisma/checklist", ALL, 200),
     ("GET", "/api/projects/{p}/usage", ALL, 200),
     ("PUT", "/api/projects/{p}/usage/budget", MANAGE, 200),  # owner only: sets this project's own token-budget override
+    ("GET", "/api/projects/{p}/observability", MANAGE, 200),  # owner only (X.136): cost and call figures
     ("GET", "/api/projects/{p}/ai-settings", ALL, 200),
     ("PUT", "/api/projects/{p}/ai-settings", MANAGE, 200),  # owner only: decides what leaves the project
     ("GET", "/api/projects/{p}/ai-locks", ALL, 200),

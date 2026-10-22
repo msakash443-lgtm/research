@@ -90,11 +90,14 @@ def test_the_budget_meter_is_checked_once_and_charged_once_for_a_retried_call(fa
     calls = []
 
     class Meter:
-        def before_call(self):
+        def before_call(self, max_tokens=0):
             calls.append("before")
 
-        def after_call(self, model, response):
+        def after_call(self, model, response, ticket=None):
             calls.append("after")
+
+        def abort_call(self, ticket):
+            calls.append("abort")
 
     fake_llm.handler = _fail_then_answer([httpx.Response(502, json={})])
 

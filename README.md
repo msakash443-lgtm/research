@@ -76,9 +76,11 @@ For a private first deployment, run the web service and worker as two processes 
 The Docker worker processes queued research runs. For a non-Docker local run, copy `.env.example` to `.env` (or set `ENVIRONMENT=development` in the shell), set `RUN_RESEARCH_INLINE=true` and start the API with:
 
 ```powershell
-python -m pip install -r backend/requirements.txt
+python -m pip install -r backend/requirements.txt -r backend/requirements-arc.txt -r backend/requirements-dev.txt
 uvicorn app.main:app --reload --app-dir backend
 ```
+
+`requirements.txt` is the web app's runtime (the only file the Docker image installs); `requirements-arc.txt` is the vendored ARC retrieval service (`backend/arc_retrieval/`) and `requirements-dev.txt` the test tools.
 
 ### Virtual environments
 
@@ -86,7 +88,7 @@ Two local virtualenvs exist on the dev machine; both are git-ignored (`.venv*/`)
 
 | Venv | Python | Use for |
 |---|---|---|
-| `.venv` (repo root) | 3.12 | This app: `pip install -r backend/requirements.txt`, `pytest -q`, `uvicorn`, Alembic. **Default for all research-main work.** Same version as the production image (`Dockerfile`) and CI (`ci.yml`). |
+| `.venv` (repo root) | 3.12 | This app: `pip install` the three `backend/requirements*.txt` files, `pytest -q`, `uvicorn`, Alembic. **Default for all research-main work.** Same version as the production image (`Dockerfile`) and CI (`ci.yml`). |
 | `<workspace>/.venv-retrieval` | 3.11 | Only the ARC retrieval microservice (`researchclaw-retrieval`, installed from the ARC `retrieval` extra: fastapi, uvicorn, httpx). Don't run research-main tests in it. |
 
 The two are kept separate so ARC's dependencies stay out of this app (ARC is called over HTTP only). Recreate either with `python -m venv <path>` and the install commands above.

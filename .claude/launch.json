@@ -118,6 +118,44 @@
         "DATABASE_URL": "sqlite:///C:/Users/REVATI/AppData/Local/Temp/claude/C--Users-REVATI--claude-spares-spare-d2ipkr/7424cdba-3653-4269-ac29-eb2a0d3ac477/scratchpad/evidence_check.db",
         "OBJECT_STORAGE_ROOT": "C:/Users/REVATI/AppData/Local/Temp/claude/C--Users-REVATI--claude-spares-spare-d2ipkr/7424cdba-3653-4269-ac29-eb2a0d3ac477/scratchpad/objects"
       }
+    },
+    {
+      "name": "x43-review-scratch",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "-c",
+        "import os, uvicorn; app_dir=os.path.abspath('backend'); os.chdir(os.environ['SCRATCH_CWD']); uvicorn.run('app.main:app', app_dir=app_dir, port=int(os.environ.get('PORT', '8017')))"
+      ],
+      "port": 8017,
+      "autoPort": true,
+      "env": {
+        "SCRATCH_CWD": "C:/Users/REVATI/AppData/Local/Temp/claude/C--Users-REVATI--claude-spares-spare-JDFpQv/330134c9-4014-4925-b553-591bbec24d11/scratchpad",
+        "ENVIRONMENT": "development",
+        "AUTO_CREATE_SCHEMA": "true",
+        "RUN_RESEARCH_INLINE": "true",
+        "SESSION_SECRET": "scratch-review-secret-0123456789",
+        "DATABASE_URL": "sqlite:///C:/Users/REVATI/AppData/Local/Temp/claude/C--Users-REVATI--claude-spares-spare-JDFpQv/330134c9-4014-4925-b553-591bbec24d11/scratchpad/x43.db",
+        "OBJECT_STORAGE_ROOT": "C:/Users/REVATI/AppData/Local/Temp/claude/C--Users-REVATI--claude-spares-spare-JDFpQv/330134c9-4014-4925-b553-591bbec24d11/scratchpad/objects"
+      }
+    },
+    {
+      "name": "swot-scratch",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "-c",
+        "import os, uvicorn; app_dir=os.path.abspath('backend'); os.chdir(os.environ['SCRATCH_CWD']); uvicorn.run('app.main:app', app_dir=app_dir, port=int(os.environ.get('PORT', '8018')))"
+      ],
+      "port": 8018,
+      "autoPort": true,
+      "env": {
+        "SCRATCH_CWD": "C:/Users/REVATI/AppData/Local/Temp/claude/C--Users-REVATI--claude-spares-spare-C51Mb9/5d81a552-bac2-477e-816e-8c56f4a39274/scratchpad",
+        "ENVIRONMENT": "development",
+        "AUTO_CREATE_SCHEMA": "true",
+        "RUN_RESEARCH_INLINE": "true",
+        "SESSION_SECRET": "scratch-review-secret-0123456789",
+        "DATABASE_URL": "sqlite:///C:/Users/REVATI/AppData/Local/Temp/claude/C--Users-REVATI--claude-spares-spare-C51Mb9/5d81a552-bac2-477e-816e-8c56f4a39274/scratchpad/swot.db",
+        "OBJECT_STORAGE_ROOT": "C:/Users/REVATI/AppData/Local/Temp/claude/C--Users-REVATI--claude-spares-spare-C51Mb9/5d81a552-bac2-477e-816e-8c56f4a39274/scratchpad/objects"
+      }
     }
   ]
 }

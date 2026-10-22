@@ -344,6 +344,8 @@ class StageRead(BaseModel):
     suggestions: list[SuggestionRead]  # unmet, built exit conditions of the next moves, most binding first (X.55)
     # Whether this project's own research type involves human participants (X.43.6/X.43.8, decision 4b/5).
     human_participants: bool
+    # The project's research type name (X.43.9): the Scope screen's picker shows which type is saved.
+    research_type: str
 
 
 class DisciplineProfileRead(BaseModel):

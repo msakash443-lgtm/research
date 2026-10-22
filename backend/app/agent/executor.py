@@ -59,24 +59,30 @@ def _compact(text: str, limit: int) -> str:
     return normalized if len(normalized) <= limit else f"{normalized[: limit - 1]}…"
 
 
+def _excerpt_snapshot(excerpt: SourceExcerpt) -> tuple[dict[str, Any], list]:
+    """One stored excerpt as the model may see it, with the cleaning results its flags come from."""
+    body = clean_untrusted(excerpt.content, MAX_EXCERPT_CHARS_PER_SOURCE)
+    locator = clean_untrusted(excerpt.locator, MAX_LOCATOR_CHARS) if excerpt.locator else None
+    snapshot = {"id": str(excerpt.id), "excerpt": body.text, "locator": locator.text if locator else None}
+    found = [body, locator] if locator else [body]
+    return snapshot, found
+
+
 def _source_snapshot(source: Source) -> dict[str, Any]:
     """What the model is shown about one source. Text from outside is cleaned first (untrusted_text.py);
-    the stored excerpt is untouched, and `flags` records what the cleaning found."""
-    excerpt = source.excerpts[-1] if source.excerpts else None
+    the stored excerpts are untouched, and `flags` records what the cleaning found. Every excerpt is kept,
+    oldest first, so a later passage (say, a PDF highlight) never hides an earlier one."""
     title = clean_untrusted(source.title, MAX_TITLE_CHARS)
     url = clean_untrusted(source.url, MAX_URL_CHARS) if source.url else None
-    body = clean_untrusted(excerpt.content, MAX_EXCERPT_CHARS_PER_SOURCE) if excerpt else None
-    locator = clean_untrusted(excerpt.locator, MAX_LOCATOR_CHARS) if excerpt and excerpt.locator else None
-    parts = [part for part in (title, url, body, locator) if part is not None]
+    excerpts = [_excerpt_snapshot(excerpt) for excerpt in source.excerpts]
+    parts = [part for part in (title, url) if part is not None] + [part for _, found in excerpts for part in found]
     return {
         "id": str(source.id),
-        "excerpt_id": str(excerpt.id) if excerpt else None,
         "title": title.text,
         "url": url.text if url else None,
         "year": source.year,
         "type": source.source_type,
-        "excerpt": body.text if body else None,
-        "locator": locator.text if locator else None,
+        "excerpts": [snapshot for snapshot, _ in excerpts],
         # The prompt labels these so the answer can flag conclusions that rest on them.
         "automated": source.is_automated,
         "auto_checked": bool(source.metadata_verified and source.verification_method == "automatic"),
@@ -174,6 +180,32 @@ def _citation_problem(answer: str, sources: list[dict[str, Any]]) -> tuple[int, 
     return None
 
 
+_LINK_STOPWORDS = frozenset({"the", "and", "for", "with", "that", "was", "were", "from", "this", "are", "has", "had", "their", "into"})
+
+
+def _content_words(text: str) -> set[str]:
+    return {word for word in re.findall(r"[a-z0-9]+", text.lower()) if len(word) >= 3 and word not in _LINK_STOPWORDS}
+
+
+def _linked_excerpt_id(sentence: str, snapshot: dict[str, Any]) -> str | None:
+    """The excerpt a cited sentence rests on: the one of the source's excerpts sharing the most words with it.
+    A source with a single excerpt is linked to it outright. With several, a tie or no shared word returns
+    None so the run fails closed rather than linking the claim to the wrong passage."""
+    excerpts = snapshot["excerpts"]
+    if len(excerpts) == 1:
+        return excerpts[0]["id"]
+    words = _content_words(sentence)
+    scores = [(len(words & _content_words(item["excerpt"])), item["id"]) for item in excerpts if item["excerpt"]]
+    best = max((score for score, _ in scores), default=0)
+    winners = [excerpt_id for score, excerpt_id in scores if best > 0 and score == best]
+    return winners[0] if len(winners) == 1 else None
+
+
+class UnstorableAnswer(ValueError):
+    """A cited answer whose claims can't be stored against their excerpts. Asking the model again gives the
+    same answer, so the run fails at once with this reason instead of being retried (X.106)."""
+
+
 def _store_cited_claims(db: Session, run: ResearchRun, answer: str, sources: list[dict[str, Any]]) -> None:
     """Persist cited statements and the exact excerpt records behind their run-snapshot markers."""
     parts = [part.strip() for part in re.split(r"(?<=[.!?])\s+|\n+", answer) if part.strip()]
@@ -190,17 +222,19 @@ def _store_cited_claims(db: Session, run: ResearchRun, answer: str, sources: lis
             continue
         # _citation_problem runs first; fail closed if the evidence changed before persistence.
         if any(not 1 <= index <= len(sources) for index in indices):
-            raise ValueError("A claim cited a source outside the run snapshot")
+            raise UnstorableAnswer("A claim cited a source outside the run snapshot")
         claim = Claim(project_id=run.project_id, run_id=run.id, text=sentence,
                       verified=False, created_by=audit.AGENT_RESEARCH_RUN)
         for index in indices:
             snapshot = sources[index - 1]
-            excerpt_id = snapshot.get("excerpt_id")
+            excerpt_id = _linked_excerpt_id(sentence, snapshot)
+            if excerpt_id is None and len(snapshot["excerpts"]) > 1:
+                raise UnstorableAnswer("A claim could not be tied to one excerpt of its cited source")
             excerpt = db.get(SourceExcerpt, uuid.UUID(excerpt_id)) if excerpt_id else None
             source = db.get(Source, uuid.UUID(snapshot["id"]))
             if (excerpt is None or source is None or str(excerpt.source_id) != snapshot["id"]
                     or not snapshot.get("verified") or not source.metadata_verified):
-                raise ValueError("A claim's source excerpt is missing or unverified")
+                raise UnstorableAnswer("A claim's source excerpt is missing or unverified")
             claim.evidence.append(ClaimEvidence(source_id=excerpt.source_id, excerpt_id=excerpt.id,
                                                 quote=excerpt.content,
                                                 quote_matches_source=quote_matches_source(source, excerpt, excerpt.content)))
@@ -402,18 +436,36 @@ def _agent_prompts(
         # (screening, extraction, ...) must build its prompt through this path.
         title_c = clean_untrusted(str(source["title"]), MAX_TITLE_CHARS)
         url_c = clean_untrusted(str(source["url"]), MAX_URL_CHARS) if source.get("url") else None
-        locator_c = clean_untrusted(str(source["locator"]), MAX_LOCATOR_CHARS) if source.get("locator") else None
-        excerpt_c = clean_untrusted(str(source["excerpt"]), MAX_EXCERPT_CHARS_PER_SOURCE) if source.get("excerpt") else None
+        # A bare dict with one "excerpt" (no "excerpts" list) is still accepted, as before.
+        excerpts = source.get("excerpts")
+        if excerpts is None:
+            excerpts = [{"excerpt": source["excerpt"], "locator": source.get("locator")}] if source.get("excerpt") else []
+        passages = []
+        for number, item in enumerate(excerpts, start=1):
+            body_c = clean_untrusted(str(item["excerpt"]), MAX_EXCERPT_CHARS_PER_SOURCE)
+            locator_c = clean_untrusted(str(item["locator"]), MAX_LOCATOR_CHARS) if item.get("locator") else None
+            passages.append((number, body_c, locator_c))
+        found = [title_c, url_c] + [part for _, body_c, locator_c in passages for part in (body_c, locator_c)]
         source = {
             **source,
-            "flags": sorted(
-                {*source.get("flags", ()), *(f for c in (title_c, url_c, locator_c, excerpt_c) if c for f in c.flags)}
-            ),
+            "flags": sorted({*source.get("flags", ()), *(f for c in found if c for f in c.flags)}),
         }
+        # One excerpt renders as before (its locator in Details); several are each labelled with their locator.
+        single = len(passages) == 1
         details = "; ".join(
-            str(value) for value in (source.get("year"), url_c.text if url_c else None, locator_c.text if locator_c else None) if value
+            str(value)
+            for value in (source.get("year"), url_c.text if url_c else None, passages[0][2].text if single and passages[0][2] else None)
+            if value
         )
-        excerpt = excerpt_c.text if excerpt_c else "(No excerpt was recorded; do not make factual claims from this source.)"
+        if single:
+            excerpt = passages[0][1].text
+        elif passages:
+            excerpt = "\n".join(
+                f"Passage {number}" + (f" ({locator_c.text})" if locator_c else "") + f": {body_c.text}"
+                for number, body_c, locator_c in passages
+            )
+        else:
+            excerpt = "(No excerpt was recorded; do not make factual claims from this source.)"
         if prompt.source_block is not None:
             source_parts.append(
                 prompt.render_source(
@@ -532,15 +584,20 @@ def execute_research_run(
         remaining_evidence_chars = MAX_TOTAL_EVIDENCE_CHARS
         for source in sorted(sources, key=lambda item: (item.is_automated, item.created_at)):
             snapshot = _source_snapshot(source)
-            if snapshot["excerpt"]:
-                snapshot["excerpt"] = snapshot["excerpt"][:remaining_evidence_chars]
-                remaining_evidence_chars -= len(snapshot["excerpt"])
+            kept = []
+            for item in snapshot["excerpts"]:
+                if remaining_evidence_chars <= 0:
+                    break
+                item["excerpt"] = item["excerpt"][:remaining_evidence_chars]
+                remaining_evidence_chars -= len(item["excerpt"])
+                kept.append(item)
+            snapshot["excerpts"] = kept
             source_snapshot.append(snapshot)
         run.research_plan = build_plan(source_snapshot)
         run.input_snapshot = {"context": context, "sources": source_snapshot}
         if web_retrieval is not None:
             run.input_snapshot["web_retrieval"] = web_retrieval
-        evidence_sources = [source for source in source_snapshot if source["excerpt"]]
+        evidence_sources = [source for source in source_snapshot if source["excerpts"]]
         if llm_configuration_error is not None:
             run.status = ResearchRunStatus.needs_configuration
             run.answer = None
@@ -649,7 +706,9 @@ def execute_research_run(
     except TaskOwnershipLost:
         db.rollback()
         raise
-    except Exception:
+    except UnstorableAnswer as exc:
+        # The model's citations can't be tied to stored excerpts. Asking again would repeat the answer,
+        # so the run fails at once with the reason and the task completes (X.106).
         db.rollback()
         try:
             if ensure_owned is not None:
@@ -657,11 +716,48 @@ def execute_research_run(
             run = db.get(ResearchRun, run_key)
             if run is not None:
                 run.status = ResearchRunStatus.failed
-                run.error_message = "The research run failed unexpectedly. Check the server logs; no source content was lost."
+                run.answer = None
+                run.error_message = (
+                    "The answer could not be stored as claims tied to their source excerpts, so it was rejected "
+                    f"rather than guessed. {exc}"
+                )
                 run.completed_at = utcnow()
                 audit.record(
-                    db, actor=audit.AGENT_RESEARCH_RUN, action="research_run.failed", project_id=run.project_id,
-                    payload={"run_id": str(run.id), "reason": "unexpected_error"},
+                    db, actor=audit.AGENT_RESEARCH_RUN, action="research_run.citation_rejected", project_id=run.project_id,
+                    payload={"run_id": str(run.id), "reason": "unstorable_claim"},
+                    model_id=run.provider_model, prompt_version=run.prompt_version,
+                )
+                db.commit()
+        except TaskOwnershipLost:
+            db.rollback()
+            raise
+    except Exception:
+        db.rollback()
+        try:
+            if ensure_owned is not None:
+                ensure_owned(db)
+            run = db.get(ResearchRun, run_key)
+            if run is not None:
+                if get_settings().run_research_inline:
+                    # Inline mode has no worker to pick up a retry, so the run fails here; the handler
+                    # then ends the task too (task_handlers.handle_research_run).
+                    run.status = ResearchRunStatus.failed
+                    run.completed_at = utcnow()
+                    run.error_message = (
+                        f"The research run failed unexpectedly on attempt {run.attempt_count}. "
+                        "Check the server logs and submit the question again; no source content was lost."
+                    )
+                else:
+                    # The queue retries this attempt with backoff, so the run waits as queued rather than failed.
+                    # If the last attempt fails too, the task's failure hook marks the run failed.
+                    run.status = ResearchRunStatus.queued
+                    run.error_message = (
+                        f"The research run failed unexpectedly on attempt {run.attempt_count} and will be retried. "
+                        "Check the server logs; no source content was lost."
+                    )
+                audit.record(
+                    db, actor=audit.AGENT_RESEARCH_RUN, action="research_run.attempt_failed", project_id=run.project_id,
+                    payload={"run_id": str(run.id), "reason": "unexpected_error", "attempt": run.attempt_count},
                     model_id=run.provider_model,
                     prompt_version=run.prompt_version,
                 )
@@ -672,6 +768,9 @@ def execute_research_run(
             db.rollback()
             raise
         except Exception:
+            # The original error is re-raised below and logged by the task runner; this second one,
+            # from recording the failure, would otherwise be lost (X.145).
+            logger.exception("Could not record the failure of research run %s", run_key)
             db.rollback()
         raise
     finally:

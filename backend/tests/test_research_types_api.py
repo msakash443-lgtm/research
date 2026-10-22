@@ -204,3 +204,10 @@ def test_reentry_resets_only_the_qualitative_chains_own_gates_leaving_the_droppe
         ).all()
     assert {e.payload_json["gate"] for e in reset_events} == {"G2", "G3", "G4", "G5", "G6", "G7"}
 
+
+
+def test_stage_response_names_the_projects_research_type_so_the_picker_can_show_it():
+    world = _project()
+    assert world["owner"].get(f"/api/projects/{world['project']}/stage").json()["research_type"] == "full_journey"
+    assert world["owner"].put(f"/api/projects/{world['project']}/research-type", json={"name": "qualitative"}).status_code == 200
+    assert world["owner"].get(f"/api/projects/{world['project']}/stage").json()["research_type"] == "qualitative"

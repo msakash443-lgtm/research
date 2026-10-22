@@ -152,7 +152,7 @@ def claim_next_task(now: datetime | None = None, task_id: uuid.UUID | None = Non
             # Another worker may have taken it since we read it (SKIP LOCKED isn't available everywhere).
             if _transition(
                 db, task.id, Task.status == TaskStatus.queued, Task.attempts == task.attempts,
-                status=TaskStatus.running, attempts=attempt, run_after=None, lease_expires_at=lease,
+                status=TaskStatus.running, attempts=attempt, run_after=None, lease_expires_at=lease, started_at=now,
             ):
                 claimed = ClaimedTask(task.id, task.project_id, task.type, task.payload, attempt)
                 db.commit()
@@ -206,7 +206,7 @@ def complete_task(task_id: uuid.UUID, attempt: int) -> bool:
         if task is None:
             return False
         done = _transition(
-            db, task_id, *_owned(attempt), status=TaskStatus.completed, lease_expires_at=None, error=None,
+            db, task_id, *_owned(attempt), status=TaskStatus.completed, lease_expires_at=None, error=None, finished_at=utcnow(),
             payload=_scrubbed(task.type, task.payload),
         )
         db.commit()
@@ -246,6 +246,7 @@ def _fail_or_retry(
     values = {}
     if status == TaskStatus.failed:
         values["payload"] = _scrubbed(task.type, task.payload)
+        values["finished_at"] = now
     if not _transition(
         db, task.id, *_owned(task.attempts), *conditions,
         status=status, run_after=run_after, error=error, lease_expires_at=None, **values,

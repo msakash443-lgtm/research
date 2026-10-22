@@ -260,7 +260,7 @@ The image starts uvicorn with `--proxy-headers`, which trusts `X-Forwarded-*` on
 
 ### Rate limiting
 
-The application caps model spend (`RESEARCH_RUN_LIMIT_PER_DAY` and the token budget) but does **not** throttle requests. Apply request rate limits at the reverse proxy or platform edge:
+The application caps model spend (`RESEARCH_RUN_LIMIT_PER_DAY` and the token budget) and, since X.143, caps sign-in and upload requests per caller per minute (`RATE_LIMIT_ENABLED`, default on; `RATE_LIMIT_AUTH_PER_MINUTE`, default 20; `RATE_LIMIT_UPLOAD_PER_MINUTE`, default 30; over the cap → `429` with `Retry-After`). A signed-in caller is counted by user id, anyone else by client address, which behind a proxy is only right when `FORWARDED_ALLOW_IPS` is set. **The counts are kept in each web process**, so N processes or replicas allow N times the cap and a restart resets them; this is a backstop, not the edge limit. Apply request rate limits at the reverse proxy or platform edge as well:
 
 - A low limit per client address on `/api/auth/*` (sign-in and callback), to slow abuse of the OAuth flow.
 - A moderate per-address limit on `/api/*` overall, and a lower one on endpoints that enqueue work (research runs, searches, uploads).

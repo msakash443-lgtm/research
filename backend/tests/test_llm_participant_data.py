@@ -157,13 +157,16 @@ class _Meter:
     def __init__(self, refuse=False):
         self.refuse, self.events = refuse, []
 
-    def before_call(self):
+    def before_call(self, max_tokens=0):
         self.events.append("before")
         if self.refuse:
             raise LLMConfigurationError("budget used")
 
-    def after_call(self, model, data):
+    def after_call(self, model, data, ticket=None):
         self.events.append(("after", model))
+
+    def abort_call(self, ticket):
+        self.events.append("abort")
 
 
 def _mock_http(monkeypatch, requests):

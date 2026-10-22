@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -13,18 +14,23 @@ from app.database import Base, engine
 from app.source_gate_guard import ExtractionGateLocked
 from app.stage_order import StageNotInChain
 from app.config import get_settings
-from app.middleware import ContentLengthLimitMiddleware
+from app.logging_config import configure_logging
+from app.middleware import ContentLengthLimitMiddleware, FixedWindowCounter, RateLimitMiddleware
+from app.pagination import NEXT_CURSOR_HEADER
 from app.routers import accuracy, ai_locks, ai_settings, audit, provenance_reports, workspace_ai, auth, bibliometrics, claims, clusters, connectors, coverage, criteria, design_tools, evidence_matrix, exports, extraction_schemas, extractions, gates, guide, integrity, members, notes, documents, prisma, profile, projects, replication, research_runs, scholar_metrics, screening, searches, alerts, seeds, snowball, sources, stage, suggestions, usage, zotero
 from app.routers import privacy
+from app.routers import observability
 from app.routers import bias_warnings
 from app.routers import analysis_plan, brief, conceptual_model, constructs, datasets, ethics_pack, gaps, idea_brief, instrument, interpretation, meta_analysis, preregistration, qual_coding, research_questions, transcripts
 
 # Production settings (session secret, HTTPS, Postgres, ...) are validated in Settings.
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    configure_logging()
     # Local convenience only. Production releases must apply Alembic migrations first.
     if settings.auto_create_schema:
         Base.metadata.create_all(bind=engine)
@@ -48,10 +54,14 @@ def extraction_gate_locked_handler(request, exc: ExtractionGateLocked):
 @app.exception_handler(StageNotInChain)
 def stage_not_in_chain_handler(request, exc: StageNotInChain):
     return JSONResponse(status_code=409, content={"detail": str(exc)})
+UPLOAD_PATH_SUFFIXES = ("/fulltext/upload", "/api/notes/voice", "/api/notes/photo")
+# X.143. Added first, so it runs innermost: inside the session middleware, where the caller's user id is known.
+rate_limit_counter = FixedWindowCounter()
+app.add_middleware(RateLimitMiddleware, upload_path_suffix=UPLOAD_PATH_SUFFIXES, counter=rate_limit_counter)
 app.add_middleware(
     ContentLengthLimitMiddleware,
     max_body_bytes=settings.max_request_body_bytes,
-    upload_path_suffix=("/fulltext/upload", "/api/notes/voice", "/api/notes/photo"),
+    upload_path_suffix=UPLOAD_PATH_SUFFIXES,
     upload_max_bytes=settings.object_storage_max_bytes,
 )
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
@@ -69,12 +79,14 @@ if settings.cors_origins:
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
         allow_headers=["Content-Type"],
+        expose_headers=[NEXT_CURSOR_HEADER],  # X.142: a cross-origin client must be able to read the next-page cursor
     )
 app.include_router(auth.router, prefix="/api")
 app.include_router(projects.router, prefix="/api")
 app.include_router(projects.catalogue, prefix="/api")
 app.include_router(audit.router, prefix="/api")
 app.include_router(usage.router, prefix="/api")
+app.include_router(observability.router, prefix="/api")
 app.include_router(accuracy.router, prefix="/api")
 app.include_router(ai_settings.router, prefix="/api")
 app.include_router(ai_locks.router, prefix="/api")
@@ -165,6 +177,9 @@ def readiness() -> JSONResponse:
         with engine.connect() as connection:
             connection.execute(text("SELECT 1"))
     except Exception:
+        # The probe answers only "unavailable"; the reason goes to the log (X.145). The exception text
+        # names the host and database, never the password (SQLAlchemy masks it in URLs).
+        logger.exception("Readiness check: database unavailable")
         return JSONResponse(status_code=503, content={"status": "not ready", "database": "unavailable"})
     return JSONResponse(content={"status": "ready", "database": "available"})
 

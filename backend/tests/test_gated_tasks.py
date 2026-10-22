@@ -238,6 +238,36 @@ def test_a_task_a_worker_claims_during_a_gate_reopen_is_not_reblocked(gated_type
     assert _task(task_id).status == TaskStatus.running
 
 
+def test_the_reopen_audit_lists_only_the_tasks_actually_reblocked(gated_type, team):
+    assert _approve(team, "supervisor").status_code == 200
+    claimed_id = _enqueue(team["project"])
+    held_id = _enqueue(team["project"])
+
+    # Race: a worker claims one task after reblock read both as queued but before it writes.
+    claimed = []
+
+    def worker_claims_one_after_the_read(conn, cursor, statement, parameters, context, executemany):
+        if statement.startswith("SELECT tasks.id") and not claimed:
+            claimed.append(True)
+            conn.execute(update(Task).where(Task.id == claimed_id).values(status=TaskStatus.running, attempts=1))
+
+    event.listen(engine, "after_cursor_execute", worker_claims_one_after_the_read)
+    try:
+        with SessionLocal() as db:
+            assert reblock_tasks_for_gate(db, uuid.UUID(team["project"]), GateCode.G2, "tester") == 1
+            db.commit()
+    finally:
+        event.remove(engine, "after_cursor_execute", worker_claims_one_after_the_read)
+
+    with SessionLocal() as db:
+        payloads = [
+            e.payload_json
+            for e in db.scalars(select(AuditEvent).where(AuditEvent.project_id == uuid.UUID(team["project"]), AuditEvent.action == "task.blocked"))
+            if e.payload_json.get("via") == "gate.reopened"
+        ]
+    assert payloads == [{"gate": "G2", "blocked": 1, "task_ids": [str(held_id)], "via": "gate.reopened"}]
+
+
 def test_the_worker_loop_releases_and_runs_tasks():
     import inspect
 

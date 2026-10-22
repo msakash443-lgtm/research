@@ -183,28 +183,33 @@ class OpenAICompatibleLLM:
             "temperature": 0.1,
             "max_tokens": max_tokens,
         }
-        if self._meter is not None:
-            self._meter.before_call()
+        ticket = self._meter.before_call(max_tokens) if self._meter is not None else None
         headers = {"Content-Type": "application/json"}
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key.get_secret_value()}"
-        for attempt in range(1, TRANSIENT_ATTEMPTS + 1):
-            try:
-                with httpx.Client(timeout=self._timeout_seconds, follow_redirects=False) as client:
-                    response = client.post(url, headers=headers, json=payload)
-                    response.raise_for_status()
-                    data = response.json()
-                break
-            except httpx.HTTPError as exc:
-                if attempt < TRANSIENT_ATTEMPTS and _transient(exc):
-                    _sleep(_retry_delay(exc, attempt))
-                    continue
-                raise LLMResponseError("The configured LLM service could not be reached.") from exc
-            except ValueError as exc:
-                raise LLMResponseError("The configured LLM service returned invalid JSON.") from exc
+        try:
+            for attempt in range(1, TRANSIENT_ATTEMPTS + 1):
+                try:
+                    with httpx.Client(timeout=self._timeout_seconds, follow_redirects=False) as client:
+                        response = client.post(url, headers=headers, json=payload)
+                        response.raise_for_status()
+                        data = response.json()
+                    break
+                except httpx.HTTPError as exc:
+                    if attempt < TRANSIENT_ATTEMPTS and _transient(exc):
+                        _sleep(_retry_delay(exc, attempt))
+                        continue
+                    raise LLMResponseError("The configured LLM service could not be reached.") from exc
+                except ValueError as exc:
+                    raise LLMResponseError("The configured LLM service returned invalid JSON.") from exc
+        except BaseException:
+            # No usage to record: give the reservation back so the budget is not held by a call that never answered.
+            if self._meter is not None:
+                self._meter.abort_call(ticket)
+            raise
 
         if self._meter is not None:
-            self._meter.after_call(self._model, data)
+            self._meter.after_call(self._model, data, ticket)
         try:
             answer = _message_text(data["choices"][0]["message"]["content"])
         except (KeyError, IndexError, TypeError) as exc:

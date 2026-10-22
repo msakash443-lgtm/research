@@ -5,6 +5,7 @@ import { suggestionPanel } from "../suggestion.js";
 import { renderFrame } from "./frame.js";
 
 const AGENT_RESEARCH_RUN = "agent:research-run"; // app/audit.py AGENT_RESEARCH_RUN
+export const FOCUS_RESEARCH_RUN_KEY = "focusResearchRun"; // set by the Activity failure list's Open link; read once
 
 function renderResearchRun(ctx, run) {
   const card = el("article", { className: `run-card status-${run.status}`, attrs: { "data-research-run": run.id } });
@@ -173,6 +174,21 @@ function render(root, ctx) {
   renderFrame(root, ctx, { stepId: "ask", work: [panel] });
   loadCitationSupport(root, ctx);
   loadSuggestionPanels(root, ctx);
+  focusRequestedRun(root);
+}
+
+// Scroll to the research run the Activity failure list asked for, then forget the request.
+function focusRequestedRun(root) {
+  let runId = null;
+  try {
+    runId = globalThis.sessionStorage?.getItem(FOCUS_RESEARCH_RUN_KEY); // absent outside a browser (Node tests), may throw when blocked
+    if (runId) sessionStorage.removeItem(FOCUS_RESEARCH_RUN_KEY);
+  } catch {
+    return;
+  }
+  if (!runId) return;
+  const card = [...root.querySelectorAll("[data-research-run]")].find((node) => node.dataset.researchRun === runId);
+  if (card) card.scrollIntoView({ block: "center" });
 }
 
 function update(root, ctx) {

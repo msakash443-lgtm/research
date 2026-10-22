@@ -130,10 +130,17 @@ class Settings(BaseSettings):
     privacy_profile: str = "default"
     data_residency_region: str | None = None
     task_lease_seconds: int = 300
+    # X.115: longest a task type without its own max_run_seconds may run while its lease is renewed.
+    task_max_run_seconds: int = Field(default=3600, gt=0)
     task_retry_base_seconds: int = 5
     task_retry_max_seconds: int = 300
     run_research_inline: bool = False
     max_request_body_bytes: int = 1_048_576
+    # X.143: per-process, per-minute caps on sign-in and upload requests (429 + Retry-After). Protection,
+    # so on by default; the reverse proxy should still limit the edge (docs/DEPLOYMENT.md).
+    rate_limit_enabled: bool = True
+    rate_limit_auth_per_minute: int = Field(default=20, gt=0)
+    rate_limit_upload_per_minute: int = Field(default=30, gt=0)
     arc_retrieval_enabled: bool = False
     arc_retrieval_base_url: str | None = None
     arc_retrieval_token: SecretStr | None = None

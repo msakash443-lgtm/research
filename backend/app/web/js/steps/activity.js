@@ -2,7 +2,9 @@ import { $, el, formatDate, toast } from "../dom.js";
 import { request, projectApi } from "../api.js";
 import { AI_LEVELS, AI_ROUTES, aiLevel } from "../aiLevels.js";
 import { usageSummary } from "../usageLogic.js";
+import { callRows, durationRows, failureRows, rememberRun, stepRows, tiles } from "../observabilityLogic.js";
 import { extractionNotes, extractionTables, hasAnything, screeningLines } from "../accuracyLogic.js";
+import { FOCUS_RESEARCH_RUN_KEY } from "./ask.js";
 
 let offset = 0;
 let actionFilter = "";
@@ -134,6 +136,76 @@ async function accuracyPanel(ctx) {
   return box;
 }
 
+function gridTable({ head, rows }) {
+  const node = el("table", { className: "versions-table" });
+  const headRow = el("tr");
+  head.forEach((h) => headRow.append(el("th", { text: h })));
+  node.append(headRow);
+  rows.forEach((cells) => {
+    const tr = el("tr");
+    cells.forEach((cell) => tr.append(el("td", { text: cell })));
+    node.append(tr);
+  });
+  return node;
+}
+
+// Failures list with an Open button for each research run (its run id is in the step payload). Other steps have no screen to open.
+function failuresTable(ctx, data) {
+  const { head, rows } = failureRows(data);
+  const node = el("table", { className: "versions-table" });
+  const headRow = el("tr");
+  [...head, "Open"].forEach((h) => headRow.append(el("th", { text: h })));
+  node.append(headRow);
+  rows.forEach((cells, index) => {
+    const tr = el("tr");
+    cells.forEach((cell) => tr.append(el("td", { text: cell })));
+    const cell = el("td");
+    const runId = data.failures[index].run_id;
+    if (runId) {
+      const open = el("button", { className: "quiet-button", text: "Open" });
+      open.addEventListener("click", () => {
+        rememberRun(() => sessionStorage, FOCUS_RESEARCH_RUN_KEY, runId);
+        ctx.navigate("ask");
+      });
+      cell.append(open);
+    } else {
+      cell.append(el("span", { className: "muted", text: "—" }));
+    }
+    tr.append(cell);
+    node.append(tr);
+  });
+  return node;
+}
+
+// Owner-only observability view (X.7.3, approved walkthrough 2026-10-22): step outcomes, timings and model-call cost.
+// Counts and names only; the server returns no error text. Co-authors, reviewers and supervisors do not see it (X.136).
+async function observabilityPanel(ctx) {
+  const box = el("div", { className: "panel", attrs: { id: "observability-panel" } });
+  box.append(el("h2", { text: "Run metrics" }));
+  try {
+    const data = await request(projectApi(ctx.project.id, "/observability"));
+    const grid = el("div", { className: "form-grid" });
+    tiles(data).forEach((tile) => {
+      grid.append(el("div", {
+        className: "panel",
+        children: [el("div", { className: "muted small", text: tile.label }), el("div", { text: tile.value }), el("div", { className: "muted small", text: tile.sub })],
+      }));
+    });
+    box.append(grid);
+    box.append(el("h3", { text: "Steps by type" }), gridTable(stepRows(data)));
+    box.append(el("p", { className: "muted small", text: "Queued, running and paused are shown separately. Blocked = waiting for a gate approval. Retried = the step needed a second or later attempt." }));
+    box.append(el("h3", { text: "How long completed steps took" }), gridTable(durationRows(data)));
+    box.append(el("p", { className: "muted small", text: "Times use the attempt that finished. Steps that ran before timings were recorded show 0 timed." }));
+    box.append(el("h3", { text: "Model calls and cost" }), gridTable(callRows(data)));
+    box.append(el("p", { className: "muted small", text: "Costs use this server's price table. A model without a price shows a dash and is left out of the total. No prompts, answers or error text are shown." }));
+    box.append(el("h3", { text: "Failures" }), failuresTable(ctx, data));
+    box.append(el("p", { className: "muted small", text: `Showing ${data.failures.length} of ${data.steps_failed} failures. Error text is not shown here.` }));
+  } catch (error) {
+    box.append(el("p", { className: "muted small", text: error.message }));
+  }
+  return box;
+}
+
 function table(ctx) {
   const node = el("table", { className: "versions-table", attrs: { id: "activity-table" } });
   const head = el("tr");
@@ -259,7 +331,8 @@ async function render(root, ctx) {
     panel.append(more);
   }
 
-  root.replaceChildren(await aiSettingsPanel(ctx), await usagePanel(ctx), await accuracyPanel(ctx), panel);
+  const owner = ctx.isOwner ? [await observabilityPanel(ctx)] : [];
+  root.replaceChildren(await aiSettingsPanel(ctx), await usagePanel(ctx), ...owner, await accuracyPanel(ctx), panel);
 }
 
 export default { render };

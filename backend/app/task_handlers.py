@@ -73,7 +73,7 @@ def _research_run_abandoned(task: ClaimedTask) -> None:
             return  # already finished or failed with its own explanation
         run.status = ResearchRunStatus.failed
         run.error_message = (
-            f"The run stopped responding and was abandoned after {task.attempt} attempts. "
+            f"The run was abandoned after {task.attempt} attempts without finishing. "
             "Check the worker logs, then submit the question again."
         )
         run.completed_at = utcnow()
@@ -94,11 +94,13 @@ def handle_research_run(task: ClaimedTask) -> None:
     try:
         execute_research_run(run_id, ensure_owned=task.ensure_owned)
     except TaskOwnershipLost:
-        raise  # another worker has the run; nothing was written by this attempt
+        raise
     except Exception as exc:
-        # The executor has already marked the run failed and recorded why; retrying can't help.
-        logger.exception("Research run %s failed", run_id)
-        raise PermanentTaskError("The research run failed unexpectedly; see the run record.") from exc
+        # Worker mode: the executor has put the run back to queued and the queue retries with backoff.
+        # Inline mode has no worker to pick a retry up, so the executor failed the run and the task ends here.
+        if get_settings().run_research_inline:
+            raise PermanentTaskError("The research run failed unexpectedly in inline mode.") from exc
+        raise
 
 
 @register(SEARCH_RUN, requires_gate=GateCode.G2)

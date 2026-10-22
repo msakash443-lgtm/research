@@ -93,3 +93,5 @@
 20261020_0086 source_language
 20261020_0087 deviation_logs
 20261022_0088 qual_suggestion_provenance
+20261022_0089 llm_usage_reservations
+20261022_0090 task_timestamps

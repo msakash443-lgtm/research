@@ -2,6 +2,7 @@ import { $, el, label, toast, emptyCard } from "../dom.js";
 import { request, projectApi } from "../api.js";
 import { gateCard } from "./common.js";
 import { renderFrame } from "./frame.js";
+import { canChangeResearchType, canSaveResearchType, chainRows, researchTypeLockReason, selectedResearchType } from "../researchTypeLogic.js";
 
 const KIND_ORDER = ["question", "objective", "hypothesis", "methodology", "variable", "decision"];
 
@@ -78,6 +79,85 @@ async function discipline(root, ctx) {
   return box;
 }
 
+// Research type picker (X.43.9): which stages this project goes through. The owner can change it only at idea
+// with no approved gate; everyone else sees the saved type and its stage list. The server re-checks both rules.
+async function researchTypePanel(ctx) {
+  const box = el("div", { className: "panel" });
+  box.append(el("h2", { text: "Research type" }));
+  try {
+    if (!ctx.cache.researchTypes) {
+      ctx.cache.researchTypes = await request("/api/research-types");
+    }
+    const types = ctx.cache.researchTypes;
+    const stage = ctx.summary.stage || {};
+    const saved = stage.research_type;
+    const changeable = canChangeResearchType({ isOwner: ctx.isOwner, stage: ctx.summary.stage?.stage, gates: ctx.summary.gates || [] });
+    const lockReason = researchTypeLockReason({ isOwner: ctx.isOwner, stage: ctx.summary.stage?.stage, gates: ctx.summary.gates || [] });
+    box.append(el("p", { className: "muted small", text: changeable
+      ? "Choose the type before any gate is approved. It decides which stages this project passes through."
+      : lockReason }));
+    if (changeable) {
+      const picker = el("div", { className: "type-options" });
+      const state = { picked: saved };
+      const save = el("button", { text: "Save research type" });
+      const sync = () => {
+        save.disabled = !canSaveResearchType({ saved, picked: state.picked, changeable });
+      };
+      types.forEach((type) => {
+        const option = el("label", { className: "type-option" });
+        const input = el("input", { attrs: { type: "radio", name: "research-type", value: type.name } });
+        input.checked = type.name === selectedResearchType({ saved, picked: state.picked });
+        input.addEventListener("change", () => {
+          state.picked = type.name;
+          sync();
+        });
+        option.append(input, el("strong", { text: ` ${type.label}` }), el("span", { className: "muted small", text: ` · ${type.stages.length} stages` }));
+        picker.append(option);
+      });
+      save.addEventListener("click", async () => {
+        save.disabled = true;
+        try {
+          await request(projectApi(ctx.project.id, "/research-type"), {
+            method: "PUT",
+            body: JSON.stringify({ name: state.picked }),
+          });
+          toast("Research type saved.");
+          await ctx.refresh();
+        } catch (error) {
+          toast(error.message);
+          sync();
+        }
+      });
+      sync();
+      const row = el("div", { className: "form-actions" });
+      row.append(save);
+      box.append(picker, row);
+    } else {
+      // Locked (wireframe Q3): every type stays visible, greyed out, with the reason above.
+      const picker = el("div", { className: "type-options" });
+      types.forEach((type) => {
+        const option = el("label", { className: "type-option is-disabled" });
+        const input = el("input", { attrs: { type: "radio", name: "research-type", value: type.name } });
+        input.checked = type.name === saved;
+        input.disabled = true;
+        option.append(input, el("strong", { text: ` ${type.label}` }), el("span", { className: "muted small", text: ` · ${type.stages.length} stages` }));
+        picker.append(option);
+      });
+      box.append(picker);
+    }
+    const rows = chainRows(stage.chain);
+    const list = el("ol", { className: "research-type-stages" });
+    rows.forEach((row) => {
+      const text = `${row.label || label(row.stage)}${row.gate ? ` · ${row.gate}` : ""}${row.mandatory ? " (required in every type)" : ""}`;
+      list.append(el("li", { text }));
+    });
+    box.append(el("p", { className: "muted small", text: `Stages in this project (${rows.length}):` }), list);
+  } catch (error) {
+    box.append(el("p", { className: "muted small", text: error.message }));
+  }
+  return box;
+}
+
 async function render(root, ctx) {
   const items = (ctx.summary.context || []).filter((item) => item.kind !== "idea");
   const sections = [];
@@ -103,6 +183,7 @@ async function render(root, ctx) {
   sections.push(contextPanel);
 
   sections.push(await discipline(root, ctx));
+  sections.push(await researchTypePanel(ctx));
 
   const gatePanel = el("div", { className: "panel" });
   gatePanel.append(el("h2", { text: "Approval" }));

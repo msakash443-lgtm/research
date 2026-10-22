@@ -34,6 +34,14 @@ def test_page_and_assets_are_revalidated_on_every_load():
         assert "cache-control" not in client.get("/health").headers
 
 
+def test_research_type_picker_radios_are_not_stretched_to_the_full_row_width():
+    # The global `input { width:100% }` would put each radio on its own line above the type name.
+    with TestClient(app) as client:
+        css = client.get("/assets/styles.css").text
+    rule = next(line for line in css.splitlines() if line.startswith(".panel .type-option input"))
+    assert "width:auto" in rule
+
+
 def test_request_body_limit_rejects_oversized_payloads():
     with TestClient(app) as client:
         response = client.post(

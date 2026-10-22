@@ -1,5 +1,6 @@
 import csv
 import io
+import pytest
 
 from fastapi.testclient import TestClient
 
@@ -100,3 +101,71 @@ def test_export_rejects_unknown_formats():
     owner, _, project_id = _project_with_activity()
 
     assert owner.get(f"/api/projects/{project_id}/audit/export", params={"format": "xml"}).status_code == 422
+
+
+@pytest.mark.parametrize("fmt", ["json", "csv"])
+def test_export_reads_the_trail_in_batches_not_all_at_once(monkeypatch, fmt):
+    from app.routers import audit as audit_router
+
+    owner, _, project_id = _project_with_activity()
+    batch_sizes = []
+    pulled = [0]
+    pulled_at_first_write = []
+    real_session_local = audit_router.SessionLocal
+    real_model_validate = audit_router.AuditEventRead.model_validate
+    real_csv_row = audit_router._csv_row
+
+    class Counting:
+        # Counts the rows taken from the database so far, however they are taken.
+        def __init__(self, result):
+            self._result = result
+
+        def __iter__(self):
+            for event in self._result:
+                pulled[0] += 1
+                yield event
+
+        def all(self):
+            events = self._result.all()
+            pulled[0] += len(events)
+            return events
+
+    def on_write():
+        if not pulled_at_first_write:
+            pulled_at_first_write.append(pulled[0])
+
+    class RecordingSession:
+        def __init__(self, session):
+            self._session = session
+
+        def __enter__(self):
+            self._session.__enter__()
+            return self
+
+        def __exit__(self, *exc):
+            return self._session.__exit__(*exc)
+
+        def scalars(self, statement):
+            batch_sizes.append(statement._execution_options.get("yield_per"))
+            return Counting(self._session.scalars(statement))
+
+    def model_validate(event, *args, **kwargs):
+        on_write()
+        return real_model_validate(event, *args, **kwargs)
+
+    def csv_row(event):
+        on_write()
+        return real_csv_row(event)
+
+    monkeypatch.setattr(audit_router, "EXPORT_BATCH_ROWS", 2)
+    monkeypatch.setattr(audit_router, "SessionLocal", lambda: RecordingSession(real_session_local()))
+    monkeypatch.setattr(audit_router.AuditEventRead, "model_validate", model_validate)
+    monkeypatch.setattr(audit_router, "_csv_row", csv_row)
+
+    response = owner.get(f"/api/projects/{project_id}/audit/export", params={"format": fmt})
+
+    assert response.status_code == 200
+    rows = response.json() if fmt == "json" else list(csv.DictReader(io.StringIO(response.text)))
+    assert len(rows) == 3  # three events, batch size two: the trail spans more than one batch
+    assert batch_sizes == [2]  # the rows are fetched through yield_per, never one .all() load
+    assert pulled_at_first_write and pulled_at_first_write[0] <= 2  # the body starts before the trail is read

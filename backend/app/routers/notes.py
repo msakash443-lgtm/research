@@ -43,6 +43,7 @@ from app.models import (
     User,
 )
 from app.object_storage import get_object_store, validate_key
+from app.pagination import MAX_PAGE_SIZE, paginate
 from app.note_suggest import ProjectSummary, SourceSummary, suggest
 from app.schemas import (
     ContextItemRead,
@@ -167,14 +168,19 @@ def capture_note(
 
 @router.get("", response_model=list[NoteRead])
 def list_notes(
+    response: Response,
     status_filter: NoteStatus | None = Query(default=None, alias="status"),
+    limit: int | None = Query(None, ge=1, le=MAX_PAGE_SIZE),
+    cursor: str | None = Query(None, max_length=64),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    query = select(Note).where(Note.owner_id == user.id).order_by(Note.captured_at.desc(), Note.created_at.desc(), Note.id.desc())
+    """Newest capture first. With `limit`, one page; the next page's cursor is in `X-Next-Cursor` (X.142)."""
+    query = select(Note).where(Note.owner_id == user.id)
     if status_filter is not None:
         query = query.where(Note.status == status_filter)
-    return [NoteRead.model_validate(note) for note in db.scalars(query)]
+    notes = paginate(db, query, Note, (Note.captured_at, Note.created_at, Note.id), limit, cursor, response)
+    return [NoteRead.model_validate(note) for note in notes]
 
 
 def _notes_markdown(notes: list[Note]) -> str:

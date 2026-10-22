@@ -43,6 +43,14 @@ SUPPORTED_FILTERS = ("year_from", "year_to")
 _PMID = re.compile(r"^\d{1,9}$")
 _YEAR = re.compile(r"^\d{4}$")
 _OFFSET = re.compile(r"^\d{1,6}$")
+# PubMed's <Language> is ISO 639-2 (mostly the bibliographic form). Only codes listed here are mapped;
+# anything else (e.g. "und") stays unreported rather than guessed (X.127).
+_ISO_639_2_TO_1 = {
+    "ara": "ar", "chi": "zh", "zho": "zh", "cze": "cs", "ces": "cs", "dan": "da", "dut": "nl", "nld": "nl",
+    "eng": "en", "fin": "fi", "fre": "fr", "fra": "fr", "ger": "de", "deu": "de", "gre": "el", "ell": "el",
+    "heb": "he", "hin": "hi", "hun": "hu", "ita": "it", "jpn": "ja", "kor": "ko", "nor": "no", "nob": "nb",
+    "pol": "pl", "por": "pt", "rus": "ru", "spa": "es", "swe": "sv", "tur": "tr", "ukr": "uk",
+}
 # NLM's own DOCTYPE line: a public identifier and system URL, no internal subset.
 _NLM_DOCTYPE = re.compile(r'<!DOCTYPE\s+PubmedArticleSet\s+PUBLIC\s+"[^"<>\[\]]*"\s+"[^"<>\[\]]*"\s*>', re.I)
 
@@ -88,6 +96,11 @@ def _authors(article: ET.Element) -> tuple[str, ...]:
         if name:
             names.append(name)
     return tuple(names)
+
+
+def _language(article: ET.Element) -> str | None:
+    """The first `<Language>` as ISO 639-1, or None when it is missing or not in the mapping."""
+    return _ISO_639_2_TO_1.get((article.findtext("Language") or "").strip().lower())
 
 
 def _abstract(article: ET.Element) -> str | None:
@@ -145,6 +158,7 @@ def to_record(node: ET.Element) -> PaperRecord | None:
         oa_url=f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmc}/" if "pmcid" in source_ids else None,
         source_ids=source_ids,
         quality_flags=tuple(flags),
+        language=_language(article),
     )
 
 

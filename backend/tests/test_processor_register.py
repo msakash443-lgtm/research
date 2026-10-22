@@ -92,3 +92,7 @@ def test_the_notice_does_not_point_to_a_screen_that_does_not_exist():
     from app.processors import NOTICE
 
     assert "account settings" not in NOTICE
+
+
+def test_a_blank_google_forms_token_does_not_list_google_forms():
+    assert "google_forms" not in _names(Settings(_env_file=None, google_forms_access_token="   "))

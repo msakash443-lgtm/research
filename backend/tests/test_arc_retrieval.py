@@ -162,8 +162,8 @@ def test_retrieved_excerpt_reaches_the_runs_evidence(arc_enabled, monkeypatch):
     with SessionLocal() as db:
         run = db.get(ResearchRun, uuid.UUID(response.json()["id"]))
         [source] = run.input_snapshot["sources"]
-        assert source["excerpt"] == "Retrieved finding text."
-        assert source["locator"] == "Google Scholar abstract"
+        assert source["excerpts"][0]["excerpt"] == "Retrieved finding text."
+        assert source["excerpts"][0]["locator"] == "Google Scholar abstract"
         assert source["automated"] is True
 
 
@@ -200,8 +200,8 @@ def test_manual_sources_come_first_and_survive_the_source_cap(arc_enabled, monke
     assert {source["title"] for source in snapshot[:2]} == {"Manual one", "Manual two"}
     assert [source["automated"] for source in snapshot] == [False, False, True]
     # Manual excerpts get first claim on the evidence budget (16 + 14 chars of 30).
-    assert sorted(source["excerpt"] for source in snapshot[:2]) == ["Manual evidenc", "Manual evidence."]
-    assert snapshot[2]["excerpt"] == ""
+    assert sorted(source["excerpts"][0]["excerpt"] for source in snapshot[:2]) == ["Manual evidenc", "Manual evidence."]
+    assert snapshot[2]["excerpts"] == []
 
 
 def test_retrieval_failure_does_not_fail_the_run(arc_enabled, monkeypatch):

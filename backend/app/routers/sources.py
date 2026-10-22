@@ -25,6 +25,7 @@ from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_acce
 from app.connectors.factory import enabled_lookup_names, unpaywall_unavailable_reason
 from app.fulltext import FullTextError, extract_pdf_text
 from app.models import SOURCE_ORIGIN_RETRIEVED, OwnPaperLookup, Project, Source, SourceExcerpt, Task, TaskStatus, User, excerpt_hash, utcnow
+from app.pagination import MAX_PAGE_SIZE, paginate
 from app.screening import screening_locked
 from app.object_storage import ObjectConflict, ObjectNotFound, ObjectStorageError, fulltext_key, get_object_store
 from app.task_handlers import FULLTEXT_FETCH, OWN_PAPER_LOOKUP, SOURCE_CHECK
@@ -84,13 +85,20 @@ def _load_source(db: Session, source_id: uuid.UUID) -> Source:
 
 
 @router.get("", response_model=list[SourceRead])
-def list_sources(project: Project = Depends(project_access(READ_ROLES)), db: Session = Depends(get_db)):
-    sources = db.scalars(
+def list_sources(
+    response: Response,
+    limit: int | None = Query(None, ge=1, le=MAX_PAGE_SIZE),
+    cursor: str | None = Query(None, max_length=64),
+    project: Project = Depends(project_access(READ_ROLES)),
+    db: Session = Depends(get_db),
+):
+    """Newest first. With `limit`, one page; the next page's cursor is in `X-Next-Cursor` (X.142)."""
+    query = (
         select(Source)
         .where(Source.project_id == project.id, Source.merged_into.is_(None))
         .options(selectinload(Source.excerpts))
-        .order_by(Source.created_at.desc())
-    ).all()
+    )
+    sources = paginate(db, query, Source, (Source.created_at, Source.id), limit, cursor, response)
     return [source_response(source) for source in sources]
 
 

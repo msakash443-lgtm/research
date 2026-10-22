@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Research Type Picker Wireframe</title>
+<link rel="stylesheet" href="wireframe.css">
+<style>
+  .work { display:grid; grid-template-columns:minmax(0,1fr) minmax(280px,38%); gap:14px; padding:14px 20px; }
+  @media (max-width:800px) { .work { grid-template-columns:minmax(0,1fr); } }
+  .types { display:grid; gap:10px; }
+  .type { display:block; border:1px solid var(--line); border-radius:10px; padding:12px 14px; background:#fff; cursor:pointer; }
+  .type input { margin-right:8px; }
+  .type[aria-checked="true"] { border-color:var(--navy); box-shadow:0 0 0 2px #dfe8f3 inset; }
+  .type .desc { margin:6px 0 0 24px; font-size:13px; color:var(--muted); }
+  .type .meta { margin:4px 0 0 24px; font-size:12px; color:var(--muted); }
+  .chain { list-style:none; margin:0; padding:0; font-size:13px; }
+  .chain li { display:grid; grid-template-columns:28px minmax(0,1fr) auto; gap:8px; padding:5px 0; border-bottom:1px solid var(--line); }
+  .chain li.dropped { display:none; }
+  .chain .n { color:var(--muted); }
+  .chain .gate { font-weight:650; color:var(--navy); }
+  .chain .mand { font-size:11px; color:var(--muted); }
+  .lock { border:1px dashed var(--line); border-radius:8px; padding:10px 12px; font-size:13px; background:#fbfaf6; }
+  .locked-note { font-size:13px; color:var(--muted); }
+  .btnrow { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:12px; }
+  .toast-line { font-size:13px; color:var(--navy); min-height:18px; }
+</style>
+</head>
+<body>
+<div class="wf-banner"><span><strong>WIREFRAMES</strong> · X.43.9 · static prototype with invented data · not connected to the app · resets on reload</span></div>
+<header class="topbar">
+  <div class="brand">Research AI</div>
+  <div class="crumbs">Project · Scope</div>
+  <div class="spacer"></div>
+  <label class="small"><input type="checkbox" id="pin-toggle" checked> Show walkthrough questions</label>
+  <label class="small">View as
+    <select id="role">
+      <option value="owner">Owner</option>
+      <option value="supervisor">Supervisor</option>
+    </select>
+  </label>
+</header>
+
+<main>
+  <section class="work">
+    <div>
+      <div class="panel">
+        <div class="panel-head"><h2>Research type</h2><span class="pin" title="Q1">Q1</span></div>
+        <div class="panel-body">
+          <p class="muted small" id="intro">The research type decides which stages this project goes through. You can choose it now, while the project is at <strong>Idea</strong> and no gate has been approved.</p>
+          <div class="types" role="radiogroup" aria-label="Research type" id="types"></div>
+          <div class="btnrow" id="action-row"></div>
+          <p class="toast-line" id="status" role="status"></p>
+        </div>
+      </div>
+      <div class="panel" style="margin-top:14px">
+        <div class="panel-head"><h2>Discipline profile</h2></div>
+        <div class="panel-body muted small">Unchanged by this screen. (Shown to place the picker in context.)</div>
+      </div>
+    </div>
+
+    <aside>
+      <div class="panel">
+        <div class="panel-head"><h2>Stages for this project</h2><span class="pin" title="Q2">Q2</span></div>
+        <div class="panel-body">
+          <p class="muted small" id="count"></p>
+          <ol class="chain" id="chain"></ol>
+        </div>
+      </div>
+    </aside>
+  </section>
+</main>
+
+<div class="questions" id="questions">
+  <strong>Open questions for the walkthrough</strong>
+  <ol>
+    <li><span class="pin">Q1</span> Should the picker sit on the Scope screen (as drawn), or on a project settings screen of its own?</li>
+    <li><span class="pin">Q2</span> The stage list shows every stage with its gate. Is a stage with no gate (for example "Retrieved") worth showing, or should only gated stages appear?</li>
+    <li><span class="pin">Q3</span> When a type is locked (a gate is approved), should the other types still be visible, greyed out with the reason, or hidden?</li>
+  </ol>
+</div>
+
+<script>
+  // Invented copy of the three shipped types (app/research_types/*.toml). Only the stages differ, so the page shows them.
+  const TYPES = [
+    {
+      name: "full_journey", label: "Full research journey", human: true,
+      description: "Every stage from idea to acceptance, including primary data collection and a locked analysis plan.",
+      stages: [["idea"],["scoped","G1"],["search_planned","G2"],["retrieved"],["screened","G3"],["extracted","G4"],["synthesized"],["gaps_selected","G5"],["framework","G6"],["design_approved","G7"],["data_collected"],["plan_locked","G8"],["analyzed","G9"],["drafted","G10"],["revised"],["submission_ready","G11"],["submitted"],["revision_loop"],["accepted"]],
+    },
+    {
+      name: "literature_review", label: "Literature review", human: false,
+      description: "A review of published work with no primary data collection: search, screen, extract, synthesise and write.",
+      stages: [["idea"],["scoped","G1"],["design_approved","G7"],["search_planned","G2"],["retrieved"],["screened","G3"],["extracted","G4"],["synthesized"],["gaps_selected","G5"],["drafted","G10"],["revised"],["submission_ready","G11"],["submitted"],["revision_loop"],["accepted"]],
+    },
+    {
+      name: "qualitative", label: "Qualitative study", human: true,
+      description: "Interviews or focus groups analysed thematically; no statistical analysis plan to lock.",
+      stages: [["idea"],["scoped","G1"],["search_planned","G2"],["retrieved"],["screened","G3"],["extracted","G4"],["synthesized"],["gaps_selected","G5"],["framework","G6","Sensitising concepts & questions"],["design_approved","G7","Design, interview guide & ethics"],["data_collected"],["analyzed","G9","Themes & interpretation"],["drafted","G10"],["revised"],["submission_ready","G11"],["submitted"],["revision_loop"],["accepted"]],
+    },
+  ];
+  const MANDATORY = ["G2", "G3", "G4", "G7", "G11"];
+  // Prototype state: the project starts at Idea, with no approved gate, on the full journey.
+  const state = { saved: "full_journey", picked: "full_journey", gateApproved: false };
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const label = (stage) => stage.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+
+  function owner() { return $("role").value === "owner"; }
+  function editable() { return owner() && !state.gateApproved; }
+
+  function renderTypes() {
+    const wrap = $("types");
+    wrap.innerHTML = "";
+    TYPES.forEach((t) => {
+      const checked = state.picked === t.name;
+      const card = document.createElement("label");
+      card.className = "type";
+      card.setAttribute("aria-checked", String(checked));
+      card.innerHTML = `<input type="radio" name="rt" value="${t.name}" ${checked ? "checked" : ""} ${editable() ? "" : "disabled"}>
+        <strong>${esc(t.label)}</strong>
+        <div class="desc">${esc(t.description)}</div>
+        <div class="meta">${t.stages.length} stages · ${t.human ? "involves human participants (G7 asks for ethics approval)" : "no human participants (G7 becomes a short confirmation)"}</div>`;
+      wrap.appendChild(card);
+    });
+    wrap.querySelectorAll("input").forEach((input) => input.addEventListener("change", () => {
+      state.picked = input.value;
+      renderAll();
+    }));
+  }
+
+  function renderActions() {
+    const row = $("action-row");
+    row.innerHTML = "";
+    if (!owner()) {
+      row.innerHTML = `<span class="locked-note">Only the owner can change the research type. You can see which stages apply.</span>`;
+      return;
+    }
+    if (state.gateApproved) {
+      row.innerHTML = `<span class="lock">The research type is locked: a gate has been approved. Changing it would move the stages under approved work.</span>`;
+      return;
+    }
+    const save = document.createElement("button");
+    save.textContent = "Save research type";
+    save.disabled = state.picked === state.saved;
+    save.addEventListener("click", () => {
+      state.saved = state.picked;
+      $("status").textContent = `Saved: ${TYPES.find((t) => t.name === state.saved).label}. Stages below now match it.`;
+      renderAll();
+    });
+    row.appendChild(save);
+    if (state.picked !== state.saved) {
+      const hint = document.createElement("span");
+      hint.className = "locked-note";
+      hint.textContent = "Unsaved change: the stage list below shows what you picked.";
+      row.appendChild(hint);
+    }
+  }
+
+  function renderChain() {
+    const t = TYPES.find((x) => x.name === state.picked);
+    $("count").textContent = `${t.label}: ${t.stages.length} stages. Gates in bold; G2, G3, G4, G7 and G11 cannot be removed from any type.`;
+    const list = $("chain");
+    list.innerHTML = "";
+    t.stages.forEach(([stage, gate, lab], i) => {
+      const li = document.createElement("li");
+      const mand = gate && MANDATORY.includes(gate) ? `<span class="mand">required in every type</span>` : "";
+      li.innerHTML = `<span class="n">${i + 1}</span><span>${esc(lab || label(stage))}</span><span class="gate">${gate ? esc(gate) : ""} ${mand}</span>`;
+      list.appendChild(li);
+    });
+  }
+
+  function renderAll() {
+    renderTypes();
+    renderActions();
+    renderChain();
+    const show = $("pin-toggle").checked;
+    document.querySelectorAll(".pin").forEach((p) => p.style.display = show ? "" : "none");
+    $("questions").style.display = show ? "" : "none";
+  }
+
+  $("role").addEventListener("change", renderAll);
+  $("pin-toggle").addEventListener("change", renderAll);
+  renderAll();
+</script>
+</body>
+</html>

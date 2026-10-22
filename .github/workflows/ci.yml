@@ -36,9 +36,10 @@ jobs:
         # Matches the runtime image (Dockerfile).
         python-version: "3.12"
         cache: pip
-        cache-dependency-path: backend/requirements.txt
+        cache-dependency-path: backend/requirements*.txt
     - name: Install dependencies
-      run: python -m pip install -r backend/requirements.txt
+      # App, vendored ARC service (its tests) and test tools; the web image installs requirements.txt only (X.141).
+      run: python -m pip install -r backend/requirements.txt -r backend/requirements-arc.txt -r backend/requirements-dev.txt
     - name: Run tests
       # tests/conftest.py forces an in-memory SQLite database; the Postgres-only tests skip here (no TEST_POSTGRES_URL).
       run: pytest -q

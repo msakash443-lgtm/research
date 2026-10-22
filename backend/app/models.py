@@ -1467,6 +1467,8 @@ class Task(Timestamped, Base):
     max_attempts: Mapped[int] = mapped_column(default=3, server_default="3")
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     run_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # retry backoff: not claimable before this
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # set when the current attempt is claimed (X.7.1)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # set when the task completes or fails for good (X.7.1)
     blocked_by_gate: Mapped[GateCode | None] = mapped_column(Enum(GateCode, name="gate_code"))
     idempotency_key: Mapped[str | None] = mapped_column(String(200))
     error: Mapped[str | None] = mapped_column(Text)
@@ -1544,6 +1546,8 @@ class LlmUsage(Base):
     prompt_tokens: Mapped[int | None] = mapped_column()
     completion_tokens: Mapped[int | None] = mapped_column()
     total_tokens: Mapped[int | None] = mapped_column()
+    # Set while the call is in flight (X.110): the budget the call may use, held until its usage is recorded.
+    reserved_tokens: Mapped[int | None] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

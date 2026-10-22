@@ -93,7 +93,8 @@ Copy-Item .env.example .env
 docker compose up --build        # → http://localhost:8000
 
 # Local, no Docker (set RUN_RESEARCH_INLINE=true in .env first)
-python -m pip install -r backend/requirements.txt
+# requirements.txt = web runtime (all the image installs); -arc = vendored ARC service; -dev = test tools
+python -m pip install -r backend/requirements.txt -r backend/requirements-arc.txt -r backend/requirements-dev.txt
 uvicorn app.main:app --reload --app-dir backend
 
 # Tests
