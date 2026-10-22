@@ -1227,6 +1227,95 @@ class DocumentVersion(Base):
     restored_from_number: Mapped[int | None]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     document: Mapped[Document] = relationship(back_populates="versions")
+class ManuscriptOutput(Timestamped, Base):
+    """Immutable generated front matter tied to the exact saved document version (M6.10.2)."""
+
+    __tablename__ = "manuscript_outputs"
+    __table_args__ = (
+        UniqueConstraint("document_id", "source_version_id", "kind", "created_at", name="uq_manuscript_output_event"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id"), index=True)
+    source_version_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("document_versions.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(32), index=True)
+    content_json: Mapped[dict | list | None] = mapped_column(JSON)
+    content_text: Mapped[str | None] = mapped_column(Text)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    created_by: Mapped[str] = mapped_column(String(100))
+    model_id: Mapped[str | None] = mapped_column(String(255))
+    prompt_version: Mapped[str | None] = mapped_column(String(100))
+class ReviewComment(Timestamped, Base):
+    """Structured, auditable reviewer feedback for a project document (M7.1)."""
+
+    __tablename__ = "review_comments"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id"), index=True)
+    persona: Mapped[str] = mapped_column(String(60))
+    severity: Mapped[str] = mapped_column(String(12))
+    status: Mapped[str] = mapped_column(String(12), default="open", server_default="open")
+    body: Mapped[str] = mapped_column(Text)
+    created_by: Mapped[str] = mapped_column(String(100))
+class ReviewIssue(Timestamped, Base):
+
+
+    """Structured review issue and response metadata (M7.3)."""
+
+    __tablename__ = "review_issues"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id"), index=True)
+    title: Mapped[str] = mapped_column(String(300))
+    severity: Mapped[str] = mapped_column(String(12))
+    status: Mapped[str] = mapped_column(String(12), default="open", server_default="open")
+    assignee: Mapped[str | None] = mapped_column(String(100))
+    response_text: Mapped[str | None] = mapped_column(Text)
+    redline_json: Mapped[dict | None] = mapped_column(JSON)
+    created_by: Mapped[str] = mapped_column(String(100))
+
+class JournalCandidate(Timestamped, Base):
+    """Researcher-supplied journal metadata and official-list provenance (M7.4)."""
+
+    __tablename__ = "journal_candidates"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    name: Mapped[str] = mapped_column(String(300))
+    scope_terms: Mapped[list] = mapped_column(JSON, default=list)
+    indexes: Mapped[list] = mapped_column(JSON, default=list)
+    apc: Mapped[float | None] = mapped_column(Float)
+    review_days: Mapped[int | None] = mapped_column(Integer)
+    source_url: Mapped[str] = mapped_column(String(2000))
+    checked_at: Mapped[str] = mapped_column(String(64))
+    official_predatory: Mapped[bool] = mapped_column(default=False, server_default=false())
+    created_by: Mapped[str] = mapped_column(String(100))
+class Submission(Timestamped, Base):
+    """A project submission and its explicit lifecycle state (M7.5)."""
+
+    __tablename__ = "submissions"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    journal_name: Mapped[str] = mapped_column(String(300))
+    manuscript_url: Mapped[str | None] = mapped_column(String(2000))
+    status: Mapped[str] = mapped_column(String(32), default="draft", server_default="draft")
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    external_id: Mapped[str | None] = mapped_column(String(255))
+    created_by: Mapped[str] = mapped_column(String(100))
+class SubmissionReminder(Timestamped, Base):
+    """A persisted human-facing reminder for a submission (M7.5)."""
+
+    __tablename__ = "submission_reminders"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    submission_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("submissions.id"), index=True)
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    message: Mapped[str] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(String(20), default="pending", server_default="pending")
+    created_by: Mapped[str] = mapped_column(String(100))
+
+
+
+
 
 
 class AuthorshipEvent(Base):

@@ -27,9 +27,12 @@ PUBLISHED_CHECKSUMS = {
     "workspace_clearer_sentence.v1.toml": "8cee2698fdfabb1406a9605dc20ff1eef832f42aee65babe8113453478c75e45",
     "workspace_find_evidence.v1.toml": "ac78ecc5cad03ddd7e291e924c48a5726936f587afae6e7b1395a955634ade12",
     "section_draft.v1.toml": "b6f71b13824d34588dafac6f31b0d44617e05935c2a38fd6e2e484b002b418d1",
+    "front_matter_abstract.v1.toml": "c1a4d2aeb1a476d3a45fdba18f1f31ad41eb102cfd191f0bfcf319ec13a3d6d1",
+    "front_matter_cover_letter.v1.toml": "000eb89dfc2fda6704e8abd19d6058409882cc6bf33d36a6cf0d59a9dd475601",
+    "front_matter_highlights.v1.toml": "6272f847883f2e296ffbaefefbe2b3ffad2f9c4753b80369bb7a2a64105009dc",
+    "front_matter_keywords.v1.toml": "081be621ff191c133b7e0020f3fa16e4dcf1d9a30d73308bdff10b572b3b1783",
     "qual_code_suggestions.v1.toml": "aa02dc07add26fdbdcca3f2ec8b3f902187570e52eced8b6eb7181800c332267",
 }
-
 
 def _write(tmp_path, name, body):
     (tmp_path / name).write_text(body, encoding="utf-8")

@@ -1,10 +1,10 @@
-"""Manuscript export (X.31.13): Markdown, DOCX, JSON and BibTeX of the latest saved sections."""
+"""Manuscript export (X.31.13): Markdown, DOCX, JSON, BibTeX, and Overleaf package."""
 
 import io
 import json
 import uuid
+import zipfile
 from types import SimpleNamespace
-
 import pytest
 from docx import Document as WordDocument
 from fastapi.testclient import TestClient
@@ -487,3 +487,18 @@ def test_an_unknown_credit_role_is_refused_not_silently_dropped(world):
         f"/api/projects/{world.project_id}/manuscript/credit/{member_id}", json={"roles": ["Peer review"]},
     )
     assert response.status_code == 422
+def test_overleaf_export_is_a_deterministic_zip_with_latex_and_verified_bibtex(world):
+    first = _export(world, "overleaf")
+    second = _export(world, "overleaf")
+    assert first.status_code == 200
+    assert first.headers["content-type"] == "application/zip"
+    assert 'filename="overleaf-package.zip"' in first.headers["content-disposition"]
+    assert first.content == second.content
+    with zipfile.ZipFile(io.BytesIO(first.content)) as archive:
+        assert set(archive.namelist()) == {"README.md", "manuscript.tex", "references.bib"}
+        latex = archive.read("manuscript.tex").decode()
+        bib = archive.read("references.bib").decode()
+        assert "\\documentclass" in latex and "\\section{Introduction}" in latex
+        assert "Wages after remote work" in bib
+        assert "Unchecked claim" not in bib
+        assert "Upload this ZIP to Overleaf" in archive.read("README.md").decode()

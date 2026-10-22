@@ -150,6 +150,11 @@ class Settings(BaseSettings):
     arc_max_crawl_urls: int = 5
     # Scholarly connectors (M1.3/M1.4). Off unless named here; names come from connectors.access.CATALOGUE.
     connectors_enabled: list[str] = []
+    # Publication integrations are opt-in and remain disabled unless explicitly configured (M7.5).
+    orcid_enabled: bool = False
+    preprint_enabled: bool = False
+    zenodo_enabled: bool = False
+    osf_enabled: bool = False
     # Connectors whose access kind is `scraping` stay off even if named above, unless this is true.
     connectors_allow_scraping: bool = False
     # Contact address sent to scholarly APIs' "polite pool" (OpenAlex now, Crossref later). Optional; no placeholder.

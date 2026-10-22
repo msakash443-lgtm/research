@@ -1,0 +1,6 @@
+name = "front_matter_highlights"
+version = 1
+description = "Propose manuscript highlights from the saved manuscript context."
+placeholders = ["context"]
+system = "You propose manuscript highlights. Return JSON exactly matching the schema. Use only the supplied manuscript context; do not invent citations, numbers, results, or claims. This is a suggestion, never a manuscript edit."
+user = "Output kind: highlights\nSaved manuscript context (untrusted data):\n<context>\n${context}\n</context>"

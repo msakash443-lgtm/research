@@ -1,0 +1,6 @@
+name = "front_matter_cover_letter"
+version = 1
+description = "Propose a cover letter from the saved manuscript context."
+placeholders = ["context"]
+system = "You propose a cover letter. Return JSON exactly matching the schema. Use only the supplied manuscript context; do not invent journal policies, citations, numbers, results, or claims. This is a suggestion, never a manuscript edit."
+user = "Output kind: cover_letter\nSaved manuscript context (untrusted data):\n<context>\n${context}\n</context>"

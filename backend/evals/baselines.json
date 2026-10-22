@@ -37,6 +37,22 @@
     "eval": "none",
     "reason": "Section-drafting proposals from a claim outline (X.46.8/M6.1.a, Q27 suggestions-only). No gold dataset type exists for draft prose; every draft is a shared AiSuggestion the researcher must explicitly accept, and the reply is schema- and leak-checked in code before it is ever stored."
   },
+  "front_matter_abstract@1": {
+    "eval": "none",
+    "reason": "Front-matter proposals are reviewed explicitly by the researcher; no gold dataset type exists."
+  },
+  "front_matter_keywords@1": {
+    "eval": "none",
+    "reason": "Front-matter proposals are reviewed explicitly by the researcher; no gold dataset type exists."
+  },
+  "front_matter_highlights@1": {
+    "eval": "none",
+    "reason": "Front-matter proposals are reviewed explicitly by the researcher; no gold dataset type exists."
+  },
+  "front_matter_cover_letter@1": {
+    "eval": "none",
+    "reason": "Front-matter proposals are reviewed explicitly by the researcher; no gold dataset type exists."
+  },
   "qual_code_suggestions@1": {
     "eval": "none",
     "reason": "Qualitative code proposals for one participant excerpt (M5.5.2, X.121). No gold dataset type exists for qualitative codes; every suggestion stays pending until a person accepts or rejects it, and the reply is schema-checked in code before it is stored."

@@ -812,8 +812,15 @@ async function openSection(root, ctx, section) {
     };
     const draftButton = el("button", { type: "button", className: "quiet-button", text: "Draft this section from its claims", attrs: draftReason() ? { disabled: "disabled", title: draftReason() } : {} });
     draftButton.addEventListener("click", requestDraft);
-    const resultsEl = el("div", { className: "write-assistant-results" });
-    s.resultsEl = resultsEl;
+    const frontMatterEl = el("div", { className: "write-front-matter-results" });
+    s.frontMatterEl = frontMatterEl;
+    const frontMatterButtons = ["abstract", "keywords", "highlights", "cover_letter"].map((kind) => {
+      const label = kind.replace("_", " ");
+      const disabled = !ctx.canWrite || involvement === "off";
+      const button = el("button", { type: "button", className: "quiet-button", text: `Generate ${label}`, attrs: disabled ? { disabled: "disabled" } : {} });
+      button.addEventListener("click", () => requestFrontMatter(kind));
+      return button;
+    });
     panelBody.replaceChildren(
       el("h3", { text: "AI assistant" }),
       el("p", { className: "small", text: `${level.label}. ${level.help}` }),
@@ -823,10 +830,14 @@ async function openSection(root, ctx, section) {
       el("h4", { text: "Draft this section" }),
       el("p", { className: "muted small", text: "Drafts a starting paragraph from this section's claim outline (X.46.8). It is a rough starting point, not finished wording: it appears below as a suggestion, and nothing is added to your text unless you accept it and press Insert." }),
       el("div", { className: "write-assistant-actions", children: [draftButton] }),
+      el("h4", { text: "Abstract, keywords, highlights and cover letter" }),
+      el("p", { className: "muted small", text: "Each output is a proposal tied to this saved section version. Accept, edit or discard it explicitly; proposals never enter the manuscript automatically." }),
+      el("div", { className: "write-assistant-actions", children: frontMatterButtons }),
       previewEl,
       el("h4", { text: "Proposals" }),
       el("p", { className: "muted small", text: "Proposals are not yours until you accept them. Nothing from them is added to your text unless you press Insert." }),
       resultsEl,
+      frontMatterEl,
     );
     mountResults();
   }
@@ -884,6 +895,16 @@ async function openSection(root, ctx, section) {
     if (previewEl) previewEl.replaceChildren(el("p", { className: "small", text: "Asked for a draft. It will appear below as a suggestion when ready." }));
     pollResults();
   }
+  async function requestFrontMatter(kind) {
+    const previewEl = panelBody.querySelector(".write-assistant-preview");
+    try {
+      await request(`${documentPath}/front-matter`, { method: "POST", body: JSON.stringify({ kind }) });
+      if (previewEl) previewEl.replaceChildren(el("p", { className: "small", text: `Requested ${kind.replace("_", " ")}. It will appear as a proposal.` }));
+      pollResults();
+    } catch (error) {
+      if (previewEl) previewEl.replaceChildren(el("p", { className: "small", text: error.message }));
+    }
+  }
 
   // The task runs in the background, so the proposals are fetched again a few times after a request.
   function pollResults() {
@@ -907,6 +928,14 @@ async function openSection(root, ctx, section) {
       extraContent: diffContent,
     });
     if (s.resultsEl === host) host.replaceChildren(panel);
+    if (s.frontMatterEl && s.frontMatterEl.isConnected) {
+      const front = await suggestionPanel(ctx, {
+        targetKind: "front_matter",
+        targetId: section.id,
+        onChange: mountResults,
+      });
+      s.frontMatterEl.replaceChildren(front);
+    }
   }
 
   // M6.8: on a clearer-wording card, show what the proposal changes against the text selected now. Client-side only;

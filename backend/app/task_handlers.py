@@ -44,8 +44,8 @@ from app.zotero import ZoteroError, build_zotero_client, sync_pull, sync_push
 from app.task_registry import ClaimedTask, PermanentTaskError, TaskOwnershipLost, register
 from app.similarity_task import run_similarity_check
 from app.section_draft_task import run_section_draft, scrub_draft_payload
+from app.front_matter_task import run_front_matter
 from app.workspace_ai_task import run_workspace_ai_action, scrub_action_payload
-
 logger = logging.getLogger(__name__)
 
 RESEARCH_RUN = "research_run"
@@ -61,6 +61,8 @@ SEED_FALSE_EXCLUSION_CHECK = "seed_false_exclusion_check"
 SIMILARITY_CHECK = "similarity_check"
 OWN_PAPER_LOOKUP = "own_paper_lookup"
 SECTION_DRAFT = "section_draft"
+REMINDER_DISPATCH = "submission_reminder_dispatch"
+FRONT_MATTER = "front_matter"
 
 
 def _research_run_abandoned(task: ClaimedTask) -> None:
@@ -524,6 +526,30 @@ def handle_workspace_ai_action(task: ClaimedTask) -> None:
     run_workspace_ai_action(task.payload or {})
 
 
+@register(FRONT_MATTER)
+def handle_front_matter(task: ClaimedTask) -> None:
+    """Generate one front-matter proposal; it never writes to the manuscript."""
+    run_front_matter(task, task.payload or {})
+
+
+@register(REMINDER_DISPATCH)
+def handle_submission_reminder_dispatch(task: ClaimedTask) -> None:
+    """Mark due submission reminders as dispatched; no external notification is attempted."""
+    from app.models import SubmissionReminder
+    with SessionLocal() as db:
+        task.ensure_owned(db)
+        now = utcnow()
+        rows = db.scalars(
+            select(SubmissionReminder).where(
+                SubmissionReminder.project_id == task.project_id,
+                SubmissionReminder.status == "pending",
+                SubmissionReminder.due_at <= now,
+            )
+        ).all()
+        for row in rows:
+            task.ensure_owned(db)
+            row.status = "dispatched"
+        db.commit()
 @register(SECTION_DRAFT, scrub_payload=scrub_draft_payload)
 def handle_section_draft(task: ClaimedTask) -> None:
     """Draft one section's opening prose from its bound claims (X.46.8 / M6.1.a). No gate: it only proposes a

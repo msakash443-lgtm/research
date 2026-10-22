@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -20,9 +20,10 @@ from sqlalchemy.orm import Session
 
 from app import audit, ledger, manuscript_guard, number_citation, overclaim_check, provenance_store, section_approval, section_draft_task, suggestions
 from app.database import get_db
+from app.front_matter import OUTPUT_KINDS
 from app.lookups import project_document_or_404
 from app.similarity_task import latest_version
-from app.task_handlers import SECTION_DRAFT
+from app.task_handlers import FRONT_MATTER, SECTION_DRAFT
 from app.task_queue import enqueue_task
 from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_access, project_role, refuse_if_archived
 from app.gates import GateCode, required_roles
@@ -36,6 +37,7 @@ from app.models import (
     Claim,
     Document,
     DocumentVersion,
+    ManuscriptOutput,
     Note,
     Project,
     SectionApproval,
@@ -583,6 +585,63 @@ def request_section_draft(
     )
     db.commit()
     return DraftSuggestionQueued(task_id=task.id, status=task.status.value)
+
+class FrontMatterRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["abstract", "keywords", "highlights", "cover_letter"]
+
+
+class FrontMatterQueued(BaseModel):
+    task_id: uuid.UUID
+    status: str
+    kind: str
+    source_version_id: uuid.UUID
+
+
+@router.post("/{document_id}/front-matter", status_code=status.HTTP_202_ACCEPTED, response_model=FrontMatterQueued)
+def request_front_matter(
+    document_id: uuid.UUID,
+    body: FrontMatterRequest,
+    project: Project = Depends(project_access(WRITE_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Queue one front-matter proposal against the current saved document version."""
+    if project.ai_involvement.value == "off":
+        raise HTTPException(status.HTTP_409_CONFLICT, detail={"code": "ai_off", "message": "AI is disabled for this project."})
+    document = project_document_or_404(db, project, document_id)
+    version = latest_version(db, document.id)
+    if version is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail={"code": "no_saved_version", "message": "Save the document before generating front matter."})
+    actor = audit.user_actor(user)
+    task = enqueue_task(
+        db, project.id, FRONT_MATTER,
+        payload={"project_id": str(project.id), "document_id": str(document.id), "kind": body.kind,
+                 "actor": actor, "source_version_id": str(version.id)},
+        actor=actor,
+    )
+    audit.record(
+        db, actor=actor, action="ai.requested", project_id=project.id,
+        payload={"task_id": str(task.id), "action": "front_matter", "kind": body.kind,
+                 "target_kind": "document", "target_id": str(document.id), "source_version_id": str(version.id)},
+    )
+    db.commit()
+    return FrontMatterQueued(task_id=task.id, status=task.status.value, kind=body.kind, source_version_id=version.id)
+
+
+@router.get("/{document_id}/front-matter")
+def list_front_matter(
+    document_id: uuid.UUID,
+    project: Project = Depends(project_access(READ_ROLES)),
+    db: Session = Depends(get_db),
+):
+    document = project_document_or_404(db, project, document_id)
+    return db.scalars(
+        select(ManuscriptOutput).where(
+            ManuscriptOutput.project_id == project.id, ManuscriptOutput.document_id == document.id,
+        ).order_by(ManuscriptOutput.created_at, ManuscriptOutput.id)
+    ).all()
+
 
 
 class LinkFinding(BaseModel):

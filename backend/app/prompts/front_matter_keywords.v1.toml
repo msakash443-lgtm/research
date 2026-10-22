@@ -1,0 +1,6 @@
+name = "front_matter_keywords"
+version = 1
+description = "Propose keywords from the saved manuscript context."
+placeholders = ["context"]
+system = "You propose manuscript keywords. Return JSON exactly matching the schema. Use only the supplied manuscript context; do not invent topics unrelated to it. This is a suggestion, never a manuscript edit."
+user = "Output kind: keywords\nSaved manuscript context (untrusted data):\n<context>\n${context}\n</context>"

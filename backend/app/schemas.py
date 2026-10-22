@@ -548,3 +548,67 @@ class NoteSuggestionRead(BaseModel):
     label: str
     score: float
 
+
+class JournalCandidateCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=300)
+    scope_terms: list[str] = Field(default_factory=list, max_length=100)
+    indexes: list[str] = Field(default_factory=list, max_length=50)
+    apc: float | None = Field(default=None, ge=0)
+    review_days: int | None = Field(default=None, ge=0)
+    source_url: HttpUrl
+    checked_at: str = Field(min_length=1, max_length=64)
+    official_predatory: bool = False
+
+
+class JournalCandidateRead(JournalCandidateCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    project_id: uuid.UUID
+    created_by: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class JournalMatchRequest(BaseModel):
+    scope: list[str] = Field(default_factory=list, max_length=100)
+    required_index: str | None = Field(default=None, max_length=100)
+    max_apc: float | None = Field(default=None, ge=0)
+    max_review_days: int | None = Field(default=None, ge=0)
+
+class SubmissionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    journal_name: str = Field(min_length=1, max_length=300)
+    manuscript_url: HttpUrl | None = None
+    external_id: str | None = Field(default=None, max_length=255)
+
+
+class SubmissionTransition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: str
+
+
+class SubmissionRead(SubmissionCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    project_id: uuid.UUID
+    status: str
+    submitted_at: datetime | None
+    created_by: str
+    created_at: datetime
+    updated_at: datetime
+class SubmissionReminderCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    submission_id: uuid.UUID
+    due_at: datetime
+    message: str = Field(min_length=1, max_length=500)
+
+
+class SubmissionReminderRead(SubmissionReminderCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    project_id: uuid.UUID
+    status: str
+    created_by: str
+    created_at: datetime
+    updated_at: datetime

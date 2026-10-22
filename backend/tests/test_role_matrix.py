@@ -82,8 +82,9 @@ MATRIX = [
     ("POST", "/api/projects/{p}/documents/{doc}/paragraph-from-note", WRITE, 200),
     ("POST", "/api/projects/{p}/documents/{doc}/approve", APPROVE_SECTION, 201),
     ("GET", "/api/projects/{p}/documents/{doc}/approval", ALL, 200),
+    ("GET", "/api/projects/{p}/documents/{doc}/front-matter", ALL, 200),
+    ("POST", "/api/projects/{p}/documents/{doc}/front-matter", WRITE, 202),
     # Section drafting from the claim outline (X.46.8 / M6.1.a): request queues a task (202). Behaviour is in
-    # test_section_draft_api.py.
     ("POST", "/api/projects/{p}/documents/{doc}/draft-suggestion", WRITE, 202),
     ("POST", "/api/projects/{p}/similarity-checks", WRITE, 202),
     ("GET", "/api/projects/{p}/similarity-checks", ALL, 200),
@@ -92,6 +93,22 @@ MATRIX = [
     ("GET", "/api/projects/{p}/provenance-reports", ALL, 200),
     ("GET", "/api/projects/{p}/provenance-reports/{rep}", ALL, 200),
     ("GET", "/api/projects/{p}/provenance-reports/{rep}/ai-disclosure", ALL, 200),
+    ("GET", "/api/projects/{p}/reviews", ALL, 200),
+    ("POST", "/api/projects/{p}/reviews", WRITE, 201),
+    ("GET", "/api/projects/{p}/reviews/issues", ALL, 200),
+    ("POST", "/api/projects/{p}/reviews/issues", WRITE, 201),
+    ("PATCH", "/api/projects/{p}/reviews/issues/{issue_id}", WRITE, 200),
+    ("GET", "/api/projects/{p}/journals", ALL, 200),
+    ("POST", "/api/projects/{p}/journals", WRITE, 201),
+    ("POST", "/api/projects/{p}/journals/official-list", WRITE, 201),
+    ("POST", "/api/projects/{p}/journals/match", ALL, 200),
+    ("GET", "/api/projects/{p}/submissions", ALL, 200),
+    ("POST", "/api/projects/{p}/submissions", WRITE, 201),
+    ("POST", "/api/projects/{p}/submissions/{submission_id}/transition", WRITE, 409),
+    ("GET", "/api/projects/{p}/submissions/reminders", ALL, 200),
+    ("POST", "/api/projects/{p}/submissions/reminders", WRITE, 201),
+    ("POST", "/api/projects/{p}/submissions/reminders/dispatch", WRITE, 202),
+    ("POST", "/api/projects/{p}/submissions/integrations/orcid", WRITE, 409),
     ("GET", "/api/projects/{p}/ai-disclosure-styles", ALL, 200),
     ("GET", "/api/projects/{p}/accuracy-report", ALL, 200),
     ("GET", "/api/projects/{p}/manuscript/export", ALL, 200),
@@ -303,12 +320,16 @@ MATRIX = [
 ]
 
 BODIES = {
+    ("POST", "/api/projects/{p}/reviews"): {"document_id": "00000000-0000-0000-0000-000000000000", "persona": "methodologist", "severity": "major", "body": "Check the methods."},
+    ("POST", "/api/projects/{p}/reviews/issues"): {"document_id": "00000000-0000-0000-0000-000000000000", "title": "Sampling", "severity": "major", "redline": {"from": "old", "to": "new"}},
+    ("PATCH", "/api/projects/{p}/reviews/issues/{issue_id}"): {"status": "resolved", "response_text": "Addressed."},
     ("POST", "/api/projects/{p}/qual/suggest"): {"excerpt": "A matrix excerpt about trust."},
     ("POST", "/api/projects/{p}/interpretation/findings/{finding_id}/review"): {"decision": "confirmed"},
     ("POST", "/api/projects/{p}/qual/decisions"): {"suggestion_id": str(uuid.uuid4()), "decision": "accept"},
     ("POST", "/api/projects/{p}/qual/codebook/rename"): {"old": "matrix-code", "new": "matrix-code-2"},
     ("POST", "/api/projects/{p}/qual/codebook/merge"): {"source": "matrix-code", "target": "matrix-code-2"},
     ("POST", "/api/projects/{p}/documents"): {"title": "Matrix section", "position": 9},
+    ("POST", "/api/projects/{p}/documents/{doc}/front-matter"): {"kind": "abstract"},
     ("PATCH", "/api/projects/{p}/documents/{doc}"): {"title": "Matrix title"},
     ("PUT", "/api/projects/{p}/bibliometrics/inputs/{s}"): {"reference_ids": ["10.1234/ref"], "keywords": ["research"]},
     ("PUT", "/api/projects/{p}/usage/budget"): {"override": 5000},
@@ -624,7 +645,22 @@ def _seed_report(project_id, owner_id, document_id):
 
 
 def _call(world, principal, method, template):
-    path = template.format(**world["ids"])
+    route_template = template
+    route_path = template
+    if (method, template) == ("PATCH", "/api/projects/{p}/reviews/issues/{issue_id}"):
+        created = world["clients"]["owner"].post(
+            f"/api/projects/{world['ids']['p']}/reviews/issues",
+            json={"document_id": world["ids"]["doc"], "title": "Matrix issue", "severity": "minor"},
+        ).json()
+        route_path = template.replace("{issue_id}", created["id"])
+    if (method, template) == ("POST", "/api/projects/{p}/submissions/{submission_id}/transition"):
+        created = world["clients"]["owner"].post(
+            f"/api/projects/{world['ids']['p']}/submissions", json={"journal_name": "Matrix transition"}
+        ).json()
+        route_path = template.replace("{submission_id}", created["id"])
+    if (method, template) == ("POST", "/api/projects/{p}/submissions/integrations/{provider}"):
+        route_path = route_path.replace("{provider}", "orcid")
+    path = route_path.format(**world["ids"])
     if (method, template) in (
         ("POST", "/api/projects/{p}/archive"), ("POST", "/api/projects/{p}/unarchive"), ("DELETE", "/api/projects/{p}"),
     ):
@@ -667,6 +703,36 @@ def _call(world, principal, method, template):
     if method == "GET" and template == "/api/projects/{p}/sources/own/lookup":
         path += f"?task_id={world['ids']['lo']}"
     body = BODIES.get((method, template))
+    if (method, template) == ("POST", "/api/projects/{p}/journals"):
+        body = {"name": "Matrix Journal", "source_url": "https://example.org/journals/matrix", "checked_at": "2026-10-22"}
+    if (method, template) == ("POST", "/api/projects/{p}/journals/official-list"):
+        body = [{"name": "Matrix Predatory Journal", "source_url": "https://example.org/lists/predatory", "checked_at": "2026-10-22"}]
+    if (method, template) == ("POST", "/api/projects/{p}/journals/match"):
+        body = {"scope": ["methods"]}
+    if (method, template) == ("POST", "/api/projects/{p}/submissions"):
+        body = {"journal_name": "Matrix submission"}
+    if (method, template) == ("POST", "/api/projects/{p}/submissions/{submission_id}/transition"):
+        created = world["clients"]["owner"].post(
+            f"/api/projects/{world['ids']['p']}/submissions", json={"journal_name": "Matrix transition"}
+        ).json()
+        path = path.replace("{submission_id}", created["id"])
+        body = {"status": "submitted"}
+    if (method, template) == ("POST", "/api/projects/{p}/submissions/reminders"):
+        created = world["clients"]["owner"].post(
+            f"/api/projects/{world['ids']['p']}/submissions", json={"journal_name": "Matrix reminder"}
+        ).json()
+        body = {"submission_id": created["id"], "due_at": "2030-01-01T00:00:00Z", "message": "Follow up"}
+    if (method, template) == ("POST", "/api/projects/{p}/reviews"):
+        body = {"document_id": world["ids"]["doc"], "persona": "methodologist", "severity": "major", "body": "Check the methods."}
+    if (method, template) == ("POST", "/api/projects/{p}/reviews/issues"):
+        body = {"document_id": world["ids"]["doc"], "title": "Sampling", "severity": "major", "redline": {"from": "old", "to": "new"}}
+    if (method, template) == ("PATCH", "/api/projects/{p}/reviews/issues/{issue_id}"):
+        created = world["clients"]["owner"].post(
+            f"/api/projects/{world['ids']['p']}/reviews/issues",
+            json={"document_id": world["ids"]["doc"], "title": "Matrix issue", "severity": "minor"},
+        ).json()
+        path = path.replace("{issue_id}", created["id"])
+        body = {"status": "resolved", "response_text": "Addressed."}
     if (method, template) == ("POST", "/api/projects/{p}/datasets/{ds}/exclude"):
         body = {"name": "matrix exclude", "rule_ids": [world["ids"]["rule_id"]]}
     if (method, template) == ("POST", "/api/projects/{p}/sources/own/lookup"):
@@ -932,7 +998,7 @@ def test_role_matrix(world, method, template, allowed, success):
 def test_the_matrix_covers_every_project_scoped_route():
     """A new project route must be added to MATRIX, or this fails."""
     routed = {
-            (method, route.path.replace("{project_id}", "{p}").replace("{source_id}", "{s}").replace("{user_id}", "{u}").replace("{code}", "G1").replace("{search_id}", "{q}").replace("{seed_id}", "{d}").replace("{extraction_id}", "{e}").replace("{evidence_id}", "{e}").replace("{plan_id}", "{plan_id}").replace("{claim_id}", "{h}").replace("{gap_id}", "{gap_id}").replace("{question_id}", "{rq}").replace("{hypothesis_id}", "{hp}").replace("{field_key}", "{field_key}").replace("{clustering_id}", "{c}").replace("{cluster_id}", "{l}").replace("{schema_name}", "{n}").replace("{alert_id}", "{a}").replace("{audit_id}", "{k}").replace("{suggestion_id}", "{g}").replace("{document_id}", "{doc}").replace("{number}", "{v}").replace("{target_kind}", "source").replace("{target_id}", "{s}").replace("{kind}", "co_citation").replace("{report_id}", "{rep}").replace("{path_id}", "{cp}").replace("{dataset_id}", "{ds}").replace("{analysis_plan_id}", "{ap}").replace("{run_id}", "{run}").replace("{member_id}", "{cr}"))
+            (method, route.path.replace("{project_id}", "{p}").replace("{source_id}", "{s}").replace("{user_id}", "{u}").replace("{code}", "G1").replace("{search_id}", "{q}").replace("{seed_id}", "{d}").replace("{extraction_id}", "{e}").replace("{evidence_id}", "{e}").replace("{plan_id}", "{plan_id}").replace("{claim_id}", "{h}").replace("{gap_id}", "{gap_id}").replace("{question_id}", "{rq}").replace("{hypothesis_id}", "{hp}").replace("{field_key}", "{field_key}").replace("{clustering_id}", "{c}").replace("{cluster_id}", "{l}").replace("{schema_name}", "{n}").replace("{alert_id}", "{a}").replace("{audit_id}", "{k}").replace("{suggestion_id}", "{g}").replace("{document_id}", "{doc}").replace("{number}", "{v}").replace("{target_kind}", "source").replace("{target_id}", "{s}").replace("{kind}", "co_citation").replace("{report_id}", "{rep}").replace("{path_id}", "{cp}").replace("{dataset_id}", "{ds}").replace("{analysis_plan_id}", "{ap}").replace("{run_id}", "{run}").replace("{member_id}", "{cr}").replace("{provider}", "orcid"))
         for route in app.routes
         if "{project_id}" in getattr(route, "path", "")
         for method in route.methods

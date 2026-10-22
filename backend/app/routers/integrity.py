@@ -8,8 +8,10 @@ is confirmed (Q17, X.31.15).
 
 from __future__ import annotations
 
+import io
 import json
 import uuid
+import zipfile
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -142,7 +144,7 @@ def list_checks(
 
 DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 LATEX_MEDIA_TYPE = "application/x-latex; charset=utf-8"
-EXPORT_EXTENSIONS = {"md": "md", "json": "json", "docx": "docx", "bibtex": "bib", "latex": "tex"}
+EXPORT_EXTENSIONS = {"md": "md", "json": "json", "docx": "docx", "bibtex": "bib", "latex": "tex", "overleaf": "zip"}
 
 
 class ManuscriptStatementsRead(BaseModel):
@@ -288,7 +290,7 @@ def _citation_style(project: Project) -> str | None:
 
 @router.get("/manuscript/export", response_model=None)
 def export_manuscript(
-    fmt: Literal["md", "docx", "latex", "json", "bibtex"] = Query(default="md", alias="format"),
+    fmt: Literal["md", "docx", "latex", "json", "bibtex", "overleaf"] = Query(default="md", alias="format"),
     project: Project = Depends(project_access(READ_ROLES)),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
@@ -391,6 +393,34 @@ def export_manuscript(
             for s in references
         ]
         return Response(to_bibtex(records), media_type="text/plain; charset=utf-8", headers=headers)
+    if fmt == "overleaf":
+        latex = manuscript_export.to_latex(project.title, sections, sources, runs, style=style, statements=statements)
+        records = [
+            {k: v for k, v in {"title": source_rows[s.id].title, "authors": source_rows[s.id].authors, "year": s.year, "doi": s.doi,
+                               "url": source_rows[s.id].url, "venue": s.venue, "source_type": source_rows[s.id].source_type}.items() if v}
+            for s in references
+        ]
+        bibtex = to_bibtex(records)
+        readme = (
+            "# Overleaf package\n\n"
+            "Upload this ZIP to Overleaf and compile `manuscript.tex` with pdfLaTeX.\n"
+            "The bibliography is embedded as `references.bib`; all references passed the project's citation guard.\n"
+        ).encode("utf-8")
+        entries = {
+            "README.md": readme,
+            "manuscript.tex": latex.encode("utf-8"),
+            "references.bib": bibtex.encode("utf-8"),
+        }
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for name, body in sorted(entries.items()):
+                info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+                info.compress_type = zipfile.ZIP_DEFLATED
+                archive.writestr(info, body)
+        return Response(
+            buffer.getvalue(), media_type="application/zip",
+            headers={**headers, "Content-Disposition": 'attachment; filename="overleaf-package.zip"'},
+        )
     body = manuscript_export.to_json(
         project.title,
         [

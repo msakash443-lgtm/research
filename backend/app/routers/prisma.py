@@ -22,10 +22,18 @@ def get_prisma_flow(project: Project = Depends(project_access(READ_ROLES)), db: 
 
 @router.get("/checklist")
 def get_reporting_checklist(project: Project = Depends(project_access(READ_ROLES))) -> dict[str, Any]:
-    """The reporting-guideline checklist for the project's effective guideline (read-only).
+    """Return the project's canonical checklist items and the authoritative source link.
 
-    `shipped` is false when the guideline has no checklist written in the app yet; `items` is then empty.
+    Full publisher prose is intentionally not duplicated in the application. Items are
+    canonical identifiers/headings; the source link is the authority for the complete
+    wording and version.
     """
     guideline = discipline.effective_settings(project.discipline, project.config_json).reporting_guideline
     items = reporting_checklists.checklist_for(guideline)
-    return {"guideline": guideline, "shipped": items is not None, "items": [asdict(item) for item in items or ()]}
+    source = reporting_checklists.CHECKLIST_SOURCES.get(guideline) if guideline else None
+    return {
+        "guideline": guideline,
+        "shipped": items is not None and source is not None,
+        "source": asdict(source) if source else None,
+        "items": [asdict(item) for item in items or ()],
+    }

@@ -95,3 +95,9 @@
 20261022_0088 qual_suggestion_provenance
 20261022_0089 llm_usage_reservations
 20261022_0090 task_timestamps
+20261022_0091 manuscript_outputs
+20261022_0092 review_comments
+20261022_0093 review_issues
+20261022_0094 journal_candidates
+20261022_0095 submissions
+20261022_0096 submission_reminders
