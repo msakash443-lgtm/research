@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import re
 
-_ORCID_PREFIX = re.compile(r"^(?:https?://)?(?:www\.)?orcid\.org/", re.IGNORECASE)
-_ORCID = re.compile(r"^\d{4}-\d{4}-\d{4}-\d{3}[\dX]$")
+_ORCID_PREFIX = re.compile(r"^(?:https?://)?(?:www\.)?orcid\.org/", re.IGNORECASE | re.ASCII)
+_ORCID = re.compile(r"^[0-9]{4}-[0-9]{4}-[0-9]{4}-[0-9]{3}[0-9X]$")
 
 
 def _orcid_check_digit(first_fifteen: str) -> str:
@@ -30,7 +30,7 @@ def normalize_orcid(value: str | None) -> str | None:
     """
     if value is None:
         return None
-    text = _ORCID_PREFIX.sub("", value.strip()).strip().upper()
+    text = _ORCID_PREFIX.sub("", value.strip()).strip().rstrip("/").strip().upper()
     if not text:
         return None
     if not _ORCID.match(text) or _orcid_check_digit(text.replace("-", "")[:15]) != text[-1]:

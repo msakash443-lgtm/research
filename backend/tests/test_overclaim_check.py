@@ -55,6 +55,10 @@ def test_past_tense_change_verbs_are_flagged_like_the_present_tense():
                      "Subsidies boosted uptake.", "The tax decreased smoking."):
         assert _kinds(sentence) == ["causal_language"], sentence
 
+def test_adjectival_lower_is_not_flagged_as_a_change_verb():
+    assert _kinds("Participants from lower income groups were recruited.") == []
+    assert _kinds("The lower bound of the interval is 0.2.") == []
+
 
 def test_a_past_tense_change_verb_followed_by_with_is_not_flagged():
     assert _kinds("Blood pressure increased with age.") == []

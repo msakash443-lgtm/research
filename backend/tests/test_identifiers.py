@@ -40,3 +40,36 @@ def test_normalize_orcid_blank_is_none():
 def test_normalize_orcid_refuses_malformed_or_bad_checksum(raw):
     with pytest.raises(ValueError):
         normalize_orcid(raw)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "٠٠٠٠-٠٠٠٢-١٦٩٤-٢٣٣X",  # Arabic-Indic digits
+        "０００－０００２－１６９４－２３３Ｘ",  # full-width digits
+        "0000-0002-1694-23\u0663X",  # one Arabic-Indic digit in place
+    ],
+)
+def test_normalize_orcid_refuses_non_ascii_digits(raw):
+    with pytest.raises(ValueError):
+        normalize_orcid(raw)
+
+
+def test_normalize_orcid_accepts_upper_case_link_prefix():
+    assert normalize_orcid("HTTPS://ORCID.ORG/0000-0002-1825-0097") == "0000-0002-1825-0097"
+
+
+def test_normalize_orcid_accepts_trailing_slash_on_link():
+    assert normalize_orcid("https://orcid.org/0000-0002-1825-0097/") == "0000-0002-1825-0097"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "httpſ://orcid.org/0000-0002-1825-0097",  # long s case-folds to s under Unicode rules
+        "ORCİD.org/0000-0002-1825-0097",  # dotted capital I case-folds to i
+    ],
+)
+def test_normalize_orcid_refuses_non_ascii_link_prefix(raw):
+    with pytest.raises(ValueError):
+        normalize_orcid(raw)

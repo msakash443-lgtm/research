@@ -22,7 +22,7 @@ DESIGNS = ("observational", "experimental", "unspecified")
 _CAUSAL = re.compile(
     r"\b(causes?|caused|causing|leads?\s+to|led\s+to|leading\s+to|results?\s+in|resulted\s+in|"
     r"(?:the\s+)?(?:effect|impact|influence)\s+of|due\s+to|because\s+of|drives?|driven\s+by|"
-    r"(?:increase[sd]?|decrease[sd]?|reduce[sd]?|improve[sd]?|raise[sd]?|lower(?:s|ed)?|boost(?:s|ed)?)\s+(?!with\b))",
+    r"(?:increase[sd]?|decrease[sd]?|reduce[sd]?|improve[sd]?|raise[sd]?|lowered|boost(?:s|ed)?)\s+(?!with\b))",
     re.IGNORECASE,
 )
 _GENERAL = re.compile(

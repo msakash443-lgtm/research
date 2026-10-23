@@ -12,6 +12,7 @@ and a final blank revision recorded, and attachments are removed from object sto
 
 from __future__ import annotations
 
+import logging
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
@@ -19,6 +20,8 @@ from app import audit
 from app.config import get_settings
 from app.models import ExternalIdentity, Note, NoteRevision, ProjectMember, ProjectRole, User, utcnow
 from app.object_storage import ObjectStorageError, get_object_store
+
+logger = logging.getLogger(__name__)
 
 ERASED_EMAIL_DOMAIN = "erased.invalid"
 
@@ -56,7 +59,8 @@ def _scrub_unfiled_notes(db: Session, user: User) -> int:
             try:
                 store.delete(attachment.path)
             except ObjectStorageError:
-                pass  # best-effort: the row below still drops the reference even if the object is gone
+                # Best-effort: the row below still drops the reference even if the object is gone. Logged (X.145).
+                logger.warning("Could not delete stored object for note attachment %s during account erasure", attachment.id)
             db.delete(attachment)
         note.body = ""
         note.quoted_text = None
