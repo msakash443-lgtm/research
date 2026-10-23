@@ -13,6 +13,7 @@ See also [`step-template-checklist.md`](step-template-checklist.md): a one-page 
 | `workspace-writing.html` | Researcher workspace: editor, Sources/AI/Record panel, paste resolver, similarity check, AI level, writing-record report (design doc S4–S6) | Walkthrough X.31.6 (screens S4–S6 are already built; S1–S3, S7 walkthrough was waived 2026-10-14) | design doc A5 |
 | `research-type-picker.html` | Scope screen: choose the research type (owner, at Idea, before any gate), see the stage list and mandatory gates | X.43.9 (unlocked state walked through by the owner 2026-10-22); locked state answered 2026-10-22 (Q3: other types greyed out with the reason, X.43.10) | §3 Q22, X.43 decision 4b |
 | `observability-dashboard.html` | Observability dashboard: step counts and timings, model calls with tokens and lower-bound cost, failure counts (no error text), pinned Q1–Q5. Drafted 2026-10-22, not yet walked through | X.7.3 (built only after the walkthrough, rule 32) | X.7.0–X.7.2 |
+| `account-privacy.html` | Account-level privacy notice and processor list, personal-data export, sign out everywhere, and account erasure confirmation | X.85 (wireframe only; screen/routes not built) | X.4.3, X.4.7.1, X.4.8, X.4.9 |
 | `index.html` | Start page, walkthrough tasks | — | — |
 | `wireframe.css`, `wireframe.js` | Shared look (the app's colour tokens) and the question-pin toggle | — | — |
 
