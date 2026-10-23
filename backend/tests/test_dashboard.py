@@ -42,6 +42,12 @@ def test_research_type_picker_radios_are_not_stretched_to_the_full_row_width():
     assert "width:auto" in rule
 
 
+def test_narrow_suggestion_cards_stack_provenance_labels_above_values():
+    with TestClient(app) as client:
+        css = client.get("/assets/styles.css").text
+    assert "@container suggestion-card (max-width:280px)" in css
+    assert ".suggestion-card .provenance-badge { grid-template-columns:minmax(0,1fr)" in css
+
 def test_request_body_limit_rejects_oversized_payloads():
     with TestClient(app) as client:
         response = client.post(

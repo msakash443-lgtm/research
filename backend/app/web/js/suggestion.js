@@ -9,7 +9,7 @@
 import { el, formatDate, toast, confirmAction } from "./dom.js";
 import { request, projectApi } from "./api.js";
 import { actorName, provenanceBadge } from "./provenance.js";
-import { evidenceLine, canAskAgain } from "./suggestionLogic.js";
+import { evidenceLine, canAskAgain, suggestionPanelTitle } from "./suggestionLogic.js";
 
 export const PANEL_TITLE = "AI suggestion, not yet yours";
 
@@ -223,11 +223,11 @@ export async function suggestionPanel(ctx, { targetKind, targetId, onChange, ext
     try {
       items = await request(query());
     } catch (error) {
-      panel.replaceChildren(el("h2", { text: PANEL_TITLE }), el("p", { className: "muted small", text: error.message }));
+      panel.replaceChildren(el("h2", { text: suggestionPanelTitle([]) }), el("p", { className: "muted small", text: error.message }));
       return;
     }
     const head = el("div", { className: "section-title" });
-    head.append(el("h2", { text: PANEL_TITLE }));
+    head.append(el("h2", { text: suggestionPanelTitle(items) }));
     const toggle = el("label", { className: "small suggestion-toggle" });
     const box = el("input", { attrs: { type: "checkbox" } });
     box.checked = showDiscarded;

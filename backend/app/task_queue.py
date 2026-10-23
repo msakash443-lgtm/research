@@ -22,6 +22,7 @@ stale worker, the reaper and a pause/block racing for the same row can't overwri
 from __future__ import annotations
 
 import logging
+import threading
 import uuid
 from datetime import datetime, timedelta
 from typing import Any
@@ -40,6 +41,7 @@ from app.task_registry import FAILURE_HOOKS, PAYLOAD_SCRUBS, REQUIRED_GATES, Cla
 logger = logging.getLogger(__name__)
 
 MAX_ERROR_CHARS = 1000
+_REAPER_LOCK = threading.Lock()
 
 
 def backoff_seconds(attempt: int) -> int:
@@ -292,6 +294,7 @@ def fail_task(
 
 def reap_expired_tasks(now: datetime | None = None) -> int:
     """Recover tasks whose worker stopped renewing the lease (crash, kill, hang)."""
+    _REAPER_LOCK.acquire()
     now = now or utcnow()
     db = SessionLocal()
     try:
@@ -311,9 +314,12 @@ def reap_expired_tasks(now: datetime | None = None) -> int:
                 reaped += 1
             if outcome == TaskStatus.failed:
                 gave_up.append(_info(task))
-        db.commit()
+        # Run terminal cleanup before publishing the failed task status. This keeps
+        # observers from seeing a terminal task while its domain record still looks
+        # in progress (and mirrors fail_task's cleanup-before-return contract).
         for info in gave_up:
             _run_failure_hook(info)
+        db.commit()
         return reaped
     except Exception:
         db.rollback()
@@ -321,6 +327,7 @@ def reap_expired_tasks(now: datetime | None = None) -> int:
         return 0
     finally:
         db.close()
+        _REAPER_LOCK.release()
 
 
 def block_claimed_task(task_id: uuid.UUID, attempt: int, gate: GateCode) -> bool:

@@ -24,3 +24,11 @@ export function evidenceLine(item) {
 export function canAskAgain(suggestion) {
   return suggestion.can_ask_again === true;
 }
+
+// Keep the pending heading until a card has actually been accepted. Once an accepted card is
+// present, avoid describing the whole panel as "not yet yours".
+export function suggestionPanelTitle(suggestions) {
+  return suggestions.some((suggestion) => suggestion.state === "accepted")
+    ? "AI suggestions"
+    : "AI suggestion, not yet yours";
+}

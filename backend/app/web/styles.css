@@ -401,10 +401,15 @@ dialog .helper { margin:0; }
 .suggestion-panel .section-title { flex-wrap:wrap; gap:8px 16px; }
 .suggestion-panel .section-title h2 { min-width:0; overflow-wrap:anywhere; }
 .suggestion-evidence li { overflow-wrap:anywhere; }
-.suggestion-card { border:1px solid var(--line); border-radius:8px; padding:12px 14px; background:white; min-width:0; }
+.suggestion-card { border:1px solid var(--line); border-radius:8px; padding:12px 14px; background:white; min-width:0; container-type:inline-size; container-name:suggestion-card; }
 .suggestion-card p { overflow-wrap:anywhere; }
 .suggestion-card.suggestion-accepted { border-color:var(--teal); }
 .suggestion-card.suggestion-discarded,.suggestion-card.suggestion-superseded,.suggestion-card.suggestion-locked { opacity:.75; }
+
+@container suggestion-card (max-width:280px) {
+  .suggestion-card .provenance-badge { grid-template-columns:minmax(0,1fr); gap:3px; }
+  .suggestion-card .provenance-badge dt { margin-top:4px; }
+}
 .suggestion-text { margin:0 0 8px; white-space:pre-wrap; overflow-wrap:anywhere; }
 .suggestion-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
 .suggestion-details { margin-top:10px; display:grid; gap:8px; }

@@ -1,7 +1,7 @@
 // Run with: node --test backend/app/web/js/test   (no packages; pytest does not run these)
 import test from "node:test";
 import assert from "node:assert/strict";
-import { evidenceLine, canAskAgain } from "../suggestionLogic.js";
+import { evidenceLine, canAskAgain, suggestionPanelTitle } from "../suggestionLogic.js";
 
 test("an extraction span shows its quote with page and section, not JSON", () => {
   const line = evidenceLine({ quote: "n = 120", page: 4, section: "Methods" });
@@ -31,4 +31,10 @@ test("Ask again is offered only when the server says a producer exists for the k
 
 test("a suggestion without the server's answer does not offer Ask again", () => {
   assert.equal(canAskAgain({ target_kind: "note" }), false);
+});
+
+test("accepted writing suggestions no longer use the pending panel label", () => {
+  assert.equal(suggestionPanelTitle([{ state: "pending" }]), "AI suggestion, not yet yours");
+  assert.equal(suggestionPanelTitle([{ state: "accepted" }]), "AI suggestions");
+  assert.equal(suggestionPanelTitle([{ state: "pending" }, { state: "accepted" }]), "AI suggestions");
 });
