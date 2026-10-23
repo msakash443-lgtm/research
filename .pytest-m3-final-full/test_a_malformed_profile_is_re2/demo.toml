@@ -1,9 +1,0 @@
-name = "demo"
-label = "Demo"
-description = "A demo profile."
-
-[settings]
-citation_style = "apa"
-databases = ["openalex", "pubmed"]
-methods = ["cohort_study"]
-reporting_guideline = "STROBE"

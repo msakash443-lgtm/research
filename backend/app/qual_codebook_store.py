@@ -31,6 +31,12 @@ def active_codes(db: Session, project_id: uuid.UUID) -> dict[str, str]:
     return _load_state(db, project_id)["codes"]
 
 
+def name_is_known(db: Session, project_id: uuid.UUID, name: str) -> bool:
+    """True if `name` is live, renamed-away or merged-away. `accept_code` treats such a name as reuse (no new row)."""
+    state = _load_state(db, project_id)
+    return name in state["codes"] or name in state["merged"]
+
+
 def accept_code(db: Session, project: Project, user: User, name: str, definition: str) -> bool:
     """Add `name` to the codebook if it is not already known. A name already in use (active, renamed-away or
     merged-away) is treated as reuse: no new row, no event. Raises `ValueError` only for an invalid name/actor

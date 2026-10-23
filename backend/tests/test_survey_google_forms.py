@@ -82,6 +82,22 @@ def test_repeated_page_token_is_refused_instead_of_looping_forever():
         gf.fetch_table("F1", "secret-token", transport=_transport(pages))
 
 
+def test_endless_empty_pages_with_fresh_tokens_are_refused_at_the_page_cap():
+    # M5.2 review 2026-10-21: a repeated-token guard alone does not stop an upstream that sends new tokens forever.
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/forms/F1":
+            return httpx.Response(200, json=FORM)
+        calls.append(1)
+        assert len(calls) <= 5000, "the reader kept fetching; the page cap is missing"
+        return httpx.Response(200, json={"responses": [], "nextPageToken": f"t{len(calls)}"})
+
+    with pytest.raises(gf.SurveyError, match="pages"):
+        gf.fetch_table("F1", "secret-token", transport=httpx.MockTransport(handler))
+    assert len(calls) == gf.MAX_PAGES
+
+
 
 @pytest.mark.parametrize("status,expected", [(401, "refused the access token"), (404, "could not find"), (500, "HTTP 500")])
 def test_api_errors_are_named_and_never_echo_the_token(status, expected):

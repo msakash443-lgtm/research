@@ -39,7 +39,7 @@ class DecisionIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     suggestion_id: uuid.UUID
     decision: Literal["accept", "reject"]
-    # The person's definition for the code. Required on accept when the suggestion has no rationale.
+    # The person's definition for the code. On accept of a new code, required when the suggestion has no rationale.
     definition: str | None = Field(default=None, max_length=1000)
 
 
@@ -164,16 +164,24 @@ def decide(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Suggestion not found.")
     if row.status != "pending":
         raise HTTPException(status.HTTP_409_CONFLICT, "This suggestion has already been decided.")
+    note: str | None = None
     if body.decision == "accept":
-        # The person's definition wins; the model's rationale is the fallback. Refuse with nothing decided if neither exists.
-        definition = (body.definition or "").strip() or (row.rationale or "").strip()
-        if not definition:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
-                                "This suggestion has no rationale, so write the code's definition to accept it.")
-        try:
-            qual_codebook_store.accept_code(db, project, user, row.code, definition)
-        except ValueError as exc:
-            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+        supplied = (body.definition or "").strip()
+        if qual_codebook_store.name_is_known(db, project.id, row.code):
+            # Reuse (owner, 2026-10-21): no definition needed. A supplied one is not used, and the response says so.
+            if supplied:
+                note = ("The code is already in the codebook, so the definition you supplied was not used; "
+                        "the codebook's existing definition stays.")
+        else:
+            # The person's definition wins; the model's rationale is the fallback. Refuse with nothing decided if neither exists.
+            definition = supplied or (row.rationale or "").strip()
+            if not definition:
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                    "This suggestion has no rationale, so write the code's definition to accept it.")
+            try:
+                qual_codebook_store.accept_code(db, project, user, row.code, definition)
+            except ValueError as exc:
+                raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     row.status = "accepted" if body.decision == "accept" else "rejected"
     row.decided_by = audit.user_actor(user)
     row.decided_at = utcnow()
@@ -181,7 +189,7 @@ def decide(
                  payload={"suggestion_id": str(row.id), "decision": body.decision, "code": row.code})
     db.commit()
     db.refresh(row)
-    return _suggestion_read(row)
+    return {**_suggestion_read(row), "note": note}
 
 
 @router.get("/codebook")

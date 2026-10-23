@@ -1,5 +1,0 @@
-name = "demo"
-version = 2
-placeholders = ["topic"]
-system = "Be careful."
-user = "About ${topic}."

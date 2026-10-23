@@ -96,3 +96,29 @@ def test_the_notice_does_not_point_to_a_screen_that_does_not_exist():
 
 def test_a_blank_google_forms_token_does_not_list_google_forms():
     assert "google_forms" not in _names(Settings(_env_file=None, google_forms_access_token="   "))
+
+
+def test_openalex_full_text_hosts_are_listed_when_openalex_is_on():
+    register = _names(Settings(_env_file=None, connectors_enabled=["openalex"]))
+
+    assert "fulltext_hosts" in register
+    assert "PDF" in register["fulltext_hosts"]["data_sent"]
+
+
+def test_core_full_text_hosts_are_listed_only_with_a_core_key():
+    assert "fulltext_hosts" not in _names(Settings(_env_file=None, connectors_enabled=["core"]))
+
+    register = _names(Settings(_env_file=None, connectors_enabled=["core"], core_api_key="core-key-value"))
+
+    assert "fulltext_hosts" in register
+    assert "core-key-value" not in json.dumps(register)
+
+
+def test_a_scraping_connector_is_not_listed_while_scraping_is_off():
+    assert "connector:google_scholar" not in _names(
+        Settings(_env_file=None, connectors_enabled=["google_scholar"], connectors_allow_scraping=False)
+    )
+
+    assert "connector:google_scholar" in _names(
+        Settings(_env_file=None, connectors_enabled=["google_scholar"], connectors_allow_scraping=True)
+    )

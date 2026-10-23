@@ -232,12 +232,13 @@ archived project is hidden from the default `GET /api/projects` list (`?include_
 shows it) but never deleted or rewritten. Restoring is owner-only and audited
 (`project.archived` / `project.unarchived`).
 
-**Project-scoped table inventory**, verified 2026-10-20 by enumerating every
+**Project-scoped table inventory**, verified 2026-10-23 by enumerating every
 `ForeignKey("projects.id")` column in `backend/app/models.py` (the 2026-10-17/2026-10-18 count
 below was incomplete):
 
-- **47 direct children** (their own `project_id` foreign key to `projects.id`; recounted 2026-10-22
-  from `models.py`, which added `deviation_logs` after the 2026-10-20 count): `project_members`,
+- **53 direct children** (their own `project_id` foreign key to `projects.id`; recounted 2026-10-23
+  from `models.py`: 53 `ForeignKey("projects.id")` columns, one per table. The 2026-10-22 count of 47
+  missed the six M6/M7 tables (`journal_candidates` through `submission_reminders` below)): `project_members`,
   `gates`, `research_context_items`, `sources`, `screening_criteria`, `screening_decisions`,
   `auto_exclude_audits`, `seed_papers`, `seed_check_runs`, `project_extraction_schemas`,
   `search_queries`, `search_alerts`, `snowball_runs`, `extractions`, `meta_analysis_plans`,
@@ -246,7 +247,8 @@ below was incomplete):
   `qual_excerpts`, `qual_suggestions`, `qual_codes`, `research_questions`, `notes`,
   `ai_suggestions`, `ai_item_locks`, `documents`, `own_paper_lookups`, `provenance_reports`,
   `section_approvals`, `interpretation_findings`, `interpretation_reviews`, `research_runs`,
-  `tasks`, `artifacts`, `artifact_edges`, `source_embeddings`, `cluster_runs`. (The earlier list
+  `tasks`, `artifacts`, `artifact_edges`, `source_embeddings`, `cluster_runs`, `journal_candidates`,
+  `manuscript_outputs`, `review_comments`, `review_issues`, `submissions`, `submission_reminders`. (The earlier list
   omitted `idea_briefs`, `dataset_versions`, `analysis_plans`, `analysis_runs`, `exclusion_rules`,
   `qual_excerpts` and `qual_suggestions`, and miscategorised `conceptual_paths` as indirect-only:
   it has had its own `project_id` foreign key since migration `20261015_0065`.)
@@ -276,7 +278,7 @@ above (the ones reachable from a project) before touching anything; if any has a
 `project.created` audit event, **every project made through the normal API already has an
 `audit_events` row and can never be hard-deleted** -- archiving is the only way to retire a
 project with real activity. A project with genuinely no recorded activity (only reachable by
-constructing the row directly, which is what the tests do) can be: the 47 direct-child tables are
+constructing the row directly, which is what the tests do) can be: the 53 direct-child tables are
 removed in FK dependency order (`Base.metadata.sorted_tables`, reversed), the six indirect-child
 tables (`claim_evidence`, `note_attachments`, `note_revisions`, `document_versions`,
 `ai_suggestion_events`, `source_excerpts`; `project_lifecycle.py:157-169`) are removed by joining

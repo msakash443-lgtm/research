@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 
 from app import survey_google_forms
 from app.config import Settings
-from app.connectors.access import CATALOGUE
+from app.connectors.access import CATALOGUE, is_enabled
 
 NOTICE = (
     "This installation sends some of your project data to the outside services listed here, and only these. "
@@ -62,10 +62,12 @@ def processor_register(settings: Settings) -> list[dict[str, Any]]:
                 "The research topic and search terms", settings.arc_retrieval_base_url,
             )
         )
-    for name in settings.connectors_enabled:
-        info = CATALOGUE.get(name)
-        if info is None:
-            continue
+    enabled = [
+        name for name in settings.connectors_enabled
+        if is_enabled(name, settings.connectors_enabled, settings.connectors_allow_scraping)
+    ]
+    for name in enabled:
+        info = CATALOGUE[name]
         sent = "Search queries and record identifiers"
         if settings.connector_contact_email:
             sent += f"; the contact address {settings.connector_contact_email} (sent so the service can reach the operator)"
@@ -75,8 +77,10 @@ def processor_register(settings: Settings) -> list[dict[str, Any]]:
                 access=info.access.value,
             )
         )
-    # Unpaywall (with OpenAlex/CORE) and arXiv hand back PDF links; the worker then downloads from whichever host serves them.
-    if {"unpaywall", "arxiv"} & set(settings.connectors_enabled):
+    # Unpaywall and arXiv hand back PDF links; so do OpenAlex and CORE when the worker consults them
+    # (task_handlers.py, oa_source_enabled). The worker then downloads from whichever host serves the PDF.
+    core_consulted = "core" in enabled and bool(settings.core_api_key and settings.core_api_key.get_secret_value().strip())
+    if {"unpaywall", "arxiv", "openalex"} & set(enabled) or core_consulted:
         out.append(
             _entry(
                 "fulltext_hosts", "Publisher, repository and arXiv servers", "Downloading open-access full text",

@@ -340,3 +340,57 @@ def test_every_stored_suggestion_records_the_model_and_the_pinned_prompt_version
         event = db.scalars(select(AuditEvent).where(AuditEvent.action == "qual.suggested",
                                                     AuditEvent.project_id == uuid.UUID(pid))).one()
         assert (event.model_id, event.prompt_version) == expected
+
+
+def _suggest_then_accept(client, pid, reply: str, **decision):
+    """Suggest one excerpt with `reply` and decide its first suggestion. Returns the decision response."""
+    excerpt = client.post(f"/api/projects/{pid}/qual/suggest", json={"excerpt": EXCERPT}).json()
+    sid = excerpt["suggestions"][0]["id"]
+    return client.post(f"/api/projects/{pid}/qual/decisions",
+                       json={"suggestion_id": sid, "decision": "accept", **decision})
+
+
+def test_a_code_already_in_the_codebook_is_accepted_without_a_definition_even_with_no_rationale(project, monkeypatch):
+    # X.122, owner decision 2026-10-21: reuse of a known code needs no definition.
+    client, pid = project
+    _patch(monkeypatch, FakeHttp(_reply("trust")), _settings())
+    assert _suggest_then_accept(client, pid, _reply("trust")).status_code == 200
+    _patch(monkeypatch, FakeHttp(json.dumps([{"code": "trust", "rationale": ""}])), _settings())
+    r = _suggest_then_accept(client, pid, "")
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "accepted"
+    assert r.json()["note"] is None
+    assert client.get(f"/api/projects/{pid}/qual/codebook").json() == {"codes": {"trust": "from the excerpt"}}
+
+
+def test_a_definition_supplied_for_a_known_code_is_not_used_and_the_response_says_so(project, monkeypatch):
+    # X.122, owner decision 2026-10-21: accept anyway, do not 409; the existing definition stays.
+    client, pid = project
+    _patch(monkeypatch, FakeHttp(_reply("trust")), _settings())
+    assert _suggest_then_accept(client, pid, _reply("trust")).status_code == 200
+    _patch(monkeypatch, FakeHttp(json.dumps([{"code": "trust", "rationale": ""}])), _settings())
+    r = _suggest_then_accept(client, pid, "", definition="Belief that others act in good faith.")
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "accepted"
+    assert "not used" in r.json()["note"]
+    assert client.get(f"/api/projects/{pid}/qual/codebook").json() == {"codes": {"trust": "from the excerpt"}}
+
+
+def test_the_persons_definition_beats_the_models_rationale_for_a_new_code(project, monkeypatch):
+    client, pid = project
+    _patch(monkeypatch, FakeHttp(_reply("trust")), _settings())
+    r = _suggest_then_accept(client, pid, _reply("trust"), definition="My own definition.")
+    assert r.status_code == 200, r.text
+    assert client.get(f"/api/projects/{pid}/qual/codebook").json() == {"codes": {"trust": "My own definition."}}
+
+
+def test_a_definition_longer_than_1000_characters_is_refused_and_stays_pending(project, monkeypatch):
+    client, pid = project
+    _patch(monkeypatch, FakeHttp(json.dumps([{"code": "trust", "rationale": ""}])), _settings())
+    excerpt = client.post(f"/api/projects/{pid}/qual/suggest", json={"excerpt": EXCERPT}).json()
+    sid = excerpt["suggestions"][0]["id"]
+    r = client.post(f"/api/projects/{pid}/qual/decisions",
+                    json={"suggestion_id": sid, "decision": "accept", "definition": "x" * 1001})
+    assert r.status_code == 422
+    listed = client.get(f"/api/projects/{pid}/qual/excerpts").json()
+    assert listed[0]["suggestions"][0]["status"] == "pending"

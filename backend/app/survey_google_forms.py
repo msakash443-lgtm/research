@@ -19,6 +19,7 @@ BASE_URL = "https://forms.googleapis.com/v1"
 FORM_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,200}$")
 MAX_RESPONSES = 10_000
 PAGE_SIZE = 500
+MAX_PAGES = 100  # an upstream that keeps sending tokens (even empty pages) is refused, never followed forever
 META_COLUMNS = ["response_id", "created_at", "submitted_at"]
 TIMEOUT_SECONDS = 30.0
 
@@ -66,6 +67,7 @@ def fetch_responses(client: httpx.Client, form_id: str) -> list[dict[str, Any]]:
     responses: list[dict[str, Any]] = []
     token: str | None = None
     seen_tokens: set[str] = set()
+    pages_fetched = 0
     while True:
         params: dict[str, Any] = {"pageSize": PAGE_SIZE}
         if token:
@@ -74,12 +76,15 @@ def fetch_responses(client: httpx.Client, form_id: str) -> list[dict[str, Any]]:
             seen_tokens.add(token)
             params["pageToken"] = token
         page = _get(client, f"/forms/{form_id}/responses", params)
+        pages_fetched += 1
         responses.extend(page.get("responses") or [])
         if len(responses) > MAX_RESPONSES:
             raise SurveyError(f"This form has more than {MAX_RESPONSES} responses; import is refused, not truncated.")
         token = page.get("nextPageToken")
         if not token:
             return responses
+        if pages_fetched >= MAX_PAGES:
+            raise SurveyError(f"The survey service sent more than {MAX_PAGES} pages; import is refused, not truncated.")
 
 
 def _question_columns(form: dict[str, Any]) -> list[tuple[str, str]]:
