@@ -504,6 +504,32 @@ dialog .helper { margin:0; }
 .decision-row { background:#fff; }
 .decision-content { margin:0; font-weight:650; color:var(--navy); overflow-wrap:anywhere; }
 @media (max-width:760px) { .inbox-view { padding:4px 0 32px; } }
+/* Account privacy screen (X.85) */
+.privacy-view { padding:8px 0 40px; display:grid; gap:18px; max-width:52rem; }
+.privacy-view h1 { margin:4px 0 0; color:var(--navy); }
+.privacy-heading { display:grid; gap:4px; }
+.privacy-notice { display:grid; gap:8px; background:#f6f8f8; color:#1d2a35; border-left:4px solid var(--teal); padding:12px 14px; }
+.privacy-notice p { margin:0; }
+.privacy-processors { display:grid; gap:10px; margin:12px 0 0; padding:0; list-style:none; }
+.privacy-processor { border:1px solid var(--line); border-radius:8px; padding:11px 13px; background:#fff; color:#1d2a35; display:grid; gap:3px; }
+.privacy-processor strong { color:#1d2a35; }
+.privacy-processor small { color:#4a5b68; overflow-wrap:anywhere; }
+.privacy-actions { display:grid; gap:10px; }
+.privacy-action { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; border:1px solid var(--line); border-radius:8px; padding:12px 13px; }
+.privacy-action-copy { min-width:0; flex:1 1 280px; display:grid; gap:3px; }
+.privacy-action-copy strong { color:var(--navy); }
+.privacy-action-copy span { color:var(--muted); font-size:13px; }
+.privacy-danger .privacy-action-copy strong { color:#8a1c1c; }
+.danger-button { background:#8a1c1c; color:#fff; }
+.danger-button:hover { background:#6e1515; }
+.privacy-confirmation { margin-top:4px; padding:12px; border:1px solid #e0a5a5; border-radius:8px; background:#fbeeee; color:#1d2a35; display:grid; gap:8px; }
+.privacy-confirmation .quiet-button { color:#1d2a35; background:#fff; border-color:#c8a1a1; }
+.privacy-confirmation p { margin:0; }
+.privacy-email { display:grid; gap:5px; font-weight:650; }
+.privacy-email input { width:100%; border:1px solid #c8a1a1; border-radius:6px; padding:8px; }
+.privacy-confirm-row { display:flex; flex-wrap:wrap; gap:8px; }
+.privacy-message { margin-top:4px; }
+@media (max-width:760px) { .privacy-view { padding:4px 0 32px; } }
 /* Writing record panel (X.31.12.2) */
 .write-report-actions { display:flex; flex-wrap:wrap; gap:8px; margin:10px 0 14px; }
 .write-report-sections { border:1px solid var(--line); border-radius:7px; padding:8px 12px; margin:0 0 10px; display:flex; flex-wrap:wrap; gap:8px 16px; }
@@ -538,4 +564,5 @@ dialog .helper { margin:0; }
   .write-export-list a { color:var(--ink); }
   .quiet-button, .menu-toggle { color:var(--navy); border-color:var(--line); }
   .suggestion-card { background:#17232d; }
+  .privacy-danger .privacy-action-copy strong { color:#ff9c9c; }
 }

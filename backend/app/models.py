@@ -1314,6 +1314,29 @@ class SubmissionReminder(Timestamped, Base):
     created_by: Mapped[str] = mapped_column(String(100))
 
 
+class ResearchInstitution(Timestamped, Base):
+    """A project's institution, identified by a validated ROR id when known (X.18.3)."""
+
+    __tablename__ = "research_institutions"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    name: Mapped[str] = mapped_column(String(300))
+    ror_id: Mapped[str | None] = mapped_column(String(64))
+    created_by: Mapped[str] = mapped_column(String(100))
+
+
+class ResearchPerson(Timestamped, Base):
+    """A project's author or contributor, identified by a validated ORCID iD when known (X.18.3)."""
+
+    __tablename__ = "research_people"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    name: Mapped[str] = mapped_column(String(300))
+    orcid: Mapped[str | None] = mapped_column(String(19))
+    institution_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("research_institutions.id"), index=True)
+    created_by: Mapped[str] = mapped_column(String(100))
+
+
 
 
 

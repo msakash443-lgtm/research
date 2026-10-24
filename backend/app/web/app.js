@@ -8,6 +8,8 @@ import { renderInbox, refreshInboxAfterSync } from "./js/inbox.js";
 import { parseInboxRoute } from "./js/inboxLogic.js";
 import { readMemoryCollapsed, writeMemoryCollapsed } from "./js/memoryPanelLogic.js";
 import { enqueueCapture, flushOutbox, pendingCount, registerOfflineSync } from "./js/offlineOutbox.js";
+import { renderPrivacy } from "./js/privacy.js";
+import { parsePrivacyRoute } from "./js/privacyLogic.js";
 
 import overview from "./js/steps/overview.js";
 import guide from "./js/steps/guide.js";
@@ -279,6 +281,7 @@ async function setStep(stepId, updateHash) {
   state.currentStep = STEP_IDS.has(stepId) ? stepId : "overview";
   if (updateHash) window.location.hash = `#/p/${state.activeProject.id}/${state.currentStep}`;
   $("#inbox-view").hidden = true;
+  $("#privacy-view").hidden = true;
   renderShell();
   await renderStep(state.currentStep);
   setDrawer(null);
@@ -298,6 +301,7 @@ async function showInbox(tab, projectId = null) {
   $("#empty-state").hidden = true;
   $("#step-content").hidden = true;
   $("#inbox-view").hidden = false;
+  $("#privacy-view").hidden = true;
   $("#progress-block").hidden = true;
   $("#step-rail").replaceChildren();
   $("#later-stages").hidden = true;
@@ -312,12 +316,37 @@ async function showInbox(tab, projectId = null) {
   await renderInbox($("#inbox-view"), tab, state.user.id, projectId);
 }
 
+// `#/privacy`: the account privacy screen (X.85). Like the Inbox it is not tied to a project, so the project rail is cleared.
+async function showPrivacy() {
+  window.clearTimeout(state.pollTimer);
+  state.activeProject = null;
+  state.role = null;
+  state.summary = {};
+  $("#empty-state").hidden = true;
+  $("#step-content").hidden = true;
+  $("#inbox-view").hidden = true;
+  $("#privacy-view").hidden = false;
+  $("#progress-block").hidden = true;
+  $("#step-rail").replaceChildren();
+  $("#later-stages").hidden = true;
+  $("#memory-sidebar").hidden = true;
+  $("#crumb").textContent = "Privacy";
+  $("#role-chip").hidden = true;
+  $("#ai-chip").hidden = true;
+  $("#idea-button").hidden = true;
+  $("#memory-toggle").hidden = true;
+  renderProjectList();
+  setDrawer(null);
+  renderPrivacy($("#privacy-view"), { user: state.user, confirmNoPendingCaptures, onAccountEnded: endSession });
+}
+
 function showEmpty() {
   state.activeProject = null;
   state.role = null;
   state.summary = {};
   window.clearTimeout(state.pollTimer);
   $("#inbox-view").hidden = true;
+  $("#privacy-view").hidden = true;
   $("#empty-state").hidden = false;
   $("#step-content").hidden = true;
   $("#progress-block").hidden = true;
@@ -360,6 +389,10 @@ async function loadProjects() {
     await showInbox(inbox.tab, inbox.projectId);
     return;
   }
+  if (parsePrivacyRoute(window.location.hash)) {
+    await showPrivacy();
+    return;
+  }
   const parsed = parseHash();
   if (parsed && state.projects.some((p) => p.id === parsed.projectId)) {
     await selectProject(parsed.projectId, parsed.stepId);
@@ -371,6 +404,10 @@ async function loadProjects() {
 }
 
 window.addEventListener("hashchange", () => {
+  if (parsePrivacyRoute(window.location.hash) && state.user) {
+    showPrivacy();
+    return;
+  }
   const inbox = parseInboxHash();
   if (inbox && state.user) {
     showInbox(inbox.tab, inbox.projectId);
@@ -715,19 +752,30 @@ $("#development-login").addEventListener("submit", async (event) => {
 });
 
 $("#logout").addEventListener("click", async () => {
-  const pending = await pendingCount();
-  if (pending) {
-    await syncOfflineCaptures();
-    const remaining = await pendingCount();
-    if (remaining && !window.confirm(`${remaining} offline capture${remaining === 1 ? "" : "s"} remain on this device. Sign out anyway?`)) return;
-  }
+  if (!(await confirmNoPendingCaptures("Sign out"))) return;
   await request("/api/auth/logout", { method: "POST" });
+  await endSession();
+});
+
+// Offline captures are synced first; if some remain on this device the user decides before the account changes (X.85 reuses this).
+async function confirmNoPendingCaptures(action) {
+  const pending = await pendingCount();
+  if (!pending) return true;
+  await syncOfflineCaptures();
+  const remaining = await pendingCount();
+  if (!remaining) return true;
+  return window.confirm(`${remaining} offline capture${remaining === 1 ? "" : "s"} remain on this device. ${action} anyway?`);
+}
+
+// Back to the sign-in screen. The message, if any, is shown after the account change (sign out, erasure) (X.85).
+async function endSession(message) {
   state.user = null;
   showEmpty();
   setDrawer(null);
   $("#account").hidden = true;
   $("#nav-toggle").hidden = true;
+  if (message) toast(message);
   authenticate();
-});
+}
 
 authenticate().catch((error) => toast(error.message));

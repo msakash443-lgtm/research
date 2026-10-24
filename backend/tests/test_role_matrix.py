@@ -109,6 +109,10 @@ MATRIX = [
     ("POST", "/api/projects/{p}/submissions/reminders", WRITE, 201),
     ("POST", "/api/projects/{p}/submissions/reminders/dispatch", WRITE, 202),
     ("POST", "/api/projects/{p}/submissions/integrations/orcid", WRITE, 409),
+    ("GET", "/api/projects/{p}/institutions", ALL, 200),
+    ("POST", "/api/projects/{p}/institutions", WRITE, 201),
+    ("GET", "/api/projects/{p}/people", ALL, 200),
+    ("POST", "/api/projects/{p}/people", WRITE, 201),
     ("GET", "/api/projects/{p}/ai-disclosure-styles", ALL, 200),
     ("GET", "/api/projects/{p}/accuracy-report", ALL, 200),
     ("GET", "/api/projects/{p}/manuscript/export", ALL, 200),
@@ -722,6 +726,10 @@ def _call(world, principal, method, template):
             f"/api/projects/{world['ids']['p']}/submissions", json={"journal_name": "Matrix reminder"}
         ).json()
         body = {"submission_id": created["id"], "due_at": "2030-01-01T00:00:00Z", "message": "Follow up"}
+    if (method, template) == ("POST", "/api/projects/{p}/institutions"):
+        body = {"name": "Matrix Institute"}
+    if (method, template) == ("POST", "/api/projects/{p}/people"):
+        body = {"name": "Matrix Person"}
     if (method, template) == ("POST", "/api/projects/{p}/reviews"):
         body = {"document_id": world["ids"]["doc"], "persona": "methodologist", "severity": "major", "body": "Check the methods."}
     if (method, template) == ("POST", "/api/projects/{p}/reviews/issues"):

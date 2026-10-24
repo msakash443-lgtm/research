@@ -1,6 +1,6 @@
 import pytest
 
-from app.identifiers import normalize_orcid
+from app.identifiers import normalize_orcid, normalize_ror
 
 
 @pytest.mark.parametrize(
@@ -73,3 +73,44 @@ def test_normalize_orcid_accepts_trailing_slash_on_link():
 def test_normalize_orcid_refuses_non_ascii_link_prefix(raw):
     with pytest.raises(ValueError):
         normalize_orcid(raw)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "https://ror.org/02mhbdp94",
+        "ror.org/02mhbdp94",
+        "02mhbdp94",
+        "https://ror.org/02MHBDP94/",
+        "  02mhbdp94  ",
+    ],
+)
+def test_normalize_ror_accepts_full_url_short_and_bare_forms(raw):
+    assert normalize_ror(raw) == "https://ror.org/02mhbdp94"
+
+
+def test_normalize_ror_accepts_a_second_documented_id():
+    assert normalize_ror("018mejw64") == "https://ror.org/018mejw64"
+
+
+def test_normalize_ror_blank_is_none():
+    assert normalize_ror(None) is None
+    assert normalize_ror("   ") is None
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "02mhbdp95",  # wrong check digits
+        "12mhbdp94",  # no leading 0
+        "02mhbdp9",  # too short
+        "02mhbdp944",  # too long
+        "02mhbdi94",  # I is excluded from Crockford base32
+        "02mhbdl94",  # L is excluded from Crockford base32
+        "https://ror.org/02mhbdp94x",  # letter where a check digit is required
+        "not-a-ror",
+    ],
+)
+def test_normalize_ror_refuses_malformed_or_bad_checksum(raw):
+    with pytest.raises(ValueError):
+        normalize_ror(raw)

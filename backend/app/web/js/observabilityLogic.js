@@ -73,3 +73,9 @@ export function rememberRun(getStorage, key, runId) {
     return false;
   }
 }
+
+// Open on a failed run: remember the run for the Ask step, then always navigate. A blocked store must not stop the navigation.
+export function openFailedRun(getStorage, key, runId, navigate) {
+  rememberRun(getStorage, key, runId);
+  navigate("ask");
+}

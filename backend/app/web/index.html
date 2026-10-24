@@ -20,6 +20,7 @@
           <span id="role-chip" class="role-chip" hidden></span>
           <span id="ai-chip" class="role-chip" hidden></span>
           <a id="inbox-button" class="quiet-button" href="#/inbox">Inbox</a>
+          <a id="privacy-button" class="quiet-button" href="#/privacy">Privacy</a>
           <button id="notes-button" class="quiet-button" type="button" aria-controls="notes-dialog" aria-haspopup="dialog">Notes</button>
           <button id="capture-button" class="quiet-button" type="button" aria-controls="capture-dialog" aria-haspopup="dialog">Capture</button>
           <button id="memory-toggle" class="quiet-button" type="button" aria-controls="memory-sidebar" aria-expanded="false" hidden>Memory</button>
@@ -63,6 +64,8 @@
         <main id="step-view" class="content">
           <!-- Inbox and decision log (X.31.2.1): shown in place of a project's steps when the hash is #/inbox. -->
           <section id="inbox-view" class="inbox-view" aria-label="Inbox" hidden></section>
+          <!-- Account privacy (X.85): shown in place of the project steps when the hash is #/privacy. -->
+          <section id="privacy-view" class="privacy-view" aria-label="Privacy and your data" hidden></section>
           <div id="empty-state" class="empty-state">
             <p class="eyebrow">START HERE</p>
             <h1>Create your first research project.</h1>

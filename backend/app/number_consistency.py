@@ -8,7 +8,16 @@ the text. Forms it does not read (for example `p < .001`) are not checked and mu
 from __future__ import annotations
 
 import re
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
+
+
+def _rounded(value: float, decimals: int) -> str:
+    """The table value rounded half-up (APA style) to `decimals`, as the text would print it. Python's round() is
+    half-to-even, so 0.125 would print as 0.12 and reject a correct 0.13. Zero is never printed with a minus sign."""
+    rounded = Decimal(repr(value)).quantize(Decimal(1).scaleb(-decimals), rounding=ROUND_HALF_UP)
+    return f"{abs(rounded) if rounded == 0 else rounded:f}"
+
 
 _STATISTIC = re.compile(r"(?<![A-Za-z])([A-Za-z]{1,4}|β|α)\s*=\s*(-?\d+(?:\.(\d+))?)")
 
@@ -25,7 +34,7 @@ def find_mismatches(text: str, table: dict[str, float]) -> dict[str, Any]:
                 unverified.append(label)
             continue
         decimals = len(decimals_text or "")
-        expected = f"{round(table[label], decimals):.{decimals}f}"
+        expected = _rounded(table[label], decimals)
         if quoted != expected:
             mismatches.append({"label": label, "text": quoted, "table": table[label]})
     return {"mismatches": mismatches, "unverified": unverified}

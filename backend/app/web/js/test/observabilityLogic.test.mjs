@@ -1,7 +1,7 @@
 // Run with: node --test backend/app/web/js/test   (no packages; pytest does not run these)
 import test from "node:test";
 import assert from "node:assert/strict";
-import { callRows, durationRows, failureRows, formatSeconds, rememberRun, stepRows, tiles } from "../observabilityLogic.js";
+import { callRows, durationRows, failureRows, formatSeconds, openFailedRun, rememberRun, stepRows, tiles } from "../observabilityLogic.js";
 
 const data = {
   steps: [{ type: "research_run", total: 38, completed: 31, failed: 4, queued: 1, running: 1, paused: 0, blocked: 1, retried: 9 }],
@@ -75,4 +75,14 @@ test("remembering the run to open stores it, and a blocked session store does no
   const blocked = () => { throw new Error("SecurityError"); };
   assert.equal(rememberRun(blocked, "key", "run-1"), false);
   assert.equal(rememberRun(() => ({ setItem: blocked }), "key", "run-1"), false);
+});
+
+test("Open remembers the run and still navigates to Ask when the session store throws", () => {
+  const visited = [];
+  openFailedRun(() => { throw new Error("SecurityError"); }, "key", "run-1", (step) => visited.push(step));
+  assert.deepEqual(visited, ["ask"]);
+  const saved = {};
+  openFailedRun(() => ({ setItem: (k, v) => { saved[k] = v; } }), "key", "run-1", (step) => visited.push(step));
+  assert.deepEqual(saved, { key: "run-1" });
+  assert.deepEqual(visited, ["ask", "ask"]);
 });

@@ -19,6 +19,7 @@ from app.middleware import ContentLengthLimitMiddleware, FixedWindowCounter, Rat
 from app.pagination import NEXT_CURSOR_HEADER
 from app.routers import accuracy, ai_locks, ai_settings, audit, provenance_reports, workspace_ai, auth, bibliometrics, claims, clusters, connectors, coverage, criteria, design_tools, evidence_matrix, exports, extraction_schemas, extractions, gates, guide, integrity, members, notes, documents, prisma, profile, projects, replication, research_runs, scholar_metrics, screening, searches, alerts, seeds, snowball, sources, stage, suggestions, usage, zotero, reviews
 from app.routers import journals, submissions
+from app.routers import people
 from app.routers import privacy
 from app.routers import observability
 from app.routers import bias_warnings
@@ -143,6 +144,7 @@ app.include_router(zotero.router, prefix="/api")
 app.include_router(reviews.router, prefix="/api")
 app.include_router(journals.router, prefix="/api")
 app.include_router(submissions.router, prefix="/api")
+app.include_router(people.router, prefix="/api")
 app.include_router(scholar_metrics.router, prefix="/api")
 app.include_router(interpretation.router, prefix="/api")
 

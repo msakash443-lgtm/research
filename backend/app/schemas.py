@@ -558,13 +558,49 @@ class JournalCandidateCreate(BaseModel):
     review_days: int | None = Field(default=None, ge=0)
     source_url: HttpUrl
     checked_at: str = Field(min_length=1, max_length=64)
-    official_predatory: bool = False
 
 
 class JournalCandidateRead(JournalCandidateCreate):
     model_config = ConfigDict(from_attributes=True)
+    official_predatory: bool = False
     id: uuid.UUID
     project_id: uuid.UUID
+    created_by: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class InstitutionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=300)
+    ror_id: str | None = Field(default=None, max_length=64)
+
+
+class InstitutionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    project_id: uuid.UUID
+    name: str
+    ror_id: str | None
+    created_by: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class PersonCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=300)
+    orcid: str | None = Field(default=None, max_length=64)
+    institution_id: uuid.UUID | None = None
+
+
+class PersonRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    project_id: uuid.UUID
+    name: str
+    orcid: str | None
+    institution_id: uuid.UUID | None
     created_by: str
     created_at: datetime
     updated_at: datetime

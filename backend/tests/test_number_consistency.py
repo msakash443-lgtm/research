@@ -24,3 +24,16 @@ def test_negative_values_are_compared_too():
 def test_a_label_with_no_table_value_is_unverified_not_passed():
     result = find_mismatches("Scores were t = 2.10.", {"M": 3.4})
     assert result == {"mismatches": [], "unverified": ["t"]}
+
+
+def test_a_half_way_value_is_rounded_half_up_as_apa_prints_it():
+    assert find_mismatches("r = 0.13", {"r": 0.125})["mismatches"] == []
+    assert find_mismatches("r = 0.12", {"r": 0.125})["mismatches"] != []
+
+
+def test_a_negative_half_way_value_rounds_away_from_zero():
+    assert find_mismatches("d = -0.13", {"d": -0.125})["mismatches"] == []
+
+
+def test_a_tiny_negative_value_is_not_printed_with_a_minus_sign():
+    assert find_mismatches("b = 0.00", {"b": -0.001})["mismatches"] == []

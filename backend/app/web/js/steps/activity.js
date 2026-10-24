@@ -2,7 +2,7 @@ import { $, el, formatDate, toast } from "../dom.js";
 import { request, projectApi } from "../api.js";
 import { AI_LEVELS, AI_ROUTES, aiLevel } from "../aiLevels.js";
 import { usageSummary } from "../usageLogic.js";
-import { callRows, durationRows, failureRows, rememberRun, stepRows, tiles } from "../observabilityLogic.js";
+import { callRows, durationRows, failureRows, openFailedRun, stepRows, tiles } from "../observabilityLogic.js";
 import { extractionNotes, extractionTables, hasAnything, screeningLines } from "../accuracyLogic.js";
 import { FOCUS_RESEARCH_RUN_KEY } from "./ask.js";
 
@@ -164,8 +164,7 @@ function failuresTable(ctx, data) {
     if (runId) {
       const open = el("button", { className: "quiet-button", text: "Open" });
       open.addEventListener("click", () => {
-        rememberRun(() => sessionStorage, FOCUS_RESEARCH_RUN_KEY, runId);
-        ctx.navigate("ask");
+        openFailedRun(() => sessionStorage, FOCUS_RESEARCH_RUN_KEY, runId, (step) => ctx.navigate(step));
       });
       cell.append(open);
     } else {
