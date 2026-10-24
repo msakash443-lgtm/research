@@ -43,13 +43,13 @@ from tests.test_fulltext import make_pdf
 
 
 def _login(email: str) -> TestClient:
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://testserver")
     client.post("/api/auth/development/login", json={"email": email, "display_name": "Acceptance"})
     return client
 
 
 def _login_with_id(email: str):
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://testserver")
     user_id = client.post("/api/auth/development/login", json={"email": email, "display_name": "Acceptance"}).json()["id"]
     return client, user_id
 

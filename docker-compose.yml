@@ -58,7 +58,7 @@ services:
   arc:
     profiles: ["arc"]
     build:
-      context: ${ARC_REPO_PATH:?set ARC_REPO_PATH in .env (see .env.example)}/researchclaw/docker
+      context: ${ARC_REPO_PATH:-./arc-not-configured}/researchclaw/docker
       dockerfile: Dockerfile.generic
     image: researchclaw/sandbox-generic:latest
 
