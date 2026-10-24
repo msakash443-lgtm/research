@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Account privacy · Wireframe</title>
+<link rel="stylesheet" href="wireframe.css">
+<style>
+  .privacy-layout { display:grid; gap:18px; max-width:900px; margin:0 auto; padding:24px 20px 60px; }
+  .privacy-layout h1 { margin-bottom:4px; }
+  .privacy-card { padding:18px; }
+  .privacy-card h2 { margin:0 0 8px; font-size:20px; }
+  .privacy-card p { margin:7px 0; }
+  .notice { border-left:4px solid var(--teal); background:#f6f8f8; padding:12px 14px; }
+  .processor-list { display:grid; gap:10px; margin:12px 0 0; padding:0; list-style:none; }
+  .processor { border:1px solid var(--line); border-radius:8px; padding:11px 13px; background:#fff; }
+  .processor strong { display:block; color:var(--navy); }
+  .processor small { display:block; color:var(--muted); margin-top:3px; }
+  .account-actions { display:grid; gap:10px; }
+  .action { display:flex; flex-wrap:wrap; align-items:center; gap:10px; justify-content:space-between; border:1px solid var(--line); border-radius:8px; padding:12px 13px; }
+  .action-copy { min-width:0; flex:1 1 280px; }
+  .action-copy strong { display:block; color:var(--navy); }
+  .action-copy span { display:block; color:var(--muted); font-size:13px; margin-top:3px; }
+  .danger-copy strong { color:var(--bad); }
+  .confirmation { margin-top:12px; padding:12px; border:1px solid #e0a5a5; border-radius:8px; background:var(--bad-bg); }
+  .confirmation[hidden] { display:none; }
+  .confirmation label { display:grid; gap:5px; font-weight:650; }
+  .confirmation input { width:100%; border:1px solid #c8a1a1; border-radius:6px; padding:8px; }
+  .confirmation .row { margin-top:9px; }
+  .scope-note { color:var(--muted); font-size:13px; }
+</style>
+</head>
+<body>
+<div class="wf-banner"><span><strong>WIREFRAMES</strong> · X.85 · static prototype with invented data · no API calls</span><label><input id="pin-toggle" type="checkbox" checked> Show walkthrough questions</label></div>
+<header class="topbar">
+  <a class="brand" href="index.html">Research<span>AI</span></a>
+  <div class="crumbs"><a href="index.html">Wireframes</a> · Account privacy</div>
+  <span class="role-chip">Account settings · Alex Researcher</span>
+</header>
+<main class="privacy-layout">
+  <section>
+    <p class="muted small">Account-level controls · not a project screen</p>
+    <h1>Privacy and your data</h1>
+    <p class="muted">Manage the data held for your account. Project permissions and research decisions remain in each project workspace.</p>
+  </section>
+
+  <section class="panel privacy-card">
+    <h2>Privacy notice</h2>
+    <div class="notice">
+      <p>This installation sends some of your project data to the outside services listed here, and only these. A service appears in the list only while it is switched on.</p>
+      <p>Data kept on this server—your account, notes, projects, files and audit log—is not listed here. You can download a copy of your own data or erase your account below.</p>
+    </div>
+    <h3>Processors currently enabled</h3>
+    <ul class="processor-list">
+      <li class="processor"><strong>AI model provider</strong><small>Purpose: drafting suggestions and research answers · Host: llm.example.test</small><small>Data sent: selected project text needed for the requested model operation</small></li>
+      <li class="processor"><strong>OpenAlex</strong><small>Purpose: scholarly search · Host: api.openalex.org</small><small>Data sent: search queries and record identifiers</small></li>
+    </ul>
+    <p class="scope-note">Example data only. The live endpoint is <code>GET /api/privacy/processors</code>; it returns the notice and enabled processor register without credentials.</p>
+  </section>
+
+  <section class="panel privacy-card">
+    <h2>Account actions</h2>
+    <p class="scope-note">These controls affect your account across every project. They do not approve gates or change project records.</p>
+    <div class="account-actions">
+      <div class="action">
+        <div class="action-copy"><strong>Download my data</strong><span>Save the JSON export of your personal data. This starts a download and does not delete anything.</span></div>
+        <button type="button" id="export-button">Download JSON</button>
+      </div>
+      <div class="action">
+        <div class="action-copy"><strong>Sign out everywhere</strong><span>End all browser sessions, including this one. You can sign in again later.</span></div>
+        <button type="button" id="logout-button">Sign out everywhere</button>
+      </div>
+      <div class="action">
+        <div class="action-copy danger-copy"><strong>Erase my account</strong><span>Permanently pseudonymise your account, remove external identities and scrub private unfiled notes. Shared-project ownership must be handed over first.</span></div>
+        <button type="button" class="danger" id="erase-button">Erase account</button>
+      </div>
+    </div>
+    <div class="confirmation" id="erase-confirmation" hidden>
+      <strong>Permanent action</strong>
+      <p>Erasure cannot be undone. Type your account email to confirm. The live endpoint is <code>POST /api/auth/erase-account</code> with <code>{"confirm_email": "…"}</code>.</p>
+      <label>Email confirmation
+        <input id="confirm-email" type="email" placeholder="alex@example.test" autocomplete="off">
+      </label>
+      <div class="row"><button type="button" class="danger" id="confirm-erase">Confirm permanent erasure</button><button type="button" class="quiet" id="cancel-erase">Cancel</button></div>
+    </div>
+  </section>
+  <p class="scope-note"><a href="index.html">Back to wireframe index</a> · Example data only; no network requests are made.</p>
+</main>
+<div id="wf-toast" class="toast" hidden role="status"></div>
+<script src="wireframe.js"></script>
+<script>
+(function () {
+  const confirmation = document.getElementById("erase-confirmation");
+  document.getElementById("export-button").addEventListener("click", () => window.wfToast("Prototype: would download GET /api/auth/export-my-data"));
+  document.getElementById("logout-button").addEventListener("click", () => window.wfToast("Prototype: would POST /api/auth/logout-everywhere"));
+  document.getElementById("erase-button").addEventListener("click", () => { confirmation.hidden = false; document.getElementById("confirm-email").focus(); });
+  document.getElementById("cancel-erase").addEventListener("click", () => { confirmation.hidden = true; });
+  document.getElementById("confirm-erase").addEventListener("click", () => {
+    const email = document.getElementById("confirm-email").value.trim();
+    if (!email) { window.wfToast("Type your account email before confirming"); return; }
+    window.wfToast("Prototype: permanent erasure confirmed; no request was sent");
+    confirmation.hidden = true;
+  });
+}());
+</script>
+</body>
+</html>

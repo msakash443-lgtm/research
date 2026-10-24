@@ -47,7 +47,7 @@ These rules matter for any output this product produces that goes into a manuscr
   - LLMs cannot be authors. Document LLM use in Methods (or the nearest equivalent). Book manuscripts: acknowledgements.
   - "AI assisted copy editing" does not need declaring.
   - Disclosure should include tool version, usage dates, prompts, and the extent of AI contribution. [official] group.springernature.com
-- **ICMJE** [official] [icmje.org AI guidance](https://www.icmje.org/recommendations/browse/artificial-intelligence/ai-use-by-authors.html), Section V.A “Use of AI by Authors”:
+- **ICMJE** [official] [AI guidance](https://www.icmje.org/recommendations/browse/artificial-intelligence/ai-use-by-authors.html), Section **A** “Use of AI by Authors”:
   - Disclose AI use at submission, in the cover letter and in the manuscript where appropriate.
   - AI cannot be an author. Authors remain responsible for accuracy, integrity, originality and other obligations.
   - Authors must check AI output for errors, omissions, bias and incompleteness, and ensure proper attribution.
@@ -63,7 +63,7 @@ Sources: EU GDPR text (Article 89), UK ICO research guidance, and the official E
 - **Article 89(1)** [official text]: safeguards must include data minimisation. Pseudonymisation is named as one measure. If the purpose can be met with anonymised data, use that. Pseudonymised data is still personal data under the GDPR (Recital 26 [official]).
 - **Article 6**: research does not by itself give a lawful basis. A separate Article 6 basis is still needed. [official text]
 - **ICO** [official] ico.org.uk research provisions: anonymise or pseudonymise as early as possible, before research use.
-- **EDPB Guidelines 1/2026 on processing of personal data for scientific research purposes** [official] [PDF](https://www.edpb.europa.eu/system/files/2026-04/edpb_guidelines_202601_scientificresearch_en.pdf): adopted 15 April 2026; the public consultation ran from 16 April through 25 June 2026 and is now closed. This v1 document and the EDPB's finalisation status must be checked before treating it as settled guidance. It addresses scientific-research qualification, further processing, broad and dynamic consent, data-subject rights, controller/processor roles, and safeguards including anonymisation and pseudonymisation.
+- **EDPB Guidelines 1/2026 on processing of personal data for scientific research purposes** [official consultation page](https://www.edpb.europa.eu/public-consultations/guidelines-12026-on-processing-personal-data-scientific-research_en): adopted 15 April 2026; the public consultation ran from 16 April through 25 June 2026 and is now closed. The linked official consultation record is not treated as a finalised guidance PDF here; confirm finalisation status before relying on the text as settled guidance. It addresses scientific-research qualification, further processing, broad and dynamic consent, data-subject rights, controller/processor roles, and safeguards including anonymisation and pseudonymisation.
 - **Ethics-board requirements** [INFERENCE]: no source found that lists universal current ethics-board requirements for AI-assisted evidence synthesis. Each institution sets its own rules. The scholar's ethics board should be consulted before any study uses human-subject data from this tool. This is an open item, not a verified finding.
 
 Implication for us: a project that stores identifiable human-subject data needs a documented safeguards section. Anonymise or pseudonymise before ingestion if the purpose allows it.
