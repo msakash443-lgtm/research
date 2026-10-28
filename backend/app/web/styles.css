@@ -547,22 +547,3 @@ dialog .helper { margin:0; }
 .panel .type-option input { width:auto; margin:0 6px 0 0; }
 .panel .type-option.is-disabled { opacity:.55; cursor:not-allowed; }
 .research-type-stages { font-size:14px; padding-left:22px; margin:6px 0 0; }
-@media (prefers-color-scheme: dark) {
-  :root {
-    color-scheme:dark;
-    --ink:#eef3f7; --muted:#b2bfca; --paper:#101820; --navy:#d9e8ff; --teal:#62d1bd; --line:#3a4a58; --warm:#1d2a35;
-  }
-  body { background:var(--paper); color:var(--ink); }
-  .topbar, .panel, .source-card, .run-card, .empty-card, .context-card, .idea-card, .write-editor, .write-panel,
-  .provenance-badge, .popover, dialog, .write-export-list { background:#17232d; color:var(--ink); }
-  .sidebar { background:#141f28; }
-  .memory-sidebar { background:#17232d; }
-  input, textarea, select { color:var(--ink); background:#17232d; border-color:var(--line); }
-  .write-word-diff del { color:#ff9c9c; }
-  .write-word-diff ins { color:#8ecbff; }
-  .write-word-diff del, .write-word-diff ins { text-decoration-thickness:2px; }
-  .write-export-list a { color:var(--ink); }
-  .quiet-button, .menu-toggle { color:var(--navy); border-color:var(--line); }
-  .suggestion-card { background:#17232d; }
-  .privacy-danger .privacy-action-copy strong { color:#ff9c9c; }
-}

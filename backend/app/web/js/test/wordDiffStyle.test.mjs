@@ -38,27 +38,11 @@ test("deleted and inserted words meet WCAG AA contrast on white", () => {
 test("deleted and inserted words use different colours, so the change does not depend on line style alone", () => {
   assert.notEqual(colourOf(String.raw`\.write-word-diff del`), colourOf(String.raw`\.write-word-diff ins`));
 });
-const darkTheme = css.match(/@media\s*\(prefers-color-scheme:\s*dark\)\s*\{([\s\S]*)\}\s*$/)?.[1] || "";
 
-function darkColourOf(selector) {
-  const rule = darkTheme.match(new RegExp(`${selector}\\s*\\{[^}]*color:\\s*(#[0-9a-fA-F]{6})`));
-  assert.ok(rule, `no dark-theme colour rule found for ${selector}`);
-  return rule[1];
-}
-
-test("dark-theme deleted and inserted words meet WCAG AA on the dark page background", () => {
-  assert.match(css, /@media\s*\(prefers-color-scheme:\s*dark\)/);
-  assert.ok(contrast(darkColourOf(String.raw`\.write-word-diff del`), "#101820") >= 4.5);
-  assert.ok(contrast(darkColourOf(String.raw`\.write-word-diff ins`), "#101820") >= 4.5);
+test("the stylesheet keeps the light theme regardless of the system colour scheme", () => {
+  assert.doesNotMatch(css, /prefers-color-scheme:\s*dark/);
+  assert.doesNotMatch(css, /color-scheme:\s*dark/);
 });
-
-test("dark-theme deleted and inserted words remain distinguishable", () => {
-  assert.notEqual(
-    darkColourOf(String.raw`\.write-word-diff del`),
-    darkColourOf(String.raw`\.write-word-diff ins`),
-  );
-});
-
 test("the hidden removed/added labels have a visually-hidden rule that keeps them out of the layout", () => {
   assert.match(css, /\.sr-only\s*\{[^}]*position:absolute/);
 });
