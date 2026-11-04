@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app import audit, fulltext_coverage, project_schemas
 from app.artifacts import refresh_artifact, register_artifact
+from app.ai_controls import require_ai_on
 from app.database import get_db
 from app.dependencies import APPROVE_ROLES, READ_ROLES, WRITE_ROLES, current_user, project_access
 from app.config import get_settings
@@ -141,6 +142,8 @@ def _extraction_or_404(db: Session, project: Project, extraction_id: uuid.UUID) 
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Extraction not found")
     return row
+
+
 
 
 @router.get("", response_model=list[ExtractionRead])
@@ -283,6 +286,7 @@ def request_ai_extraction(
     """Queue an evidence-grounded AI extraction from the source's stored PDF text."""
     if _locked(db, project):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=LOCKED_MESSAGE)
+    require_ai_on(project)
     source = db.scalar(select(Source).where(
         Source.id == payload.source_id, Source.project_id == project.id, Source.merged_into.is_(None)
     ))

@@ -144,6 +144,11 @@ def test_ai_extraction_runs_only_on_stored_pdf_and_persists_unverified_provenanc
     user_id = client.post("/api/auth/development/login", json={"email": f"extract-{uuid.uuid4().hex}@example.com", "display_name": "Researcher"}).json()["id"]
     project_id = client.post("/api/projects", json={"title": "AI extraction"}).json()["id"]
     source_id = client.post(f"/api/projects/{project_id}/sources", json={"title": "A paper", "abstract": "Abstract fallback must not be used."}).json()["id"]
+    for stage in ("title_abstract", "full_text"):
+        decision = client.post(f"/api/projects/{project_id}/screening/decisions", json={
+            "source_id": source_id, "stage": stage, "decision": "include",
+        })
+        assert decision.status_code == 201, decision.text
     pdf = make_pdf([["Abstract", "We study burnout among nurses."]])
     key = fulltext_key(uuid.UUID(project_id), uuid.UUID(source_id), "pdf")
 
@@ -206,3 +211,23 @@ def test_ai_extraction_runs_only_on_stored_pdf_and_persists_unverified_provenanc
     assert listed.status_code == 200
     assert listed.json()[0]["confidence_json"] == {"research_question": 0.93}
     assert (listed.json()[0]["agreement_json"] is not None) is double_extract
+
+
+def test_ai_extraction_request_is_refused_before_queuing_when_project_ai_is_off():
+    client = TestClient(app)
+    client.post("/api/auth/development/login", json={"email": f"extract-off-{uuid.uuid4().hex}@example.com", "display_name": "Researcher"})
+    project_id = client.post("/api/projects", json={"title": "AI disabled extraction"}).json()["id"]
+    source_id = client.post(f"/api/projects/{project_id}/sources", json={"title": "A paper"}).json()["id"]
+    for stage in ("title_abstract", "full_text"):
+        decision = client.post(f"/api/projects/{project_id}/screening/decisions", json={
+            "source_id": source_id, "stage": stage, "decision": "include",
+        })
+        assert decision.status_code == 201, decision.text
+    client.put(f"/api/projects/{project_id}/ai-settings", json={"ai_involvement": "off"})
+
+    response = client.post(f"/api/projects/{project_id}/extractions/ai", json={"source_id": source_id, "schema_name": "default"})
+
+    assert response.status_code == 409
+    assert "AI is turned off" in response.json()["detail"]
+    with SessionLocal() as db:
+        assert db.scalars(select(Task).where(Task.project_id == uuid.UUID(project_id))).all() == []

@@ -20,6 +20,7 @@ from app.models import AutoExcludeAudit, Gate, GateCode, GateStatus, Project, Sc
 STAGES = ("title_abstract", "full_text")
 HUMAN_DECISIONS = ("include", "exclude", "maybe")
 UNDO = "undo"
+OTHER_EXCLUSION_REASON = "E_OTHER"
 
 ARBITER = "arbiter"  # `decided_by` of an owner's or supervisor's ruling on a reviewer conflict (M2.4.3)
 
@@ -151,13 +152,33 @@ def passed_title_abstract(db: Session, project: Project) -> set[uuid.UUID]:
     return passed
 
 
+def included_sources(db: Session, project: Project) -> list[Source]:
+    """Sources with a final full-text inclusion decision, oldest first.
+
+    Evidence extraction is deliberately narrower than a screening queue: an undecided record,
+    a title/abstract-only inclusion, and a ``maybe`` are all still awaiting the full-text
+    scholarly decision and must not enter the evidence base.
+    """
+    decisions = rows_for_stage(db, project, "full_text")
+    return [
+        source
+        for source in screenable_sources(db, project)
+        if (decision := settled_decision(project, decisions.get(source.id, []))) is not None
+        and decision.decision == "include"
+    ]
+
+
 def criterion_codes(db: Session, project: Project) -> dict[str, str]:
     """The project's reason codes (I1, E2, ...) with their kind."""
     return {c.code: c.kind for c in db.scalars(select(ScreeningCriterion).where(ScreeningCriterion.project_id == project.id))}
 
 
-def check_reason(decision: str, reason_code: str | None, codes: dict[str, str]) -> str | None:
+def check_reason(decision: str, reason_code: str | None, codes: dict[str, str], note: str | None = None) -> str | None:
     """Why a decision's reason code is not acceptable, or None. Exclusions must say which exclusion criterion applies."""
+    if reason_code == OTHER_EXCLUSION_REASON:
+        if decision != "exclude":
+            return "The 'any other' exclusion reason can only be used when excluding a record."
+        return None if note and note.strip() else "Describe the other exclusion reason."
     if reason_code is None:
         if decision == "exclude":
             return "An exclusion needs a reason code: one of the project's exclusion criteria (E1, E2, ...)."

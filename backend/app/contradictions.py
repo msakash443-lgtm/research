@@ -16,7 +16,7 @@ def detect(matrix: dict) -> list[dict]:
     findings = []
     for paper in matrix["papers"]:
         cell = paper["cells"].get("key_findings", {})
-        if not paper["verified_by_human"] or cell.get("status") != "checked" or not cell.get("quote"):
+        if not paper["verified_by_human"] or not cell.get("quote"):
             continue
         values = cell.get("value") or []
         if not isinstance(values, list):

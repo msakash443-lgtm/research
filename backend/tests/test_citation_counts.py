@@ -92,6 +92,8 @@ def test_a_run_stores_each_results_count_and_merged_duplicates_keep_the_highest(
     by_id = {r["id"]: r["cited_by_count"] for r in results}
     assert counts["unique"] == 3
     assert by_id["openalex:W1"] == 4 and by_id["openalex:W2"] is None and by_id["openalex:W9"] == 50
+    assert results[0]["title"] == records[0].title
+    assert results[0]["year"] == records[0].year
 
 
 # --- API ----------------------------------------------------------------------------
@@ -177,14 +179,15 @@ def test_search_results_rank_filter_and_keep_unknowns_including_runs_saved_befor
     old = [{"id": "W1", "doi": None, "work_key": "a"}]  # a run saved before M2.13: no count key at all
     search_id = _add_run(project, 1, old)
     _add_run(project, 2, [
-        {"id": "W1", "doi": None, "work_key": "a", "cited_by_count": 3},
-        {"id": "W2", "doi": None, "work_key": "b", "cited_by_count": None},
-        {"id": "W3", "doi": None, "work_key": "c", "cited_by_count": 40},
+        {"id": "W1", "doi": None, "work_key": "a", "title": "Low-cited work", "year": 2021, "cited_by_count": 3},
+        {"id": "W2", "doi": None, "work_key": "b", "title": "Unknown-cited work", "year": 2022, "cited_by_count": None},
+        {"id": "W3", "doi": None, "work_key": "c", "title": "Highly-cited work", "year": 2023, "cited_by_count": 40},
     ])
 
     latest = client.get(f"/api/projects/{project}/searches/{search_id}/results", params={"min_citations": 5}).json()
     assert latest["version"] == 2
     assert [(r["id"], r["citation_count_unknown"]) for r in latest["results"]] == [("W3", False), ("W2", True)]
+    assert [(r["title"], r["year"]) for r in latest["results"]] == [("Highly-cited work", 2023), ("Unknown-cited work", 2022)]
     assert (latest["hidden_below_threshold"], latest["unknown_count"]) == (1, 1)
 
     first = client.get(f"/api/projects/{project}/searches/{search_id}/results", params={"version": 1}).json()

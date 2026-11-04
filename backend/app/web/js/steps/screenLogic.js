@@ -14,6 +14,16 @@ const KEY_ACTIONS = {
   "?": "help",
 };
 
+export const OTHER_EXCLUSION_REASON = "E_OTHER";
+export const SCREENING_STAGES = Object.freeze([
+  { value: "title_abstract", label: "Title & abstract" },
+  { value: "full_text", label: "Full text" },
+]);
+
+export function screeningStageLabel(stage) {
+  return SCREENING_STAGES.find((option) => option.value === stage)?.label ?? "Title & abstract";
+}
+
 // DOI link, or null. Only ever an https://doi.org/ address, whatever the stored DOI contains.
 export function safeLink(doi) {
   return doi ? `https://doi.org/${encodeURIComponent(doi).replaceAll("%2F", "/")}` : null;

@@ -6,7 +6,7 @@ from sqlalchemy import select
 from app.config import get_settings
 from app.connectors.base import ConnectorBase, ConnectorError, PaperRecord, SearchPage, SearchRequest
 from app.database import SessionLocal
-from app.models import AuditEvent, Project, SearchQuery, User
+from app.models import AuditEvent, Project, SearchQuery, Source, User
 from app.search_query import BooleanQuery, ConceptBlock
 from app.search_runner import SearchError, SearchFailed, diff_runs, rerun_search, run_search
 
@@ -74,6 +74,12 @@ def test_run_records_query_filters_counts_and_results():
             "reported_total": 1234, "truncated": False, "skipped_records": 0, "cache_bypassed": True,
         }
         assert [r["id"] for r in row.results] == [f"openalex:W{i}" for i in range(5)]
+        assert row.results[0]["title"].startswith("A sufficiently long")
+        assert row.results[0]["year"] == 2020
+        sources = db.scalars(select(Source).where(Source.project_id == project.id)).all()
+        assert len(sources) == 5
+        assert all(source.metadata_verified is False and source.origin == "retrieved" for source in sources)
+        assert all(source.ingest_key and source.found_via["method"] == "database_search" for source in sources)
         assert row.exact is True and row.caveats == []
         assert len(conn.requests) == 3  # paged 2 + 2 + 1
         event = db.scalar(select(AuditEvent).where(AuditEvent.action == "search.run"))
@@ -115,6 +121,16 @@ def test_no_truncation_flag_when_everything_fits():
     with db:
         row = run_search(db, project=project, actor="u", connector=FakeConnector([rec(i) for i in range(4)], page=2), query=QUERY, max_results=4)
         assert row.counts["truncated"] is False and row.counts["retrieved"] == 4
+
+
+def test_connector_provider_cap_is_recorded_as_truncated():
+    db, project = setup()
+    with db:
+        conn = FakeConnector([rec(i) for i in range(5)])
+        conn.last_search_capped = True
+        row = run_search(db, project=project, actor="u", connector=conn, query=QUERY, max_results=10)
+
+        assert row.counts["truncated"] is True
 
 
 def test_failure_saves_nothing_but_logs_and_raises():

@@ -1,7 +1,20 @@
 // Run with: node --test backend/app/web/js/test   (no packages; pytest does not run these)
 import test from "node:test";
 import assert from "node:assert/strict";
-import { afterDecision, authorsText, confidenceText, countsText, fetchEntireQueue, keyAction, runBulk, safeLink, splitAtQuote, typedReason } from "../steps/screenLogic.js";
+import { afterDecision, authorsText, confidenceText, countsText, fetchEntireQueue, keyAction, OTHER_EXCLUSION_REASON, runBulk, safeLink, SCREENING_STAGES, screeningStageLabel, splitAtQuote, typedReason } from "../steps/screenLogic.js";
+
+test("the typed any-other exclusion reason uses a distinct auditable code", () => {
+  assert.equal(OTHER_EXCLUSION_REASON, "E_OTHER");
+});
+
+test("screening offers title/abstract and full-text stages with a safe title/abstract fallback", () => {
+  assert.deepEqual(SCREENING_STAGES, [
+    { value: "title_abstract", label: "Title & abstract" },
+    { value: "full_text", label: "Full text" },
+  ]);
+  assert.equal(screeningStageLabel("full_text"), "Full text");
+  assert.equal(screeningStageLabel("unexpected"), "Title & abstract");
+});
 
 test("a DOI becomes an https://doi.org link with slashes kept and unsafe characters escaped", () => {
   assert.equal(safeLink("10.1000/abc.1"), "https://doi.org/10.1000/abc.1");

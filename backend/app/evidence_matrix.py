@@ -18,6 +18,7 @@ from app.dedupe import doi_key
 from app.extraction_schema import schema_version
 from app.models import Extraction, Project
 from app.project_schemas import resolve
+from app.screening import included_sources, rows_for_stage
 from app.thematic_clusters import clusterable_sources
 
 
@@ -33,7 +34,22 @@ def original_url(source) -> str | None:
 def build(db: Session, project: Project, name: str = "default") -> dict:
     schema = resolve(db, project.id, name)
     version = schema_version(schema)
-    sources = {source.id: source for source in clusterable_sources(db, project)}
+    screening_rows = rows_for_stage(db, project, "title_abstract")
+    screening_rows.update(rows_for_stage(db, project, "full_text"))
+    if screening_rows:
+        included_ids = {source.id for source in included_sources(db, project)}
+        extracted_ids = {
+            row.source_id for row in db.scalars(select(Extraction).where(
+                Extraction.project_id == project.id, Extraction.schema_version == version
+            ))
+        }
+        source_rows = [
+            source for source in clusterable_sources(db, project)
+            if source.id in included_ids or source.id in extracted_ids
+        ]
+    else:
+        source_rows = clusterable_sources(db, project)
+    sources = {source.id: source for source in source_rows}
     chosen = {}
     for row in db.scalars(select(Extraction).where(
         Extraction.project_id == project.id, Extraction.schema_version == version

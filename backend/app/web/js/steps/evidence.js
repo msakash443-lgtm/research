@@ -2,7 +2,7 @@ import { el, emptyCard, toast } from "../dom.js";
 import { request, projectApi } from "../api.js";
 import { provenanceBadge } from "../provenance.js";
 import { coverageBadge } from "./common.js";
-import { PAPERS_AS_COLUMNS, PAPERS_AS_ROWS, normalizeOrientation, tableLayout } from "../evidenceTableLogic.js";
+import { PAPERS_AS_COLUMNS, PAPERS_AS_ROWS, aiExtractionAction, normalizeOrientation, tableLayout } from "../evidenceTableLogic.js";
 
 function display(value) {
   if (value === null || value === undefined) return "Not reported";
@@ -17,6 +17,31 @@ function sourcePanel(panel, data) {
   passage.append(el("mark", { text: data.text.slice(data.highlight_start, data.highlight_end) }));
   passage.append(document.createTextNode(data.text.slice(data.highlight_end)));
   panel.append(passage);
+}
+
+async function requestExtraction(ctx, paper, button) {
+  button.disabled = true;
+  try {
+    const queued = await request(projectApi(ctx.project.id, "/extractions/ai"), {
+      method: "POST",
+      body: JSON.stringify({ source_id: paper.source_id, schema_name: "default" }),
+    });
+    toast(`Extraction requested for ${paper.title}. Task ${queued.status}.`);
+  } catch (error) {
+    toast(error.message);
+    button.disabled = false;
+  }
+}
+
+export async function uploadFulltext(ctx, paper, file) {
+  if (!file || (file.type && file.type !== "application/pdf")) {
+    throw new Error("Choose a PDF file first.");
+  }
+  return request(projectApi(ctx.project.id, `/sources/${paper.source_id}/fulltext/upload`), {
+    method: "POST",
+    headers: { "Content-Type": "application/pdf" },
+    body: await file.arrayBuffer(),
+  });
 }
 
 async function render(root, ctx) {
@@ -70,6 +95,38 @@ async function render(root, ctx) {
     const title = el("td");
     title.append(el("strong", { text: paper.title }), coverageBadge(paper.coverage), el("p", { className: "muted small",
       text: !paper.extraction_id ? "Not extracted" : paper.verified_by_human ? "Human verified" : "Needs human review" }));
+    const action = aiExtractionAction(paper, ctx.canWrite);
+    if (action) {
+      const uploadWrap = el("div", { className: "source-actions" });
+      const file = el("input", { attrs: {
+        type: "file", accept: "application/pdf", "aria-label": `PDF file to attach for ${paper.title}`,
+      } });
+      const upload = el("button", { className: "quiet-button", text: "Upload PDF" });
+      upload.addEventListener("click", async () => {
+        upload.disabled = true;
+        try {
+          await uploadFulltext(ctx, paper, file.files?.[0]);
+          toast("PDF uploaded. AI extraction is now available.");
+          await render(root, ctx);
+        } catch (error) {
+          toast(error.message);
+          upload.disabled = false;
+        }
+      });
+      if (!action.enabled) {
+        uploadWrap.append(file, upload);
+        title.append(uploadWrap);
+      }
+      const extract = el("button", { className: "quiet-button", text: "Start AI extraction" });
+      extract.disabled = !action.enabled;
+      extract.title = action.message;
+      if (action.enabled) {
+        extract.addEventListener("click", () => requestExtraction(ctx, paper, extract));
+        title.append(extract);
+      } else {
+        title.append(extract, el("p", { className: "muted small", text: action.message }));
+      }
+    }
     if (paper.extracted_by === "ai") title.append(provenanceBadge({ producer: "AI extraction", model: paper.model_id,
       promptVersion: paper.prompt_version, date: paper.created_at,
       approval: { text: paper.verified_by_human ? "Verified by person" : "Not verified", state: paper.verified_by_human ? "approved" : "pending" } }));

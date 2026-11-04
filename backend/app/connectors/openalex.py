@@ -22,6 +22,8 @@ import re
 from typing import Any
 from urllib.parse import quote
 
+from pydantic import SecretStr
+
 from app.connectors.base import (
     language_code,
     ConnectorBase,
@@ -169,14 +171,17 @@ class OpenAlexConnector(ConnectorBase):
         self,
         http: ConnectorHttpClient | None = None,
         contact_email: str | None = None,
+        api_key: SecretStr | None = None,
         max_related: int = 200,
     ):
         if max_related < 1:
             raise ValueError("max_related must be at least 1")
         self._http = http or ConnectorHttpClient(NAME, BASE_URL, HttpPolicy(min_interval_seconds=0.15))
         self._mailto = contact_email.strip() if contact_email and contact_email.strip() else None
+        self._api_key = api_key.get_secret_value().strip() if api_key else None
         self.max_related = max_related
         self.skipped_records = 0
+        self.last_search_capped = False
         self.last_related_truncated = False
 
     # --- helpers -------------------------------------------------------------
@@ -184,6 +189,8 @@ class OpenAlexConnector(ConnectorBase):
     def _params(self, **params: Any) -> dict[str, Any]:
         if self._mailto:
             params["mailto"] = self._mailto  # OpenAlex "polite pool"
+        if self._api_key:
+            params["api_key"] = self._api_key
         return params
 
     def _records(self, results: Any) -> list[PaperRecord]:
@@ -228,6 +235,10 @@ class OpenAlexConnector(ConnectorBase):
     # --- Connector protocol ----------------------------------------------------
 
     def search(self, request: SearchRequest) -> SearchPage:
+        if request.cursor and not self._api_key:
+            raise ConnectorError("OpenAlex cursor pagination requires OPENALEX_API_KEY")
+        if request.cursor is None:
+            self.last_search_capped = False
         params = self._params(search=request.query, **{"per-page": request.limit, "cursor": request.cursor or "*"})
         filter_ = self._filter(request.filters)
         if filter_:
@@ -238,6 +249,9 @@ class OpenAlexConnector(ConnectorBase):
         meta = data.get("meta") or {}
         total = meta.get("count")
         cursor = meta.get("next_cursor")
+        if cursor and not self._api_key:
+            self.last_search_capped = True
+            cursor = None
         return SearchPage(
             records=tuple(self._records(data.get("results"))),
             total=total if isinstance(total, int) and total >= 0 else None,

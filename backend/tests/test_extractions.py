@@ -29,6 +29,11 @@ def world(monkeypatch):
         db.add(ProjectMember(project_id=uuid.UUID(pid), user_id=uuid.UUID(reviewer_id), role=ProjectRole.reviewer))
         db.commit()
     sid = owner.post(f"/api/projects/{pid}/sources", json={"title": "A paper"}).json()["id"]
+    for stage in ("title_abstract", "full_text"):
+        response = owner.post(f"/api/projects/{pid}/screening/decisions", json={
+            "source_id": sid, "stage": stage, "decision": "include",
+        })
+        assert response.status_code == 201, response.text
     pdf = make_pdf([["Other", "Unrelated page text"], [
         "Introduction", "We ask whether remote work raises output",
         "Method", "120 clerks in the Netherlands", "a randomised trial",
@@ -75,6 +80,14 @@ def test_a_well_formed_extraction_is_stored_unverified_with_its_schema_version(w
     listed = world["reviewer"].get(f"/api/projects/{world['pid']}/extractions", params={"source_id": world["sid"]}).json()
     assert [e["id"] for e in listed] == [data["id"]]
     assert world["reviewer"].get(f"/api/projects/{world['pid']}/extractions/{data['id']}").json() == data
+
+
+def test_extraction_capture_is_available_before_screening_is_final(world):
+    source = world["owner"].post(f"/api/projects/{world['pid']}/sources", json={"title": "Unscreened"}).json()["id"]
+    response = world["owner"].post(f"/api/projects/{world['pid']}/extractions", json={
+        "source_id": source, "fields": {}, "evidence": {},
+    })
+    assert response.status_code == 201, response.text
 
 
 def test_a_value_without_evidence_is_refused_with_every_problem(world):

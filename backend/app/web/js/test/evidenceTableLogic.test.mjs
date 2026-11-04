@@ -1,7 +1,7 @@
 // Run with: node --test backend/app/web/js/test   (no packages; pytest does not run these)
 import test from "node:test";
 import assert from "node:assert/strict";
-import { normalizeOrientation, tableLayout } from "../evidenceTableLogic.js";
+import { aiExtractionAction, normalizeOrientation, tableLayout } from "../evidenceTableLogic.js";
 
 const matrix = {
   fields: [{ key: "sample" }, { key: "measures" }],
@@ -30,4 +30,18 @@ test("an unknown orientation falls back to papers as rows", () => {
   assert.equal(normalizeOrientation("sideways"), "papers");
   assert.equal(normalizeOrientation(undefined), "papers");
   assert.equal(normalizeOrientation("fields"), "fields");
+});
+
+test("AI extraction is visibly disabled until an editable paper has a stored full-text PDF", () => {
+  const pending = { extraction_id: null, coverage: { level: "metadata" } };
+  assert.deepEqual(aiExtractionAction(pending, true), {
+    enabled: false,
+    message: "Store a full-text PDF to enable AI extraction.",
+  });
+  assert.deepEqual(aiExtractionAction({ ...pending, coverage: { level: "full_text" } }, true), {
+    enabled: true,
+    message: "Queue AI extraction from the stored full-text PDF.",
+  });
+  assert.equal(aiExtractionAction({ ...pending, extraction_id: "done" }, true), null);
+  assert.equal(aiExtractionAction(pending, false), null);
 });

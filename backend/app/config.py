@@ -159,6 +159,9 @@ class Settings(BaseSettings):
     connectors_allow_scraping: bool = False
     # Contact address sent to scholarly APIs' "polite pool" (OpenAlex now, Crossref later). Optional; no placeholder.
     connector_contact_email: str | None = None
+    # Optional OpenAlex API key. Cursor pagination requires a key; without it OpenAlex searches return one page
+    # and are recorded as truncated rather than risking an unauthorized follow-up request.
+    openalex_api_key: SecretStr | None = None
     # Seconds a connector may answer an identical request from memory (M1.3.3). 0 = off, so searches stay live.
     connector_cache_ttl_seconds: float = Field(default=0, ge=0)
     # Share the circuit breaker (M1.3.2) across processes via a DB row (M1.3.8), instead of each

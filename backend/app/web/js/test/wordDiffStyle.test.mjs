@@ -43,6 +43,11 @@ test("the stylesheet keeps the light theme regardless of the system colour schem
   assert.doesNotMatch(css, /prefers-color-scheme:\s*dark/);
   assert.doesNotMatch(css, /color-scheme:\s*dark/);
 });
+
+test("the workspace chrome declares a light surface and text palette", () => {
+  assert.match(css, /body,\s*\.shell,\s*\.topbar,\s*\.workspace,\s*\.content\s*\{[^}]*color-scheme:light/);
+  assert.match(css, /\.topbar\s*\{[^}]*background:#fff[^}]*color:var\(--ink\)/);
+});
 test("the hidden removed/added labels have a visually-hidden rule that keeps them out of the layout", () => {
   assert.match(css, /\.sr-only\s*\{[^}]*position:absolute/);
 });

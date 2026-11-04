@@ -18,13 +18,15 @@ Rules this module keeps:
 * Only the `search_run` task handler calls it, and that task type needs gate G2 (M1.8.1): nothing
   runs a bulk search until a person has approved the search strategy and criteria.
 
-Counts cover this one run. "Duplicates removed" is within the run only (repeated ids, then DOI /
+Counts cover this one run. Connector records are persisted as unverified `Source` rows for human
+metadata review and screening; verification is never inferred from retrieval. "Duplicates removed" is within the run only (repeated ids, then DOI /
 title+year+author matches); removing duplicates across databases needs the stored `results` of all
 runs of a project, which M1.7.3 will do from the DOI and work key kept here.
 """
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -39,7 +41,7 @@ from app.config import get_settings
 from app.connectors.access import is_enabled
 from app.connectors.base import Connector, ConnectorError, PaperRecord, SearchRequest
 from app.dedupe import doi_key, group_duplicates, work_key
-from app.models import Project, ProjectStage, SearchQuery
+from app.models import SOURCE_ORIGIN_RETRIEVED, Project, ProjectStage, SearchQuery, Source
 from app.search_query import BooleanQuery
 from app.search_limits import DEFAULT_MAX_RESULTS, HARD_MAX_RESULTS
 
@@ -87,7 +89,7 @@ def _collect(connector: Connector, text: str, filters: dict[str, Any], max_resul
         if len(records) > max_results:  # a page may hold more than asked for (S2 bulk pages hold 1,000)
             return records[:max_results], total, True
         if not page.records or page.next_cursor is None:
-            return records, total, False
+            return records, total, bool(getattr(connector, "last_search_capped", False))
         if len(records) >= max_results:
             return records[:max_results], total, True
         cursor = page.next_cursor
@@ -111,6 +113,16 @@ def _summarise(records: list[PaperRecord]) -> tuple[list[dict[str, Any]], dict[s
                 "id": f"{anchor.connector}:{anchor.external_id}",
                 "doi": doi_key(anchor.doi),
                 "work_key": work_key(anchor),
+                "title": anchor.title,
+                "authors": list(anchor.authors),
+                "year": anchor.year,
+                "venue": anchor.venue,
+                "abstract": anchor.abstract,
+                "url": anchor.url,
+                "oa_url": anchor.oa_url,
+                "source_ids": dict(anchor.source_ids),
+                "quality_flags": list(anchor.quality_flags),
+                "language": anchor.language,
                 # Highest count among the merged duplicates (M2.13); None = no record had one, not 0.
                 "cited_by_count": max(known) if known else None,
             }
@@ -122,6 +134,39 @@ def _summarise(records: list[PaperRecord]) -> tuple[list[dict[str, Any]], dict[s
         "duplicates_removed": len(records) - len(groups),
     }
     return results, counts
+
+
+def _ingest_key(search_id: uuid.UUID, result: dict[str, Any]) -> str:
+    """Stable, bounded idempotency key for one stored result in one saved search."""
+    digest = hashlib.sha256(f"{search_id}:{result['id']}".encode("utf-8")).hexdigest()[:24]
+    return f"search:{search_id}:{digest}"
+
+
+def _store_results_as_sources(
+    db: Session, *, project: Project, actor: str, search_id: uuid.UUID, connector: str, results: list[dict[str, Any]], run_at: datetime
+) -> int:
+    """Persist completed search records as unverified sources, idempotently for a task retry."""
+    created = 0
+    for result in results:
+        key = _ingest_key(search_id, result)
+        if db.scalar(select(Source.id).where(Source.project_id == project.id, Source.ingest_key == key)) is not None:
+            continue
+        citation_count = result.get("cited_by_count")
+        db.add(
+            Source(
+                project_id=project.id,
+                title=result["title"][:500], doi=result.get("doi"), url=result.get("url"),
+                authors=result.get("authors") or None, year=result.get("year"), venue=result.get("venue"),
+                abstract=result.get("abstract"), oa_url=result.get("oa_url"), source_ids=result.get("source_ids") or None,
+                quality_flags=result.get("quality_flags") or None, language=result.get("language"),
+                origin=SOURCE_ORIGIN_RETRIEVED, metadata_verified=False, citation_count=citation_count,
+                citation_count_source=connector if citation_count is not None else None,
+                citation_count_at=run_at if citation_count is not None else None, created_by=actor, ingest_key=key,
+                found_via={"method": "database_search", "search_id": str(search_id), "connector": connector},
+            )
+        )
+        created += 1
+    return created
 
 
 def _execute(
@@ -155,13 +200,14 @@ def _execute(
     counts["truncated"] = truncated
     counts["cache_bypassed"] = True
     counts["skipped_records"] = int(getattr(connector, "skipped_records", 0) or 0)
+    run_at = datetime.now(timezone.utc)
     row = SearchQuery(
         project_id=project.id,
         search_id=search_id,
         database=connector.name,
         query_string=text,
         filters=filters,
-        run_at=datetime.now(timezone.utc),
+        run_at=run_at,
         n_results=counts["unique"],
         version=version,
         exact=exact,
@@ -171,6 +217,10 @@ def _execute(
         created_by=actor,
     )
     db.add(row)
+    db.flush()
+    stored_sources = _store_results_as_sources(
+        db, project=project, actor=actor, search_id=search_id, connector=connector.name, results=results, run_at=run_at
+    )
     db.flush()
     register_artifact(db, project.id, SEARCH_RUN_KIND, str(row.id), ProjectStage.retrieved, actor=actor)
     audit.record(
@@ -183,7 +233,7 @@ def _execute(
             "version": version,
             "database": connector.name,
             "exact": exact,
-            "counts": counts,
+            "counts": counts, "sources_created": stored_sources,
         },
     )
     return row
