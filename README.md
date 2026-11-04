@@ -80,6 +80,9 @@ python -m pip install -r backend/requirements.txt -r backend/requirements-arc.tx
 uvicorn app.main:app --reload --app-dir backend
 ```
 
+For a host-installed PostgreSQL server instead of Docker, set `DATABASE_URL` in `.env` to `postgresql+psycopg://<user>:<password>@127.0.0.1:5432/<database>` and run `alembic -c alembic.ini upgrade head` before starting the API and worker. See [the local PostgreSQL migration guide](docs/LOCAL_POSTGRES_MIGRATION.md) before copying data from an existing SQLite file.
+
+
 `requirements.txt` is the web app's runtime (the only file the Docker image installs); `requirements-arc.txt` is the vendored ARC retrieval service (`backend/arc_retrieval/`) and `requirements-dev.txt` the test tools.
 
 ### Virtual environments

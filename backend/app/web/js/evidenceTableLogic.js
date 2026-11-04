@@ -8,6 +8,14 @@ export function normalizeOrientation(value) {
   return value === PAPERS_AS_COLUMNS ? PAPERS_AS_COLUMNS : PAPERS_AS_ROWS;
 }
 
+export function aiExtractionAction(paper, canWrite) {
+  if (paper.extraction_id || !canWrite) return null;
+  if (paper.coverage?.level === "full_text") {
+    return { enabled: true, message: "Queue AI extraction from the stored full-text PDF." };
+  }
+  return { enabled: false, message: "Store a full-text PDF to enable AI extraction." };
+}
+
 // -> { headers: [{ paper? | field? }], rows: [{ head: { paper? | field? }, cells: [{ paper, field, cell }] }] }
 export function tableLayout(matrix, orientation) {
   const entry = (paper, field) => ({ paper, field, cell: paper.cells[field.key] });

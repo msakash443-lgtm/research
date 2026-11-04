@@ -97,6 +97,12 @@ def test_an_exclusion_must_cite_one_of_the_projects_exclusion_codes(world):
     assert queue(world["owner"], p)["counts"]["exclude"] == 1
 
 
+def test_an_other_exclusion_reason_requires_a_typed_note(world):
+    p, s = world["pid"], world["ids"][0]
+    assert decide(world["owner"], p, s, "exclude", reason_code="E_OTHER").status_code == 422
+    assert decide(world["owner"], p, s, "exclude", reason_code="E_OTHER", note="Wrong publication type for this review").status_code == 201
+
+
 def test_maybe_and_include_need_no_reason(world):
     assert decide(world["owner"], world["pid"], world["ids"][0], "maybe").status_code == 201
     assert decide(world["owner"], world["pid"], world["ids"][1], "include").status_code == 201

@@ -2,21 +2,20 @@ import { el, label, toast } from "../dom.js";
 import { request, projectApi } from "../api.js";
 import { coverageBadge, errorCard } from "./common.js";
 import { suggestionPanel } from "../suggestion.js";
-import { afterDecision, authorsText, confidenceText, countsText, fetchEntireQueue, keyAction, runBulk, safeLink, splitAtQuote, typedReason } from "./screenLogic.js";
+import { afterDecision, authorsText, confidenceText, countsText, fetchEntireQueue, keyAction, OTHER_EXCLUSION_REASON, runBulk, safeLink, SCREENING_STAGES, splitAtQuote, typedReason } from "./screenLogic.js";
 
-// Title/abstract screening (M2.3.1), built from the approved wireframe docs/wireframes/screening-queue.html.
+// Two-stage screening (M2.3.1), built from the approved wireframe docs/wireframes/screening-queue.html.
 // Every decision is a person's own: the AI suggestion is shown as a suggestion and never pre-selected.
 // Keys: I include, E exclude (then 1-9 for the reason), M maybe, J next, K previous, U undo, A show/hide the
 // AI suggestion, O open the source link, ? help. Bulk actions and the conflict queue are M2.3.2.
-const STAGE = "title_abstract";
-
 let keyHandler = null;
 
-function reasonDialog(codes) {
+function reasonDialog(decision, codes) {
   const dialog = el("dialog", { attrs: { "aria-labelledby": "screen-reason-title" } });
   const form = el("form", { attrs: { method: "dialog" } });
-  form.append(el("h2", { text: "Exclude: pick the reason", attrs: { id: "screen-reason-title" } }));
-  form.append(el("p", { className: "muted small", text: "Press a number, or click. Every exclusion needs a reason; it goes into the PRISMA counts." }));
+  const verb = decision === "include" ? "Include" : "Exclude";
+  form.append(el("h2", { text: `${verb}: record the reason`, attrs: { id: "screen-reason-title" } }));
+  form.append(el("p", { className: "muted small", text: `Choose the matching ${decision === "include" ? "inclusion" : "exclusion"} criterion, or choose Any other and describe it.` }));
   const list = el("div", { className: "screen-reasons" });
   const note = el("input", { attrs: { name: "note", maxlength: "2000", "aria-label": "Note (optional)", placeholder: "Note (optional, stays in the audit file)" } });
   const cancel = el("button", { type: "button", className: "quiet-button", text: "Cancel (Esc)" });
@@ -34,6 +33,13 @@ function reasonDialog(codes) {
     button.addEventListener("click", () => pick(criterion.code));
     list.append(button);
   });
+  const other = el("button", { type: "button", className: "quiet-button screen-reason", text: "Any other — type a reason below" });
+  other.addEventListener("click", () => {
+    const detail = note.value.trim();
+    if (!detail) { note.focus(); return; }
+    pick(decision === "exclude" ? OTHER_EXCLUSION_REASON : null);
+  });
+  list.append(other);
   // Digits: 1–9 pick at once; for 10 and up, type both digits (a single "1" waits briefly in case a "0" follows).
   let typed = "";
   let timer = null;
@@ -61,9 +67,9 @@ function reasonDialog(codes) {
   return dialog;
 }
 
-async function loadAgreement(api) {
+async function loadAgreement(api, stage) {
   try {
-    return await request(api(`/agreement?stage=${STAGE}`));
+    return await request(api(`/agreement?stage=${stage}`));
   } catch (error) {
     return { error: error.message };
   }
@@ -120,7 +126,7 @@ function renderConflicts(box, agreement, names, ruler) {
             toast("Add an exclusion criterion on Criteria & seeds first: every exclusion needs a reason.");
             return;
           }
-          const dialog = reasonDialog(ruler.exclusions);
+          const dialog = reasonDialog("exclude", ruler.exclusions);
           dialog.addEventListener("reason", (event) => ruler.rule(conflict.source_id, "exclude", event.detail.code, event.detail.note));
           dialog.showModal();
         });
@@ -132,12 +138,12 @@ function renderConflicts(box, agreement, names, ruler) {
   box.append(list);
 }
 
-async function render(root, ctx) {
+async function render(root, ctx, stage = "title_abstract") {
   if (keyHandler) document.removeEventListener("keydown", keyHandler, true);
   keyHandler = null;
   const api = (suffix) => projectApi(ctx.project.id, `/screening${suffix}`);
   // Every page of the waiting list, not just the first 200 (M2.3.4).
-  const loadQueue = () => fetchEntireQueue((offset) => request(api(`/queue?stage=${STAGE}&limit=200&offset=${offset}`)));
+  const loadQueue = () => fetchEntireQueue((offset) => request(api(`/queue?stage=${stage}&limit=200&offset=${offset}`)));
   let queue;
   try {
     queue = await loadQueue();
@@ -149,6 +155,14 @@ async function render(root, ctx) {
   const exclusions = criteria.filter((c) => c.kind === "exclude");
   const state = { items: queue.items, counts: queue.counts, pending: queue.pending, index: 0, showAi: true, undoStack: [], busy: false, selected: new Set(), hiddenAi: new Set() };
   const canDecide = ctx.canWrite && !queue.locked;
+  const stageSelect = el("select", { attrs: { "aria-label": "Screening stage" } });
+  SCREENING_STAGES.forEach((option) => {
+    const node = el("option", { text: option.label, attrs: { value: option.value } });
+    node.selected = option.value === stage;
+    stageSelect.append(node);
+  });
+  stageSelect.addEventListener("change", () => render(root, ctx, stageSelect.value));
+  const stageControl = el("label", { className: "screen-stage", text: "Screening stage: ", children: [stageSelect] });
 
   const header = el("p", { className: "screen-counts" });
   const notice = el("p", { className: "muted small screen-notice" });
@@ -167,7 +181,7 @@ async function render(root, ctx) {
       toast("Add an exclusion criterion on Criteria & seeds first: every exclusion needs a reason.");
       return;
     }
-    const dialog = reasonDialog(exclusions);
+    const dialog = reasonDialog("exclude", exclusions);
     dialog.addEventListener("reason", (event) => bulkDecide("exclude", event.detail.code, event.detail.note));
     dialog.showModal();
   });
@@ -180,6 +194,7 @@ async function render(root, ctx) {
   else if (queue.locked) notice.textContent = "Screening is locked because G3 is approved. Reopen G3 on Approvals to change a decision.";
   else if (queue.dual_screen_enabled) notice.textContent = "Dual screening is on: other reviewers' decisions and AI suggestions stay hidden until you decide.";
   else if (queue.sort === "relevance") notice.textContent = "Ordered by predicted relevance, from your own earlier decisions. It is only an order, never a decision.";
+  else if (stage === "full_text") notice.textContent = "Full-text screening contains only papers that passed title/abstract screening. A final Include makes a paper eligible for the evidence base.";
 
   const current = () => state.items[state.index] || null;
 
@@ -224,7 +239,7 @@ async function render(root, ctx) {
     const { done, failure } = await runBulk(ids, (id) =>
       request(api("/decisions"), {
         method: "POST",
-        body: JSON.stringify({ source_id: id, stage: STAGE, decision, reason_code: reasonCode, note }),
+        body: JSON.stringify({ source_id: id, stage, decision, reason_code: reasonCode, note }),
       })
     );
     done.forEach((id) => {
@@ -296,7 +311,7 @@ async function render(root, ctx) {
       actions.append(button);
     };
     const off = !canDecide || !item;
-    decide("include", "Include (I)", () => decideCurrent("include"), off);
+    decide("include", "Include… (I)", openInclude, off);
     decide("exclude", "Exclude… (E)", openExclude, off);
     decide("maybe", "Maybe (M)", () => decideCurrent("maybe"), off);
     decide("prev", "← Previous (K)", () => step(-1), state.index <= 0);
@@ -307,6 +322,7 @@ async function render(root, ctx) {
   function renderSide() {
     const box = el("section", { className: "panel screen-criteria" });
     box.append(el("h3", { text: "Criteria" }));
+    box.append(el("p", { className: "muted small", text: "Inclusion criteria describe what must be present; exclusion criteria describe what disqualifies a study. Record the matching reason whenever you include or exclude a record. Use Any other to write a reason not yet listed." }));
     if (criteria.length === 0) box.append(el("p", { className: "muted small", text: "No criteria yet. Add them on Criteria & seeds." }));
     else {
       const ul = el("ul");
@@ -442,7 +458,7 @@ async function render(root, ctx) {
     try {
       await request(api("/decisions"), {
         method: "POST",
-        body: JSON.stringify({ source_id: item.source_id, stage: STAGE, decision, reason_code: reasonCode, note }),
+        body: JSON.stringify({ source_id: item.source_id, stage, decision, reason_code: reasonCode, note }),
       });
       state.undoStack.push({ sourceId: item.source_id });
       // Remove by id, and keep the person on the record they are now viewing: they may have moved on while the
@@ -470,8 +486,16 @@ async function render(root, ctx) {
       toast("Add an exclusion criterion on Criteria & seeds first: every exclusion needs a reason.");
       return;
     }
-    const dialog = reasonDialog(exclusions);
+    const dialog = reasonDialog("exclude", exclusions);
     dialog.addEventListener("reason", (event) => decideCurrent("exclude", event.detail.code, event.detail.note));
+    dialog.showModal();
+  }
+
+  function openInclude() {
+    if (!current() || !canDecide || state.busy) return;
+    const inclusions = criteria.filter((c) => c.kind === "include");
+    const dialog = reasonDialog("include", inclusions);
+    dialog.addEventListener("reason", (event) => decideCurrent("include", event.detail.code, event.detail.note));
     dialog.showModal();
   }
 
@@ -484,7 +508,7 @@ async function render(root, ctx) {
       const undoPath = entry.suggestionId ? `/suggestions/${entry.suggestionId}/undo` : null;
       await request(undoPath ? projectApi(ctx.project.id, undoPath) : api("/decisions/undo"), {
         method: "POST",
-        ...(undoPath ? {} : { body: JSON.stringify({ source_id: sourceId, stage: STAGE }) }),
+        ...(undoPath ? {} : { body: JSON.stringify({ source_id: sourceId, stage }) }),
       });
       state.undoStack.pop();
       // The undo has been recorded: the record is waiting again even if the reload below fails, so count it now.
@@ -524,7 +548,7 @@ async function render(root, ctx) {
       dialogOpen: Boolean(document.querySelector("dialog[open]")),
     });
     const handlers = {
-      include: () => decideCurrent("include"),
+      include: openInclude,
       exclude: openExclude,
       maybe: () => decideCurrent("maybe"),
       next: () => step(1),
@@ -551,7 +575,7 @@ async function render(root, ctx) {
 
   const layout = el("div", { className: "screen-layout", children: [el("section", { className: "panel screen-queue", children: [bulkBar, list] }), el("section", { className: "panel", children: [record, actions] }), side] });
   const conflicts = el("section", { className: "panel screen-conflicts" });
-  root.replaceChildren(header, notice, layout, conflicts, help);
+  root.replaceChildren(stageControl, header, notice, layout, conflicts, help);
   renderAll();
   const names = new Map((ctx.summary.members || []).map((m) => [String(m.user_id), m.display_name || m.email]));
   // Owners and supervisors may rule on a conflict (M2.4.3) while screening is open under dual-screen.
@@ -564,7 +588,7 @@ async function render(root, ctx) {
             try {
               await request(api("/decisions/adjudicate"), {
                 method: "POST",
-                body: JSON.stringify({ source_id: sourceId, stage: STAGE, decision, reason_code: reasonCode, note }),
+                body: JSON.stringify({ source_id: sourceId, stage, decision, reason_code: reasonCode, note }),
               });
               toast(`Ruling recorded: ${label(decision)}. Both reviewers' decisions stay in the audit file.`);
               await ctx.refresh();
@@ -574,7 +598,7 @@ async function render(root, ctx) {
           },
         }
       : null;
-  renderConflicts(conflicts, await loadAgreement(api), names, ruler);
+  renderConflicts(conflicts, await loadAgreement(api, stage), names, ruler);
 }
 
 export default { render };

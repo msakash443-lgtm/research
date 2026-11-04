@@ -37,7 +37,7 @@ def enabled_lookup_names() -> list[str]:
 def build_connector(name: str) -> Connector:
     settings = get_settings()
     if name == "openalex":
-        return OpenAlexConnector(contact_email=settings.connector_contact_email)
+        return OpenAlexConnector(contact_email=settings.connector_contact_email, api_key=settings.openalex_api_key)
     if name == "crossref":
         return CrossrefConnector(contact_email=settings.connector_contact_email)
     if name == "semantic_scholar":

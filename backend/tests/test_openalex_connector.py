@@ -1,5 +1,6 @@
 import httpx
 import pytest
+from pydantic import SecretStr
 
 from app.connectors import Connector, ConnectorError, NotSupportedError, SearchRequest
 from app.connectors.http import ConnectorHttpClient, HttpPolicy
@@ -79,13 +80,15 @@ def test_abstract_ignores_hostile_positions():
 
 def test_search_sends_query_filters_paging_and_contact():
     c, server = connector(
-        lambda r: {"meta": {"count": 42, "next_cursor": "abc"}, "results": [work(1)]}, contact_email=" me@lab.example "
+        lambda r: {"meta": {"count": 42, "next_cursor": "abc"}, "results": [work(1)]},
+        contact_email=" me@lab.example ", api_key=SecretStr("test-openalex-key"),
     )
     page = c.search(SearchRequest(query="labour AND women", limit=10, filters={"year_from": 2015, "year_to": 2020, "type": "article", "is_oa": True}))
     params = server.requests[0].url.params
     assert params["search"] == "labour AND women" and params["per-page"] == "10" and params["cursor"] == "*"
     assert params["filter"] == "from_publication_date:2015-01-01,to_publication_date:2020-12-31,type:article,is_oa:true"
     assert params["mailto"] == "me@lab.example"
+    assert params["api_key"] == "test-openalex-key"
     assert (page.total, page.next_cursor, len(page.records)) == (42, "abc", 1)
 
     c.search(SearchRequest(query="x", cursor="abc"))
@@ -98,6 +101,29 @@ def test_no_contact_means_no_mailto_and_last_page_has_no_cursor():
     page = c.search(SearchRequest(query="x"))
     assert "mailto" not in server.requests[0].url.params
     assert page.next_cursor is None and page.records == ()
+
+
+def test_search_without_an_api_key_stops_after_the_first_page_and_marks_the_cap():
+    c, server = connector(lambda r: {"meta": {"count": 101, "next_cursor": "requires-key"}, "results": [work(1)]})
+
+    page = c.search(SearchRequest(query="x", limit=100))
+
+    assert len(server.requests) == 1
+    assert page.next_cursor is None
+    assert c.last_search_capped is True
+
+
+def test_search_with_an_api_key_keeps_the_cursor_and_sends_the_key():
+    c, server = connector(
+        lambda r: {"meta": {"count": 101, "next_cursor": "next-page"}, "results": [work(1)]},
+        api_key=SecretStr("test-openalex-key"),
+    )
+
+    page = c.search(SearchRequest(query="x", limit=100))
+
+    assert page.next_cursor == "next-page"
+    assert c.last_search_capped is False
+    assert server.requests[0].url.params["api_key"] == "test-openalex-key"
 
 
 @pytest.mark.parametrize(

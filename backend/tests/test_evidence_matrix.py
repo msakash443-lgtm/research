@@ -19,6 +19,11 @@ def _world():
     client.post("/api/auth/development/login", json={"email": f"evidence-{tag}@example.com", "display_name": "E"})
     project = client.post("/api/projects", json={"title": "Evidence"}).json()["id"]
     source = client.post(f"/api/projects/{project}/sources", json={"title": "One paper"}).json()["id"]
+    for stage in ("title_abstract", "full_text"):
+        response = client.post(f"/api/projects/{project}/screening/decisions", json={
+            "source_id": source, "stage": stage, "decision": "include",
+        })
+        assert response.status_code == 201, response.text
     return client, project, source
 
 
@@ -60,6 +65,16 @@ def test_unextracted_sources_remain_visible_with_distinct_cell_status():
     assert paper["source_id"] == source and paper["extraction_id"] is None
     assert paper["cells"]["research_question"]["status"] == "not_extracted"
     assert paper["cells"]["research_question"]["source_text_url"] is None
+
+
+def test_matrix_contains_only_final_full_text_inclusions():
+    client, project, included = _world()
+    title_only = client.post(f"/api/projects/{project}/sources", json={"title": "Title inclusion only"}).json()["id"]
+    assert client.post(f"/api/projects/{project}/screening/decisions", json={
+        "source_id": title_only, "stage": "title_abstract", "decision": "include",
+    }).status_code == 201
+    data = client.get(f"/api/projects/{project}/evidence-matrix").json()
+    assert [paper["source_id"] for paper in data["papers"]] == [included]
 
 
 def test_cell_opens_stored_source_text_and_refuses_missing_or_foreign_cells(monkeypatch):

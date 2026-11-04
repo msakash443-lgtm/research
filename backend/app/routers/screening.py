@@ -468,7 +468,7 @@ def decide(
     if screening_locked(db, project):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=LOCKED_MESSAGE)
     source = live_source_or_404(db, project, payload.source_id)
-    problem = check_reason(payload.decision, payload.reason_code, criterion_codes(db, project))
+    problem = check_reason(payload.decision, payload.reason_code, criterion_codes(db, project), payload.note)
     if problem:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=problem)
     if payload.stage == "full_text" and source.id not in passed_title_abstract(db, project):
@@ -540,7 +540,7 @@ def adjudicate(
     actor = audit.user_actor(user)
     if actor in human_decisions_by_decider(rows):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="You decided this source yourself, so you can't rule on it.")
-    problem = check_reason(payload.decision, payload.reason_code, criterion_codes(db, project))
+    problem = check_reason(payload.decision, payload.reason_code, criterion_codes(db, project), payload.note)
     if problem:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=problem)
     if payload.stage == "full_text" and source.id not in passed_title_abstract(db, project):

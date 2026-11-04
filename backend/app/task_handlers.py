@@ -13,6 +13,7 @@ from app import audit, own_paper
 from app.agent.executor import execute_research_run
 from app.ai_extraction import AiExtractionError, run_ai_extraction
 from app import extraction_suggestions  # noqa: F401  (registers the extraction suggestion handler)
+from app.llm_usage import ProjectMeter
 from app.database import SessionLocal
 from app.connectors.base import ConnectorError
 from app.connectors.factory import (
@@ -22,7 +23,6 @@ from app.connector_breaker_store import build_connector
 from app.models import GateCode, OwnPaperLookup, Project, ResearchRun, ResearchRunStatus, SearchAlert, SearchQuery, SnowballRun, Source, utcnow
 from app.agent.llm import LLMConfigurationError, LLMResponseError, OpenAICompatibleLLM
 from app.ai_controls import AIOffError, ensure_embeddings_allowed, llm_for_project
-from app.llm_usage import ProjectMeter
 from app.config import get_settings
 from app.own_paper_lookup import record_to_source_fields, resolve_by_doi, resolve_by_title
 from app.prescreen import PrescreenError, run_prescreen
@@ -354,13 +354,10 @@ def handle_ai_extraction(task: ClaimedTask) -> None:
             run_ai_extraction(
                 db, project, source, schema_name=schema_name, task_id=task.id,
                 actor=str(payload.get("requested_by") or audit.SYSTEM_WORKER), store=get_object_store(settings),
-                llm=OpenAICompatibleLLM(
-                    settings,
-                    meter=ProjectMeter(project.id, settings, purpose="extraction", budget_override=project.token_budget_override),
-                ),
+                llm=llm_for_project(settings, project, purpose="extraction"),
                 max_pages=settings.fulltext_max_pages, ensure_owned=task.ensure_owned,
             )
-        except (AiExtractionError, LLMConfigurationError, LLMResponseError, ObjectStorageError) as exc:
+        except (AIOffError, AiExtractionError, LLMConfigurationError, LLMResponseError, ObjectStorageError) as exc:
             db.rollback()
             raise PermanentTaskError(str(exc)) from exc
     finally:
