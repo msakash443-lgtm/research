@@ -6,7 +6,65 @@ import { canChangeResearchType, canSaveResearchType, chainRows, researchTypeLock
 
 const KIND_ORDER = ["question", "objective", "hypothesis", "methodology", "variable", "decision"];
 
-function contextCard(item) {
+function contextEditor(item, ctx) {
+  const form = el("form", { className: "context-edit" });
+  const statement = el("textarea", { attrs: { name: "content", required: "", "aria-label": "Statement" } });
+  statement.value = item.content;
+  const reason = el("textarea", { attrs: { name: "rationale", "aria-label": "Why does this matter?", placeholder: "Why does this matter? (optional)" } });
+  reason.value = item.rationale || "";
+  const save = el("button", { type: "submit", text: "Save changes" });
+  const cancel = el("button", { type: "button", className: "quiet-button", text: "Cancel" });
+  cancel.addEventListener("click", () => ctx.refresh());
+  form.append(statement, reason, el("div", { className: "dialog-actions", children: [cancel, save] }));
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    save.disabled = true;
+    const body = { content: statement.value.trim() };
+    if (reason.value.trim() !== (item.rationale || "")) body.rationale = reason.value.trim() || null;
+    try {
+      await request(projectApi(ctx.project.id, `/context/${item.id}`), { method: "PATCH", body: JSON.stringify(body) });
+      toast("Entry updated. The earlier wording is kept in its history.");
+      await ctx.refresh();
+    } catch (error) {
+      save.disabled = false;
+      toast(error.message);
+    }
+  });
+  return form;
+}
+
+function contextActions(card, item, ctx) {
+  const edit = el("button", { type: "button", className: "quiet-button", text: "Edit" });
+  edit.addEventListener("click", () => {
+    card.replaceChildren(contextEditor(item, ctx));
+    card.querySelector("textarea").focus();
+  });
+  const retire = el("button", { type: "button", className: "quiet-button", text: "Retire" });
+  retire.addEventListener("click", async () => {
+    if (!window.confirm("Retire this entry? It is hidden from the project and from the AI, but kept in the audit record.")) return;
+    try {
+      await request(projectApi(ctx.project.id, `/context/${item.id}/retire`), { method: "POST" });
+      toast("Entry retired.");
+      await ctx.refresh();
+    } catch (error) {
+      toast(error.message);
+    }
+  });
+  const remove = el("button", { type: "button", className: "quiet-button danger", text: "Delete" });
+  remove.addEventListener("click", async () => {
+    if (!window.confirm("Delete this entry permanently? This cannot be undone. To keep a record of it, use Retire instead.")) return;
+    try {
+      await request(projectApi(ctx.project.id, `/context/${item.id}`), { method: "DELETE" });
+      toast("Entry deleted.");
+      await ctx.refresh();
+    } catch (error) {
+      toast(error.message);
+    }
+  });
+  return el("div", { className: "context-actions", children: [edit, retire, remove] });
+}
+
+function contextCard(item, ctx) {
   const leftOut = item.used_by_agent === false;
   const card = el("article", { className: leftOut ? "context-card not-sent" : "context-card" });
   card.append(
@@ -17,6 +75,8 @@ function contextCard(item) {
     el("h3", { text: item.content })
   );
   card.append(el("p", { text: item.rationale ? `Reason: ${item.rationale}` : "Saved to this project's structured research memory." }));
+  if (item.history?.length) card.append(el("p", { className: "muted small", text: `Edited ${item.history.length} time${item.history.length === 1 ? "" : "s"}; earlier wording is kept.` }));
+  if (ctx.canWrite) card.append(contextActions(card, item, ctx));
   return card;
 }
 
@@ -100,8 +160,11 @@ async function researchTypePanel(ctx) {
       const picker = el("div", { className: "type-options" });
       const state = { picked: saved };
       const save = el("button", { text: "Save research type" });
+      const saveNote = el("span", { className: "muted small" });
       const sync = () => {
-        save.disabled = !canSaveResearchType({ saved, picked: state.picked, changeable });
+        const canSave = canSaveResearchType({ saved, picked: state.picked, changeable });
+        save.disabled = !canSave;
+        saveNote.textContent = canSave ? "" : !state.picked ? "Pick a type to save." : "Already saved.";
       };
       types.forEach((type) => {
         const option = el("label", { className: "type-option" });
@@ -130,7 +193,7 @@ async function researchTypePanel(ctx) {
       });
       sync();
       const row = el("div", { className: "form-actions" });
-      row.append(save);
+      row.append(save, saveNote);
       box.append(picker, row);
     } else {
       // Locked (wireframe Q3): every type stays visible, greyed out, with the reason above.
@@ -176,7 +239,7 @@ async function render(root, ctx) {
   } else {
     const list = el("div", { className: "context-list" });
     KIND_ORDER.forEach((kind) => {
-      items.filter((item) => item.kind === kind).forEach((item) => list.append(contextCard(item)));
+      items.filter((item) => item.kind === kind).forEach((item) => list.append(contextCard(item, ctx)));
     });
     contextPanel.append(list);
   }

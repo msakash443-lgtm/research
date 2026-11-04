@@ -139,6 +139,12 @@ mark { background:#fff1b8; }
 .context-card p { margin:6px 0 0; color:var(--muted); line-height:1.5; }
 .context-card.not-sent { border-left-color:var(--line); background:#f7f8f7; }
 .context-card.not-sent .context-kind { color:var(--muted); }
+.context-actions { display:flex; gap:8px; margin-top:12px; }
+.context-actions .quiet-button { padding:6px 12px; font-size:13px; }
+.context-actions .quiet-button.danger { color:#a1342b; border-color:#e3bcb8; }
+.context-actions .quiet-button.danger:hover { background:#fbeeed; }
+.context-edit { display:grid; gap:10px; }
+.context-edit textarea { width:100%; min-height:70px; }
 .context-limit { margin:0; padding:11px 14px; border-radius:7px; background:var(--warm); color:var(--ink); font-size:14px; line-height:1.5; }
 
 .checkbox-label { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:12px; font-weight:600; }

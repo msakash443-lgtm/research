@@ -73,6 +73,27 @@ export function gateCard(ctx, code) {
   return list;
 }
 
+// Collects a written reason (10-500 chars) for each unmet Recommended exit condition, prompting
+// one at a time; `null` if the researcher cancels any of them (X.165). A native `window.prompt` is
+// used here rather than a styled dialog (see `confirmAction`'s note: CSP allows it) because the
+// number of conditions to ask about is only known once the server refuses the advance.
+async function collectOverrideReasons(conditions) {
+  const reasons = {};
+  for (const condition of conditions) {
+    let reason = null;
+    while (reason === null) {
+      const input = window.prompt(
+        `${condition.message}\n\nYou can move on without this, but write why (10-500 characters), or Cancel to stop.`
+      );
+      if (input === null) return null;
+      const trimmed = input.trim();
+      if (trimmed.length >= 10 && trimmed.length <= 500) reason = trimmed;
+    }
+    reasons[condition.id] = reason;
+  }
+  return reasons;
+}
+
 // One "Next: <stage>" card from GET .../stage's `next` array.
 export function advanceCard(ctx, option) {
   const box = el("div", { className: "next-option" });
@@ -89,10 +110,31 @@ export function advanceCard(ctx, option) {
           });
           await ctx.refresh();
         } catch (error) {
-          toast(error.message);
-        } finally {
-          go.disabled = false;
+          const recommended = error.status === 409 && Array.isArray(error.detail?.recommended) ? error.detail.recommended : [];
+          if (recommended.length === 0) {
+            toast(error.message);
+            go.disabled = false;
+            return;
+          }
+          const overrideReasons = await collectOverrideReasons(recommended);
+          if (overrideReasons === null) {
+            go.disabled = false;
+            return;
+          }
+          try {
+            await request(projectApi(ctx.project.id, "/stage/advance"), {
+              method: "POST",
+              body: JSON.stringify({ stage: option.stage, override_reasons: overrideReasons }),
+            });
+            await ctx.refresh();
+          } catch (retryError) {
+            toast(retryError.message);
+          } finally {
+            go.disabled = false;
+          }
+          return;
         }
+        go.disabled = false;
       });
       box.append(go);
     } else {

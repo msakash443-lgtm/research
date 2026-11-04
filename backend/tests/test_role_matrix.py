@@ -54,6 +54,9 @@ MATRIX = [
     ("DELETE", "/api/projects/{p}", MANAGE, 204),  # disposable per-call project with no audit history; never the shared one
     ("GET", "/api/projects/{p}/context", ALL, 200),
     ("POST", "/api/projects/{p}/context", WRITE, 201),
+    ("PATCH", "/api/projects/{p}/context/{item_id}", WRITE, 200),
+    ("DELETE", "/api/projects/{p}/context/{item_id}", WRITE, 204),
+    ("POST", "/api/projects/{p}/context/{item_id}/retire", WRITE, 200),
     ("GET", "/api/projects/{p}/sources", ALL, 200),
     ("GET", "/api/projects/{p}/sources/by-citations", ALL, 200),
     ("GET", "/api/projects/{p}/prisma/checklist", ALL, 200),
@@ -346,6 +349,7 @@ BODIES = {
     ("PUT", "/api/projects/{p}/research-type"): {"name": "literature_review"},
     ("POST", "/api/projects/{p}/stage/reenter"): {"stage": "scoped", "reason": "Rework the scope"},
     ("POST", "/api/projects/{p}/context"): {"kind": "question", "content": "Why?"},
+    ("PATCH", "/api/projects/{p}/context/{item_id}"): {"content": "A corrected statement"},
     ("POST", "/api/projects/{p}/sources"): {"title": "A source"},
     ("POST", "/api/projects/{p}/constructs"): {"name": "Trust", "definition": "Definition", "author": "Smith"},
     ("POST", "/api/projects/{p}/theories"): {"name": "Social exchange", "description": "A lens."},
@@ -657,6 +661,12 @@ def _call(world, principal, method, template):
             json={"document_id": world["ids"]["doc"], "title": "Matrix issue", "severity": "minor"},
         ).json()
         route_path = template.replace("{issue_id}", created["id"])
+    if template in ("/api/projects/{p}/context/{item_id}", "/api/projects/{p}/context/{item_id}/retire"):
+        # A fresh entry per call, so one principal's successful retire can't 409 the next principal.
+        created = world["clients"]["owner"].post(
+            f"/api/projects/{world['ids']['p']}/context", json={"kind": "question", "content": "Matrix context entry"}
+        ).json()
+        route_path = template.replace("{item_id}", created["id"])
     if (method, template) == ("POST", "/api/projects/{p}/submissions/{submission_id}/transition"):
         created = world["clients"]["owner"].post(
             f"/api/projects/{world['ids']['p']}/submissions", json={"journal_name": "Matrix transition"}

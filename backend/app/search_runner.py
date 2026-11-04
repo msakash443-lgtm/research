@@ -14,7 +14,7 @@ Rules this module keeps:
   complete.
 * A connector is used only if it is enabled in settings (default off, plan rule 18).
 * Records are not saved as `Source` rows here: they are unverified third-party data. Storing them
-  is M1.6.4. The row keeps only ids, DOI, a title key and the connector's citation count (M2.13).
+  is M1.6.4 (X.167). The row keeps ids, DOI, title, year, a dedup title key and the connector's citation count (M2.13).
 * Only the `search_run` task handler calls it, and that task type needs gate G2 (M1.8.1): nothing
   runs a bulk search until a person has approved the search strategy and criteria.
 
@@ -70,28 +70,41 @@ def _check(connector: Connector, max_results: int) -> None:
 
 
 def _collect(connector: Connector, text: str, filters: dict[str, Any], max_results: int):
-    """Page through results. Returns (records, reported_total, truncated).
+    """Page through results. Returns (records, reported_total, truncated, stopped_early).
 
     A connector whose `search` is relevance-only may offer `boolean_search`, which applies the
     adapter's Boolean string as written (Semantic Scholar bulk search, M1.5.5); it is used when present.
+
+    A `ConnectorError` on the *first* page means nothing was retrieved: it propagates, so the whole
+    search fails and nothing is saved (plan rule 22). A `ConnectorError` on a *later* page (e.g.
+    OpenAlex's "API key required for cursor paging" once a key-less caller goes past page 1, X.166)
+    keeps the records already collected instead of discarding them: `truncated` is set and
+    `stopped_early` names why, so the caller can record it as a caveat.
     """
     search = getattr(connector, "boolean_search", None) or connector.search
     records: list[PaperRecord] = []
     cursor: str | None = None
     total: int | None = None
+    page_number = 0
     while True:
-        page = search(
-            SearchRequest(query=text, limit=min(PAGE_SIZE, max_results - len(records)), cursor=cursor, filters=filters)
-        )
+        page_number += 1
+        try:
+            page = search(
+                SearchRequest(query=text, limit=min(PAGE_SIZE, max_results - len(records)), cursor=cursor, filters=filters)
+            )
+        except ConnectorError as exc:
+            if page_number == 1:
+                raise
+            return records, total, True, f"{connector.name} stopped paging after page {page_number - 1}: {exc}"
         if total is None:
             total = page.total
         records.extend(page.records)
         if len(records) > max_results:  # a page may hold more than asked for (S2 bulk pages hold 1,000)
-            return records[:max_results], total, True
+            return records[:max_results], total, True, None
         if not page.records or page.next_cursor is None:
-            return records, total, bool(getattr(connector, "last_search_capped", False))
+            return records, total, bool(getattr(connector, "last_search_capped", False)), None
         if len(records) >= max_results:
-            return records[:max_results], total, True
+            return records[:max_results], total, True, None
         cursor = page.next_cursor
 
 
@@ -185,7 +198,7 @@ def _execute(
 ) -> SearchQuery:
     try:
         with bypass_cache():  # a search is always live, never answered from the connector cache (M1.3.7)
-            records, total, truncated = _collect(connector, text, filters, max_results)
+            records, total, truncated, stopped_early = _collect(connector, text, filters, max_results)
     except ConnectorError as exc:
         audit.record(
             db,
@@ -201,6 +214,8 @@ def _execute(
     counts["cache_bypassed"] = True
     counts["skipped_records"] = int(getattr(connector, "skipped_records", 0) or 0)
     run_at = datetime.now(timezone.utc)
+    if stopped_early:
+        caveats = [*caveats, stopped_early]
     row = SearchQuery(
         project_id=project.id,
         search_id=search_id,

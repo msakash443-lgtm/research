@@ -76,7 +76,8 @@ def build_unpaywall() -> UnpaywallConnector:
 
 
 def build_openalex_oa() -> OpenAlexConnector:
-    return OpenAlexConnector(contact_email=get_settings().connector_contact_email)
+    settings = get_settings()
+    return OpenAlexConnector(contact_email=settings.connector_contact_email, api_key=settings.openalex_api_key)
 
 
 def build_core_oa() -> CoreConnector:

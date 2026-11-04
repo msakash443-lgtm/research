@@ -1,7 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import or_, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
 
 from app import audit, project_lifecycle, research_types
@@ -10,9 +10,9 @@ from app.ai_item_locks import CONTEXT_ITEM_KIND, locked_ids
 from app.database import get_db
 from app.gates import new_gates
 from app.dependencies import MANAGE_ROLES, READ_ROLES, WRITE_ROLES, current_user, project_access
-from app.models import ContextKind, Gate, GateStatus, Project, ProjectMember, ProjectRole, ResearchContextItem, ProjectStage, User
+from app.models import AiItemLock, ContextKind, Gate, GateStatus, IdeaBrief, Project, ProjectMember, ProjectRole, ResearchContextItem, ProjectStage, User, utcnow
 from app.object_storage import ObjectStorageError
-from app.schemas import ContextItemCreate, ContextItemRead, ProjectCreate, ProjectRead, ResearchTypeRead, ResearchTypeUpdate
+from app.schemas import ContextItemCreate, ContextItemRead, ContextItemUpdate, ProjectCreate, ProjectRead, ResearchTypeRead, ResearchTypeUpdate
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 catalogue = APIRouter(prefix="/research-types", tags=["research types"])
@@ -87,17 +87,18 @@ def get_project(project: Project = Depends(project_access(READ_ROLES))):
 @router.get("/{project_id}/context", response_model=list[ContextItemRead])
 def list_context(
     kind: ContextKind | None = Query(default=None),
+    include_retired: bool = Query(default=False),
     project: Project = Depends(project_access(READ_ROLES)),
     db: Session = Depends(get_db),
 ):
     """All context items, oldest first. `?kind=decision` is the decision log (X.31.2): the same list, filtered.
-    The agent flags are computed over the whole list, so filtering never changes what a run is given."""
+    The agent flags are computed over the whole list, so filtering never changes what a run is given.
+    Retired entries are left out unless `?include_retired=true` (the audit view, X.161)."""
     # Oldest first, so questions read in the order they were written; id keeps same-second ties stable.
-    items = db.scalars(
-        select(ResearchContextItem)
-        .where(ResearchContextItem.project_id == project.id)
-        .order_by(ResearchContextItem.created_at.asc(), ResearchContextItem.id.asc())
-    ).all()
+    query = select(ResearchContextItem).where(ResearchContextItem.project_id == project.id)
+    if not include_retired:
+        query = query.where(ResearchContextItem.retired_at.is_(None))
+    items = db.scalars(query.order_by(ResearchContextItem.created_at.asc(), ResearchContextItem.id.asc())).all()
     locked = locked_ids(db, project.id, CONTEXT_ITEM_KIND)
     sent = {item.id for item in select_agent_context(items, locked_ids=locked)}
     return [
@@ -125,6 +126,113 @@ def add_context(
     db.commit()
     db.refresh(item)
     return item
+
+
+def _live_context_item(db: Session, project: Project, item_id: uuid.UUID) -> ResearchContextItem:
+    item = db.scalar(
+        select(ResearchContextItem).where(ResearchContextItem.id == item_id, ResearchContextItem.project_id == project.id)
+    )
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Context entry not found")
+    if item.retired_at is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This entry is retired; it can no longer be changed")
+    return item
+
+
+@router.patch("/{project_id}/context/{item_id}", response_model=ContextItemRead)
+def amend_context(
+    item_id: uuid.UUID,
+    payload: ContextItemUpdate,
+    project: Project = Depends(project_access(WRITE_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Correct an entry's wording or reason. The earlier wording is kept in the entry's history; the audit
+    event records which fields changed, never the text (X.161)."""
+    item = _live_context_item(db, project, item_id)
+    changes = {}
+    if payload.content is not None and payload.content != item.content:
+        changes["content"] = payload.content
+    if "rationale" in payload.model_fields_set and payload.rationale != item.rationale:
+        changes["rationale"] = payload.rationale
+    if not changes:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Nothing changed")
+    actor = audit.user_actor(user)
+    item.history = [
+        *(item.history or []),
+        {"content": item.content, "rationale": item.rationale, "changed_by": actor, "changed_at": utcnow().isoformat()},
+    ]
+    for field, value in changes.items():
+        setattr(item, field, value)
+    audit.record(
+        db, actor=actor, action="context.amended", project_id=project.id,
+        payload={"item_id": str(item.id), "fields": sorted(changes)},
+    )
+    project.touch()
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@router.post("/{project_id}/context/{item_id}/retire", response_model=ContextItemRead)
+def retire_context(
+    item_id: uuid.UUID,
+    project: Project = Depends(project_access(WRITE_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Take an entry out of use. It is hidden from lists, exports and every agent prompt but never deleted:
+    the decision log keeps what was once decided (X.161)."""
+    item = _live_context_item(db, project, item_id)
+    actor = audit.user_actor(user)
+    item.retired_at = utcnow()
+    item.retired_by = actor
+    audit.record(
+        db, actor=actor, action="context.retired", project_id=project.id,
+        payload={"item_id": str(item.id), "kind": item.kind.value},
+    )
+    project.touch()
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@router.delete("/{project_id}/context/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_context(
+    item_id: uuid.UUID,
+    project: Project = Depends(project_access(WRITE_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Remove an entry for good, with its history and its "never for AI" lock. Refused while another entry or the
+    idea brief still points at it, so nothing is left dangling; retire it instead to keep the record (X.161)."""
+    item = db.scalar(
+        select(ResearchContextItem).where(ResearchContextItem.id == item_id, ResearchContextItem.project_id == project.id)
+    )
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Context entry not found")
+    if db.scalar(select(ResearchContextItem.id).where(ResearchContextItem.related_item_id == item.id)) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Another entry (a decision) is about this one. Delete or retire that entry first.",
+        )
+    if db.scalar(select(IdeaBrief.id).where(IdeaBrief.selected_idea_id == item.id)) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This idea is the one selected in the idea brief. Select a different idea first.",
+        )
+    db.execute(
+        delete(AiItemLock).where(
+            AiItemLock.project_id == project.id, AiItemLock.target_kind == CONTEXT_ITEM_KIND, AiItemLock.target_id == str(item.id)
+        )
+    )
+    audit.record(
+        db, actor=audit.user_actor(user), action="context.deleted", project_id=project.id,
+        payload={"item_id": str(item.id), "kind": item.kind.value},
+    )
+    db.delete(item)
+    project.touch()
+    db.commit()
 
 
 @router.post("/{project_id}/archive", response_model=ProjectRead)

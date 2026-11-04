@@ -158,6 +158,7 @@ def ec_1_2(db: Session, project: Project) -> Condition:
         select(ResearchContextItem).where(
             ResearchContextItem.project_id == project.id,
             ResearchContextItem.kind.in_([ContextKind.question, ContextKind.objective]),
+            ResearchContextItem.retired_at.is_(None),
         ),
     )
     met = count >= 1
@@ -174,7 +175,9 @@ def ec_1_3(db: Session, project: Project) -> Condition:
     count = _count(
         db,
         select(ResearchContextItem).where(
-            ResearchContextItem.project_id == project.id, ResearchContextItem.kind == ContextKind.idea
+            ResearchContextItem.project_id == project.id,
+            ResearchContextItem.kind == ContextKind.idea,
+            ResearchContextItem.retired_at.is_(None),
         ),
     )
     met = count == 0
