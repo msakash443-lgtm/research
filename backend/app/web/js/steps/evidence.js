@@ -2,7 +2,7 @@ import { el, emptyCard, toast } from "../dom.js";
 import { request, projectApi } from "../api.js";
 import { provenanceBadge } from "../provenance.js";
 import { coverageBadge } from "./common.js";
-import { PAPERS_AS_COLUMNS, PAPERS_AS_ROWS, aiExtractionAction, normalizeOrientation, tableLayout } from "../evidenceTableLogic.js";
+import { PAPERS_AS_COLUMNS, PAPERS_AS_ROWS, aiExtractionAction, autoExtractionAction, normalizeOrientation, tableLayout } from "../evidenceTableLogic.js";
 
 function display(value) {
   if (value === null || value === undefined) return "Not reported";
@@ -17,6 +17,24 @@ function sourcePanel(panel, data) {
   passage.append(el("mark", { text: data.text.slice(data.highlight_start, data.highlight_end) }));
   passage.append(document.createTextNode(data.text.slice(data.highlight_end)));
   panel.append(passage);
+}
+
+async function requestAutoExtraction(ctx, button, refresh) {
+  button.disabled = true;
+  try {
+    const result = await request(projectApi(ctx.project.id, "/extractions/ai/auto"), {
+      method: "POST", body: JSON.stringify({ schema_name: "default" }),
+    });
+    const counts = result.outcomes.reduce((map, item) => {
+      map[item.status] = (map[item.status] || 0) + 1;
+      return map;
+    }, {});
+    toast(`Automatic fetch/extraction requested: ${Object.entries(counts).map(([key, value]) => `${key} ${value}`).join(", ") || "no final included papers"}.`);
+    await refresh();
+  } catch (error) {
+    toast(error.message);
+    button.disabled = false;
+  }
 }
 
 async function requestExtraction(ctx, paper, button) {
@@ -68,11 +86,17 @@ async function render(root, ctx) {
     render(root, ctx).catch((error) => toast(error.message));
   });
   controls.append(flip);
+  const automatic = autoExtractionAction(ctx.canWrite);
+  if (automatic) {
+    const autoButton = el("button", { className: "quiet-button", text: "Fetch OA PDFs and extract included papers" });
+    autoButton.title = automatic.message;
+    autoButton.addEventListener("click", () => requestAutoExtraction(ctx, autoButton, () => render(root, ctx)));
+    controls.append(autoButton);
+  }
   for (const [extension, label] of [["csv", "Download CSV"], ["xlsx", "Download Excel"]]) {
     controls.append(el("a", { text: label, className: "button quiet-button",
       href: `${base}/export.${extension}?schema_name=${encodeURIComponent(selected)}` }));
   }
-  heading.append(controls);
   root.replaceChildren(heading);
   if (!matrix.papers.length) {
     root.append(emptyCard("No extracted papers yet", "Add extractions for this schema, then return to compare their fields."));

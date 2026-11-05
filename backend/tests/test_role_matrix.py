@@ -203,6 +203,7 @@ MATRIX = [
     ("POST", "/api/projects/{p}/extractions", WRITE, 201),
     ("PUT", "/api/projects/{p}/extractions/{e}", WRITE, 200),
     ("POST", "/api/projects/{p}/extractions/ai", WRITE, 202),
+    ("POST", "/api/projects/{p}/extractions/ai/auto", WRITE, 202),
     ("GET", "/api/projects/{p}/meta-analysis", ALL, 200),
     ("POST", "/api/projects/{p}/meta-analysis", WRITE, 409),
     ("POST", "/api/projects/{p}/meta-analysis/{plan_id}/run", WRITE, 404),
@@ -397,6 +398,7 @@ BODIES = {
     ("POST", "/api/projects/{p}/extractions/{e}/verify"): {"confirmed_critical_fields": ["measures", "sample", "key_findings"],
                                                                          "confirmed_not_reported_fields": ["measures", "sample", "key_findings"]},
     ("POST", "/api/projects/{p}/extractions/ai"): {"source_id": ""},
+    ("POST", "/api/projects/{p}/extractions/ai/auto"): {},
     ("POST", "/api/projects/{p}/meta-analysis"): {"outcome": "Outcome", "primary_model": "fixed", "studies": [{"extraction_id": "00000000-0000-0000-0000-000000000001", "finding_index": 0}, {"extraction_id": "00000000-0000-0000-0000-000000000002", "finding_index": 0}]},
 }
 

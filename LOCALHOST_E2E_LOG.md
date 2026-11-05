@@ -148,3 +148,53 @@ Scope: user-authorized localhost workflow validation using a synthetic developme
 - Added a **Upload PDF** file picker beside a final-included, unextracted paper whose full text is not yet stored. It accepts a selected PDF, sends its raw bytes only to the existing audited `.../fulltext/upload` endpoint, then reloads the Evidence table. A successful upload changes the same row to stored full-text coverage and enables **Start AI extraction**.
 - The existing endpoint is write-once and validates size, PDF signature, readable text layer, project membership, storage result, and audit metadata. It does not auto-start extraction and does not replace a PDF that is already stored.
 - Verification: upload-specific frontend tests **2 passed**; Evidence logic tests **4 passed**; full frontend suite **219 passed**. Existing `test_fulltext_upload.py` was attempted but all 15 tests failed during pytest setup because the Windows sandbox could not create its `pytest-of-msaka` temporary directory; a repository-local retry did not report a result within 30 seconds. This is recorded as an environment limitation, not a claimed backend pass. Local rebuild succeeded; `/ready` reports the database available and the served module contains **Upload PDF**. No user PDF, extraction, decision, or gate was changed.
+
+### 2026-11-04 — fresh SQLite E2E smoke after reset
+
+- Reset setup: local SQLite database was re-created and verified empty before this pass. The prior file was retained separately as a recoverable backup.
+- Passed: development login, empty-workspace state, project creation, Scope navigation, research-question save, Sources navigation, and synthetic source save. The question and source were visibly present after the page's asynchronous refresh.
+- Integrity controls: G1 Scope remained pending; G2 and later gates remained unavailable. The synthetic source remained **unverified**. No gate approval, source verification, screening decision, retrieval, or extraction was submitted by the agent.
+- Investigation: immediately after the two saves, the browser automation's first snapshot still contained the prior empty/checklist content. The application code already waits for `refresh()` after both mutations; a subsequent fresh observation showed the saved question/source. This is recorded as an automation timing artifact, not a product defect; no UI code was changed.
+- Runtime limitation: this host process has no configured local model and Ollama is not listening on port 11434, so the newly added API-to-Ollama fallback cannot be live-exercised here. The application correctly leaves local-only routing unavailable rather than silently using another model.
+
+### 2026-11-04 — continued search and source-ingestion check
+
+- The user-approved G2 was already shown as approved in the browser. A bounded OpenAlex query for `"evidence synthesis"` was queued with a maximum of five results; no gate was approved, reopened, or changed by the agent.
+- Initial observation remained `Queued` because the host-mode Uvicorn server does not include a worker. A detached worker launch exited immediately in this local shell setup; running the same worker command with `PYTHONPATH=backend` in a retained process completed the queued job. This is a local process-launch limitation, not a product error.
+- Passed: Search now shows version 1, five results, five unique, and zero duplicates removed. Sources shows all five imported records as **AUTO-RETRIEVED, UNVERIFIED**, with provenance, citation counts, and the explicit warning that the agent cannot cite them. No imported record was verified, screened, fetched, attached, or extracted.
+- The pre-existing synthetic source remains unverified. This check stops at the human-controlled source-review/screening boundary.
+
+### 2026-11-04 — post-screening stage check
+
+- The user reported inclusion and exclusion screening complete. The live project is visibly at **Synthesize → Evidence table**, confirming the project has advanced beyond Screening through its permitted workflow.
+- The table contains three included papers. Each is still not extracted; AI extraction remains disabled until a full-text PDF is stored. No source verification, PDF upload, extraction, or subsequent gate action was performed by the agent.
+
+### 2026-11-05 — local-host availability check
+
+- Local FastAPI host was started successfully on `http://127.0.0.1:8001` because port 8000 was already unavailable (`WinError 10048`). The browser loaded the authenticated project overview and displayed the persisted research path: saved scope, criteria, search/results, six sources, screening, Evidence table, verification, Ask, and Write.
+- This confirms application startup, session restoration, and navigation of the saved E2E project. No project data, gate, source status, screening decision, upload, or extraction was changed.
+
+### 2026-11-05 — single-PDF extraction check
+
+- User uploaded a full-text PDF for “Bayesian methods in meta-analysis and evidence synthesis” and submitted the existing single-paper extraction action. The task was queued, then processed by the local worker.
+- Result: `ai_extraction` failed after one attempt with the non-secret error: **“The configured LLM service could not be reached.”** The project route is `standard` with suggestions-only AI. No extraction rows or placeholder output were written; the Evidence table remains correctly marked **Not extracted** and the action is available to retry after service repair.
+- PDF parsing emitted `pypdf` font-encoding warnings because optional `fontTools` is not installed. Those warnings did not stop PDF storage; the failure occurred when the configured LLM service was contacted. No key was read or exposed.
+
+### 2026-11-05 — effective LLM configuration check
+
+- Effective non-secret settings: standard API key is present; base URL is `https://api.openai.com/v1`; selected standard model is `gpt-5.6-luna`; no local/Ollama fallback endpoint or model is configured. The project uses the standard suggestions-only route.
+- The extraction task's transport failure therefore cannot be recovered by the current fallback policy. Retry is deferred until the standard model is made reachable or a local fallback is configured; repeating the same request now would produce the same failure and unnecessary work.
+
+### 2026-11-05 — API-only model routing
+
+- Per user direction, standard project AI now uses only `LLM_API_BASE_URL` / `LLM_MODEL`; it never retries through Ollama or any configured local endpoint. A mocked transport check observed exactly three API-host retry attempts and no local-host call.
+
+### 2026-11-05 — OpenAI extraction failure diagnosis
+
+- Non-generation verification of the configured `https://api.openai.com/v1/models/gpt-5.6-luna` endpoint returned HTTP 200, confirming the key and model access path are valid.
+- A one-token request using the application's `chat/completions` payload returned HTTP 429: **“You have no credits remaining. Add credits to continue using the API…”** The extraction failure is therefore an account billing/credit condition, not an Ollama, base-URL, key-presence, or model-name error. No PDF extraction output was generated or stored.
+
+### 2026-11-05 — API 429 verification and repair
+
+- The response was rechecked with the API's current output-token parameter: `error.type=insufficient_quota`, `error.code=credit_balance_exhausted`, no Retry-After header. This excludes temporary rate limiting and confirms the key's organization has no available prepaid API credit.
+- The adapter previously collapsed this billing response into “service could not be reached.” It now stops immediately for credit/spend-limit codes and returns a safe actionable message; no error body, request ID, or credential is persisted. Focused retry tests: 18 passed.

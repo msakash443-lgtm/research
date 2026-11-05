@@ -20,7 +20,7 @@ from app.connectors.factory import (
     build_core_oa, build_openalex_oa, build_unpaywall, enabled_lookup_names, oa_source_enabled, unpaywall_unavailable_reason,
 )
 from app.connector_breaker_store import build_connector
-from app.models import GateCode, OwnPaperLookup, Project, ResearchRun, ResearchRunStatus, SearchAlert, SearchQuery, SnowballRun, Source, utcnow
+from app.models import GateCode, OwnPaperLookup, Project, ResearchRun, ResearchRunStatus, SearchAlert, SearchQuery, SnowballRun, Source, Task, TaskStatus, utcnow
 from app.agent.llm import LLMConfigurationError, LLMResponseError, OpenAICompatibleLLM
 from app.ai_controls import AIOffError, ensure_embeddings_allowed, llm_for_project
 from app.config import get_settings
@@ -42,6 +42,7 @@ from app.snowball import SnowballError, SnowballFailed, run_snowball
 from app.query_alerts import QUERY_ALERT, _aware, latest_search, record_alert_run
 from app.zotero import ZoteroError, build_zotero_client, sync_pull, sync_push
 from app.task_registry import ClaimedTask, PermanentTaskError, TaskOwnershipLost, register
+from app.task_queue import enqueue_task
 from app.similarity_task import run_similarity_check
 from app.section_draft_task import run_section_draft, scrub_draft_payload
 from app.front_matter_task import run_front_matter
@@ -312,7 +313,7 @@ def handle_fulltext_fetch(task: ClaimedTask) -> None:
         if project is None or source is None or source.project_id != project_id or source.merged_into is not None:
             raise PermanentTaskError("The source for this fetch no longer exists in the project.")
         try:
-            fetch_open_access(
+            access = fetch_open_access(
                 db, project=project, source=source,
                 sources=[
                     OaSource("unpaywall", build_unpaywall()),
@@ -327,6 +328,20 @@ def handle_fulltext_fetch(task: ClaimedTask) -> None:
             db.rollback()
             raise PermanentTaskError(str(exc)) from exc
         task.ensure_owned(db)
+        if payload.get("auto_extract") and access.get("status") == "stored" and source.fulltext_path:
+            schema_name = str(payload.get("schema_name") or "default")
+            extraction_task = enqueue_task(
+                db, project.id, AI_EXTRACTION,
+                payload={"project_id": str(project.id), "source_id": str(source.id), "schema_name": schema_name,
+                         "requested_by": str(payload.get("requested_by") or audit.SYSTEM_WORKER)},
+                actor=str(payload.get("requested_by") or audit.SYSTEM_WORKER),
+                idempotency_key=f"ai-extraction:{source.id}:{schema_name}",
+            )
+            audit.record(
+                db, actor=str(payload.get("requested_by") or audit.SYSTEM_WORKER),
+                action="extraction.ai_auto_fetch_completed", project_id=project.id,
+                payload={"source_id": str(source.id), "task_id": str(extraction_task.id)},
+            )
         db.commit()
     finally:
         db.close()

@@ -50,7 +50,8 @@ def llm_for_project(settings: Settings, project: Project, *, purpose: str, run_i
     """The model adapter for one of this project's AI steps, metered against the project's token budget.
 
     Raises `AIOffError` when the project's AI is Off, and `LLMConfigurationError` when the project is routed to
-    the local model and none is configured (never a silent fallback to the third-party model).
+    the local model and none is configured (never a silent fallback to the third-party model). Standard-route
+    calls always use the configured API model only.
     """
     ensure_ai_on(project)
     meter = ProjectMeter(project.id, settings, purpose=purpose, run_id=run_id, budget_override=project.token_budget_override)
