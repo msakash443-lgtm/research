@@ -70,8 +70,42 @@ def _violation(output: str, schema: dict[str, Any]) -> tuple[Any, str | None]:
 
 def _transient(exc: Exception) -> bool:
     if isinstance(exc, HTTPStatusError):
+        if exc.response.status_code == 429 and _api_error_code(exc.response) in {
+            "credit_balance_exhausted",
+            "organization_usage_limit_exceeded",
+            "organization_spend_limit_exceeded",
+            "project_spend_limit_exceeded",
+        }:
+            return False
         return exc.response.status_code in TRANSIENT_STATUS_CODES
     return isinstance(exc, TransportError)
+
+
+def _api_error_code(response: httpx.Response) -> str | None:
+    """Read a provider error code without echoing response content or credentials."""
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return None
+    code = error.get("code")
+    return code if isinstance(code, str) else None
+
+
+def _http_error_message(exc: HTTPStatusError) -> str:
+    """Return a short, actionable failure that is safe to persist and show to users."""
+    code = _api_error_code(exc.response)
+    if code == "credit_balance_exhausted":
+        return "The configured LLM API account has no credits remaining. Add API credits, then retry."
+    if code in {"organization_usage_limit_exceeded", "organization_spend_limit_exceeded", "project_spend_limit_exceeded"}:
+        return "The configured LLM API account has reached a usage or spend limit. Review its API billing limits, then retry."
+    if exc.response.status_code in {401, 403}:
+        return "The configured LLM API rejected its credentials or model access. Check the API key and model permissions."
+    return "The configured LLM service could not be reached."
 
 
 def _retry_delay(exc: Exception, attempt: int) -> float:
@@ -112,6 +146,7 @@ class OpenAICompatibleLLM:
         self._timeout_seconds = timeout_seconds if timeout_seconds is not None else settings.llm_timeout_seconds
         self._require_api_key = require_api_key
         self._meter = meter  # optional: .before_call() may refuse, .after_call(model, response) records usage
+        self._last_model = self._model
 
     @classmethod
     def for_participant_data(cls, settings: Settings, *, meter: Any = None) -> "OpenAICompatibleLLM":
@@ -166,11 +201,12 @@ class OpenAICompatibleLLM:
 
     @property
     def model(self) -> str:
-        """The model id this adapter will call (recorded with every AI output)."""
-        return self._model
+        """The model that supplied the latest reply, recorded with every AI output."""
+        return self._last_model
 
     def complete(self, system_prompt: str, user_prompt: str, *, max_tokens: int = 1800) -> str:
         self.validate_configuration()
+        self._last_model = self._model
 
         base_url = self._api_base_url.rstrip("/")
         url = base_url if base_url.endswith("/chat/completions") else f"{base_url}/chat/completions"
@@ -199,6 +235,8 @@ class OpenAICompatibleLLM:
                     if attempt < TRANSIENT_ATTEMPTS and _transient(exc):
                         _sleep(_retry_delay(exc, attempt))
                         continue
+                    if isinstance(exc, HTTPStatusError):
+                        raise LLMResponseError(_http_error_message(exc)) from exc
                     raise LLMResponseError("The configured LLM service could not be reached.") from exc
                 except ValueError as exc:
                     raise LLMResponseError("The configured LLM service returned invalid JSON.") from exc

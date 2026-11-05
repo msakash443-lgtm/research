@@ -692,7 +692,15 @@ def execute_research_run(
                 run.status = ResearchRunStatus.failed
                 run.answer = None
                 run.error_message = str(exc)
-
+            except UnstorableAnswer:
+                raise
+            except Exception as exc:
+                # Provider adapters must not leak transport/adapter exceptions into the generic
+                # task-failure path: preserve the failed run and its AI provenance.
+                logger.exception("LLM execution failed for run %s", run.id)
+                run.status = ResearchRunStatus.failed
+                run.answer = None
+                run.error_message = "The configured LLM service could not be reached."
         run.completed_at = utcnow()
         audit.record(
             db, actor=audit.AGENT_RESEARCH_RUN, action="research_run.finished", project_id=run.project_id,

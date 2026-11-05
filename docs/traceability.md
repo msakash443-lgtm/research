@@ -55,7 +55,7 @@
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
 |---|---|---|---|---|---|
 | 5.4.1 | Versioned discipline schemas with nested Appendix B value validation | M3.1.1–M3.1.2 | `extraction_schema.py`, `extraction_schemas/` | `test_extraction_schema.py`, `test_project_schemas.py`, `test_project_schema_guard.py` | M3.1 `[x]` (independent review found no defect) |
-| 5.4.2 | LLM extraction with evidence spans | M3.2.1, M3.3.1–M3.3.2, X.156 | `ai_extraction.py`, `routers/extractions.py`, Evidence-table PDF upload | `test_ai_extraction.py`, `test_extractions.py`, `test_fulltext_upload.py`, `evidenceUpload.test.mjs`, `test_role_matrix.py` | M3.2 `[x]`; M3.3 `[x]` (independently reviewed; post-fix full suite: 2186 passed, 6 skipped); X.156 `[~]` |
+| 5.4.2 | LLM extraction with evidence spans | M3.2.1, M3.3.1–M3.3.2, X.155, X.156 | `ai_extraction.py`, `routers/extractions.py`, Evidence-table fetch/upload actions | `test_ai_extraction.py`, `test_extractions.py`, `test_oa_fetch.py`, `test_fulltext_upload.py`, `evidenceUpload.test.mjs`, `evidenceTableLogic.test.mjs`, `test_role_matrix.py` | M3.2 `[x]`; M3.3 `[x]` (independently reviewed); X.155 `[~]` (OA fetch→local extraction orchestration focused tests pass; full-suite result pending); X.156 `[~]` |
 | 5.4.3 | Verbatim span verification | M3.4.1–M3.4.2; groundwork M0.2.6 (immutable excerpts) | shared span checker and extraction save/verify paths | `test_extraction_verification.py`, `test_excerpt_immutability.py` | M3.4 `[x]` implementation verified; real-paper demo pending X.15/X.16 |
 | 5.4.4 | Matrix view, every cell links to source; CSV/Excel | M3.5.1–M3.5.2, X.14 | evidence matrix/export endpoints; evidence-table wireframe | `test_evidence_matrix.py`, role tests | M3.5 `[x]` implementation verified; real-paper UI/demo pending X.14.2/X.16 |
 | 5.4 gate | G4 verify critical fields, side-by-side PDF | M3.6.1–M3.6.2 | extraction verification and G4 gate enforcement | `test_extraction_verification.py`, gate/role tests | M3.6 `[x]` implementation verified; actual G4 approval remains human/data-dependent |
@@ -282,3 +282,5 @@
 | X.40 step-by-step journey audit + design report (`docs/step-by-step-journey-audit.md`) | Owner-requested design/audit report; no code, no spec line. |
 | X.151 OpenAlex search completion repair | Defect fix for the existing §5.2 database-search workflow: provider pagination and PostgreSQL timestamp persistence. |
 | X.152 migration 0098 portability | Engineering testability of an existing schema migration; no separate spec line. |
+| X.158 API-only standard-model routing | User-requested policy: standard project AI calls only the configured API model; explicit local-only routing remains the privacy control. |
+| X.159 post-save Scope/Sources refresh | Usability repair for existing workspace pages; no separate spec line. |

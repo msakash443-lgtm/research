@@ -1,4 +1,5 @@
 """Project AI controls (X.31.7): Off means no project text goes to any AI; the route decides which model is used."""
+import httpx
 import uuid
 
 import pytest
@@ -116,6 +117,21 @@ def test_a_local_route_sends_the_run_to_the_local_endpoint_only_and_records_that
 
     assert run["status"] == "completed" and run["provider_model"] == "local-model"
     assert {r.url.host for r in fake_llm.requests} == {"local-llm.test"}
+
+
+def test_standard_route_never_falls_back_to_configured_local_model_after_transport_failure(fake_llm, monkeypatch):
+    _set_local_model(monkeypatch)
+    fake_llm.handler = lambda request: (
+        httpx.Response(503, json={"error": "standard provider unavailable"})
+        if request.url.host == "llm.test"
+        else {"choices": [{"message": {"content": '{"answer":"Fallback answer [S1].","confidence":0.5,"insufficient_evidence":{"insufficient":false,"reason":""}}'}}]}
+    )
+    client, pid = _setup("ai-standard-fallback@example.com")
+
+    run = _ask(client, pid).json()
+
+    assert run["status"] == "failed" and run["provider_model"] == "fake-model"
+    assert [request.url.host for request in fake_llm.requests] == ["llm.test", "llm.test", "llm.test"]
 
 
 def test_a_local_route_with_the_local_model_removed_fails_loudly_and_never_uses_the_default_model(fake_llm, monkeypatch):

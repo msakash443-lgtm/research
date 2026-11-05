@@ -52,6 +52,18 @@ def test_a_failure_that_lasts_past_every_attempt_still_fails_loudly(fake_llm):
     assert fake_llm.sleeps == [1.0, 2.0]  # backoff between attempts, none after the last
 
 
+def test_an_exhausted_api_credit_balance_fails_once_with_an_actionable_message(fake_llm):
+    fake_llm.handler = lambda request: httpx.Response(
+        429,
+        json={"error": {"code": "credit_balance_exhausted"}},
+    )
+
+    with pytest.raises(LLMResponseError, match="no credits remaining"):
+        _complete()
+    assert len(fake_llm.requests) == 1
+    assert fake_llm.sleeps == []
+
+
 @pytest.mark.parametrize("status", [400, 401, 403, 404, 422])
 def test_a_request_the_service_refuses_is_not_retried(fake_llm, status):
     fake_llm.handler = lambda request: httpx.Response(status, json={})

@@ -32,11 +32,11 @@ test("an unknown orientation falls back to papers as rows", () => {
   assert.equal(normalizeOrientation("fields"), "fields");
 });
 
-test("AI extraction is visibly disabled until an editable paper has a stored full-text PDF", () => {
-  const pending = { extraction_id: null, coverage: { level: "metadata" } };
+test("AI extraction reports actionable manual-upload guidance when no stored PDF exists", () => {
+  const pending = { extraction_id: null, coverage: { level: "metadata", reason: "No DOI is available." } };
   assert.deepEqual(aiExtractionAction(pending, true), {
     enabled: false,
-    message: "Store a full-text PDF to enable AI extraction.",
+    message: "No DOI is available. Upload a PDF manually or retry the OA fetch.",
   });
   assert.deepEqual(aiExtractionAction({ ...pending, coverage: { level: "full_text" } }, true), {
     enabled: true,

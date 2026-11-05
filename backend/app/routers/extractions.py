@@ -30,7 +30,8 @@ from app.extraction_verification import current_rows, schema_for_row
 from app.fulltext import FullTextError, extract_pdf_text
 from app.models import Artifact, Extraction, Gate, GateCode, GateStatus, Project, ProjectStage, Source, Task, TaskStatus, User, utcnow
 from app.object_storage import ObjectStorageError, get_object_store
-from app.task_handlers import AI_EXTRACTION
+from app.screening import included_sources
+from app.task_handlers import AI_EXTRACTION, FULLTEXT_FETCH
 from app.task_queue import enqueue_task
 
 router = APIRouter(prefix="/projects/{project_id}/extractions", tags=["extractions"])
@@ -275,6 +276,90 @@ class AiExtractionQueued(BaseModel):
     source_id: uuid.UUID
     status: str
 
+
+class AiAutoExtractionIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_name: str = Field(default="default", max_length=80)
+
+
+class AiAutoExtractionOutcome(BaseModel):
+    source_id: uuid.UUID
+    status: str
+    task_id: uuid.UUID | None = None
+    detail: str | None = None
+
+
+class AiAutoExtractionResponse(BaseModel):
+    outcomes: list[AiAutoExtractionOutcome]
+
+
+@router.post("/ai/auto", response_model=AiAutoExtractionResponse, status_code=status.HTTP_202_ACCEPTED)
+def request_auto_extractions(
+    payload: AiAutoExtractionIn,
+    project: Project = Depends(project_access(WRITE_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Queue fetch-and-extract work for final full-text inclusions only."""
+    if _locked(db, project):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=LOCKED_MESSAGE)
+    require_ai_on(project)
+    try:
+        schema = project_schemas.resolve(db, project.id, payload.schema_name)
+        version = schema_version(schema)
+    except SchemaError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    extracted_ids = {
+        row.source_id for row in db.scalars(select(Extraction).where(
+            Extraction.project_id == project.id, Extraction.schema_version == version,
+        ))
+    }
+    actor = audit.user_actor(user)
+    included = included_sources(db, project)
+    open_tasks = db.scalars(select(Task).where(
+        Task.project_id == project.id,
+        Task.type.in_((FULLTEXT_FETCH, AI_EXTRACTION)),
+        Task.status.in_((TaskStatus.queued, TaskStatus.running, TaskStatus.blocked, TaskStatus.paused)),
+    )).all()
+    outcomes: list[AiAutoExtractionOutcome] = []
+    for source in included:
+        if source.id in extracted_ids:
+            outcomes.append(AiAutoExtractionOutcome(source_id=source.id, status="completed", detail="An extraction already exists for this schema."))
+            continue
+        existing = next((task for task in open_tasks
+                          if (task.payload or {}).get("source_id") == str(source.id)
+                          and ((task.type == AI_EXTRACTION and (task.payload or {}).get("schema_name") == payload.schema_name)
+                               or task.type == FULLTEXT_FETCH)), None)
+        if existing is not None:
+            outcomes.append(AiAutoExtractionOutcome(source_id=source.id, status="already_queued", task_id=existing.id))
+            continue
+        if source.fulltext_path:
+            task = enqueue_task(
+                db, project.id, AI_EXTRACTION,
+                payload={"project_id": str(project.id), "source_id": str(source.id), "schema_name": payload.schema_name,
+                         "requested_by": actor},
+                actor=actor,
+                idempotency_key=f"ai-extraction:{source.id}:{payload.schema_name}",
+            )
+            outcomes.append(AiAutoExtractionOutcome(source_id=source.id, status="queued", task_id=task.id))
+            continue
+        if not source.doi:
+            outcomes.append(AiAutoExtractionOutcome(source_id=source.id, status="manual_upload", detail="No DOI is available for an OA lookup."))
+            continue
+        task = enqueue_task(
+            db, project.id, FULLTEXT_FETCH,
+            payload={"project_id": str(project.id), "source_id": str(source.id), "requested_by": actor,
+                     "auto_extract": True, "schema_name": payload.schema_name},
+            actor=actor,
+            idempotency_key=f"fulltext-auto:{source.id}:{payload.schema_name}",
+        )
+        outcomes.append(AiAutoExtractionOutcome(source_id=source.id, status="fetch_queued", task_id=task.id))
+    if outcomes:
+        audit.record(db, actor=actor, action="extraction.ai_auto_requested", project_id=project.id,
+                     payload={"count": len(outcomes), "schema_name": payload.schema_name})
+    db.commit()
+    return AiAutoExtractionResponse(outcomes=outcomes)
 
 @router.post("/ai", response_model=AiExtractionQueued, status_code=status.HTTP_202_ACCEPTED)
 def request_ai_extraction(

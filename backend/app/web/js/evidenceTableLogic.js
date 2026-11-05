@@ -13,7 +13,12 @@ export function aiExtractionAction(paper, canWrite) {
   if (paper.coverage?.level === "full_text") {
     return { enabled: true, message: "Queue AI extraction from the stored full-text PDF." };
   }
-  return { enabled: false, message: "Store a full-text PDF to enable AI extraction." };
+  const reason = paper.coverage?.reason || "No permitted stored PDF is available.";
+  return { enabled: false, message: `${reason} Upload a PDF manually or retry the OA fetch.` };
+}
+
+export function autoExtractionAction(canWrite) {
+  return canWrite ? { enabled: true, message: "Fetch permitted OA PDFs and queue extraction for final included papers." } : null;
 }
 
 // -> { headers: [{ paper? | field? }], rows: [{ head: { paper? | field? }, cells: [{ paper, field, cell }] }] }
