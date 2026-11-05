@@ -172,6 +172,10 @@ class Settings(BaseSettings):
     semantic_scholar_api_key: SecretStr | None = None
     # Optional NCBI E-utilities key for the PubMed connector (raises its rate limit from 3 to 10 requests a second).
     ncbi_api_key: SecretStr | None = None
+    # Optional OpenAlex key (X.166): anonymous access works for page 1, but OpenAlex requires a key
+    # to page past it with `cursor=`. Free, no production requirement (unlike CORE's, which has no
+    # anonymous access at all).
+    openalex_api_key: SecretStr | None = None
     # CORE API key (M1.4.6). CORE has no anonymous access: enabling `core` without a key fails when it is used.
     core_api_key: SecretStr | None = None
     # Licensed scholarly indexes (M1.4.7). Credentials are used only when the named connector is enabled.

@@ -147,7 +147,11 @@ def _brief(db: Session, project: Project) -> IdeaBrief | None:
 def _build(db: Session, project: Project, brief: IdeaBrief | None) -> IdeaBriefRead:
     ideas = db.scalars(
         select(ResearchContextItem)
-        .where(ResearchContextItem.project_id == project.id, ResearchContextItem.kind == ContextKind.idea)
+        .where(
+            ResearchContextItem.project_id == project.id,
+            ResearchContextItem.kind == ContextKind.idea,
+            ResearchContextItem.retired_at.is_(None),
+        )
         .order_by(ResearchContextItem.created_at.asc(), ResearchContextItem.id.asc())
     ).all()
     # Merged-away sources are duplicates of a kept record; comparing against them would double-count.
@@ -249,7 +253,11 @@ def get_semantic_novelty(
     require_ai_on(project, embeddings=True)
     ideas = db.scalars(
         select(ResearchContextItem)
-        .where(ResearchContextItem.project_id == project.id, ResearchContextItem.kind == ContextKind.idea)
+        .where(
+            ResearchContextItem.project_id == project.id,
+            ResearchContextItem.kind == ContextKind.idea,
+            ResearchContextItem.retired_at.is_(None),
+        )
         .order_by(ResearchContextItem.created_at.asc(), ResearchContextItem.id.asc())
     ).all()
     # As in the lexical comparison: merged-away sources are duplicates of a kept record.

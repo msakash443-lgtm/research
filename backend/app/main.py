@@ -12,6 +12,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.database import Base, engine
 from app.source_gate_guard import ExtractionGateLocked
+from app.migration_status import database_migration_status
 from app.stage_order import StageNotInChain
 from app.config import get_settings
 from app.logging_config import configure_logging
@@ -36,6 +37,10 @@ async def lifespan(_: FastAPI):
     # Local convenience only. Production releases must apply Alembic migrations first.
     if settings.auto_create_schema:
         Base.metadata.create_all(bind=engine)
+    else:
+        migration = database_migration_status(engine)
+        if migration is not None:
+            logger.warning("Startup check: %s", migration["message"])
     yield
 
 
@@ -187,7 +192,14 @@ def readiness() -> JSONResponse:
         # names the host and database, never the password (SQLAlchemy masks it in URLs).
         logger.exception("Readiness check: database unavailable")
         return JSONResponse(status_code=503, content={"status": "not ready", "database": "unavailable"})
-    return JSONResponse(content={"status": "ready", "database": "available"})
+    content: dict = {"status": "ready", "database": "available"}
+    migration = database_migration_status(engine)
+    if migration is not None:
+        # The database is reachable and queries not touching the missing column still work, so this
+        # stays `ready`, not `not ready` (X.162) — the point is to say why a later request 500s, not
+        # to take a server with a stale-but-usable schema down.
+        content["database_migration"] = migration
+    return JSONResponse(content=content)
 
 
 @app.get("/", include_in_schema=False)

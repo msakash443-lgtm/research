@@ -528,7 +528,9 @@ def note_suggestions(note_id: uuid.UUID, user: User = Depends(current_user), db:
     if project_ids:
         for item in db.scalars(
             select(ResearchContextItem).where(
-                ResearchContextItem.project_id.in_(project_ids), ResearchContextItem.kind == ContextKind.question
+                ResearchContextItem.project_id.in_(project_ids),
+                ResearchContextItem.kind == ContextKind.question,
+                ResearchContextItem.retired_at.is_(None),
             )
         ):
             questions[item.project_id].append(item.content)

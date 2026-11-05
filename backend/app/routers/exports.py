@@ -29,7 +29,9 @@ def export_obsidian_vault(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Obsidian export is not enabled")
 
     sources = db.scalars(select(Source).where(Source.project_id == project.id).order_by(Source.created_at, Source.id)).all()
-    context = db.scalars(select(ResearchContextItem).where(ResearchContextItem.project_id == project.id)).all()
+    context = db.scalars(
+        select(ResearchContextItem).where(ResearchContextItem.project_id == project.id, ResearchContextItem.retired_at.is_(None))
+    ).all()
     runs = db.scalars(select(ResearchRun).where(ResearchRun.project_id == project.id)).all()
     body, stats = build_vault(project, sources, context, runs, exported_at=utcnow())
 

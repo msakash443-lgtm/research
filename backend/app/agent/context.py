@@ -25,7 +25,11 @@ def select_agent_context(
     mark which items are left out, so the two can't disagree. Ideas are never included, and neither is an
     item set to "never for this item" (`locked_ids`, from `ai_item_locks.locked_ids`); a locked item does not
     use up a place under `limit`."""
-    eligible = [item for item in items if item.kind not in AGENT_EXCLUDED_KINDS and str(item.id) not in locked_ids]
+    eligible = [
+        item
+        for item in items
+        if item.kind not in AGENT_EXCLUDED_KINDS and str(item.id) not in locked_ids and item.retired_at is None
+    ]
     newest_first = sorted(eligible, key=_created_order, reverse=True)
     core = [item for item in newest_first if item.kind in CORE_CONTEXT_KINDS]
     others = [item for item in newest_first if item.kind not in CORE_CONTEXT_KINDS]

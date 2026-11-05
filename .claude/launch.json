@@ -11,6 +11,7 @@
       "port": 8000,
       "autoPort": true,
       "env": {
+        "ENVIRONMENT": "development",
         "RUN_RESEARCH_INLINE": "true",
         "OBSIDIAN_EXPORT_ENABLED": "true"
       }

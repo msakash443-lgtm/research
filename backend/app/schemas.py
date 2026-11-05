@@ -59,11 +59,35 @@ class ContextItemCreate(BaseModel):
     rationale: str | None = None
 
 
+class ContextItemUpdate(BaseModel):
+    """A correction to an entry's wording. The kind is not changeable: a different kind is a new entry."""
+
+    model_config = ConfigDict(extra="forbid")
+    content: str | None = Field(default=None, min_length=1)
+    rationale: str | None = None
+
+    @field_validator("content")
+    @classmethod
+    def _content_not_blank(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("The statement cannot be blank")
+        return value
+
+    @model_validator(mode="after")
+    def _something_to_change(self) -> "ContextItemUpdate":
+        if not self.model_fields_set:
+            raise ValueError("Give a new statement or reason")
+        return self
+
+
 class ContextItemRead(ContextItemCreate):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID
     created_by: str | None = None
     created_at: datetime
+    # Earlier wordings of an amended entry, oldest first: {content, rationale, changed_by, changed_at} (X.161).
+    history: list[dict] | None = None
+    retired_at: datetime | None = None
     # Set by the list endpoint: whether research runs are given this item (agent/context.py).
     used_by_agent: bool | None = None
     # Set by the list endpoint: whether the item is set to "never for this item" (ai_item_locks.py).

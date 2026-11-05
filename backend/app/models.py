@@ -270,6 +270,11 @@ class ResearchContextItem(Timestamped, Base):
     promoted_from_note_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("notes.id"), index=True)
     # A decision points at the item it concerns (X.31.2). Same project only; enforced by the promote route.
     related_item_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("research_context_items.id"), index=True)
+    # An entry is never deleted (it is the decision log): a correction keeps the earlier wording in `history`
+    # and a retired entry is hidden from every list and prompt but stays here (X.161).
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retired_by: Mapped[str | None] = mapped_column(String(100))
+    history: Mapped[list[dict] | None] = mapped_column(JSON)
     project: Mapped[Project] = relationship(back_populates="context_items")
 
 
