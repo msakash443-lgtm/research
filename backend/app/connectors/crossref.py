@@ -24,6 +24,7 @@ from typing import Any
 from urllib.parse import quote
 
 from app.connectors.base import (
+    language_code,
     ConnectorBase,
     ConnectorError,
     FullText,
@@ -31,6 +32,10 @@ from app.connectors.base import (
     PaperRecord,
     SearchPage,
     SearchRequest,
+    citation_count,
+    clean_abstract,
+    clean_link,
+    clean_text,
 )
 from app.connectors.http import ConnectorHttpClient, HttpPolicy, NotFoundError
 from app.doi import normalize_doi
@@ -43,6 +48,8 @@ SUPPORTED_FILTERS = ("year_from", "year_to", "type")
 _YEAR = re.compile(r"^\d{4}$")
 _TYPE = re.compile(r"^[a-z][a-z-]{0,40}$")
 _TAGS = re.compile(r"<[^>]+>")
+_STRUCTURED_OPEN = re.compile(r"<(?:jats:)?(?:p|sec)\b[^>]*>", re.IGNORECASE)
+_STRUCTURED_CLOSE = re.compile(r"</(?:jats:)?(?:p|sec)\s*>", re.IGNORECASE)
 _SPACE = re.compile(r"\s+")
 
 
@@ -56,26 +63,22 @@ def doi_id(value: str) -> str:
     return doi
 
 
-def _str(value: Any, limit: int) -> str | None:
-    return value.strip()[:limit] if isinstance(value, str) and value.strip() else None
-
-
 def _first(value: Any, limit: int) -> str | None:
-    return _str(value[0], limit) if isinstance(value, list) and value else None
-
-
-def _http(value: Any) -> str | None:
-    text = _str(value, 2000)
-    return text if text and text.lower().startswith(("http://", "https://")) else None
+    return clean_text(value[0], limit) if isinstance(value, list) and value else None
 
 
 def _abstract(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
-    text = _SPACE.sub(" ", html.unescape(_TAGS.sub(" ", value))).strip()
+    text = html.unescape(value)
+    text = _STRUCTURED_OPEN.sub("\n\n", text)
+    text = _STRUCTURED_CLOSE.sub("\n\n", text)
+    text = _TAGS.sub(" ", text)
+    text = _SPACE.sub(" ", text.replace("\n\n", "\u0000"))
+    text = text.replace("\u0000", "\n\n").strip()
     if text.lower().startswith("abstract "):
         text = text[9:].strip()
-    return text[:20000] or None
+    return clean_abstract(text, 20000)
 
 
 def _year(item: dict[str, Any]) -> int | None:
@@ -91,10 +94,10 @@ def _year(item: dict[str, Any]) -> int | None:
 def _author(entry: Any) -> str | None:
     if not isinstance(entry, dict):
         return None
-    name = _str(entry.get("name"), 200)
+    name = clean_text(entry.get("name"), 200)
     if name:
         return name
-    given, family = _str(entry.get("given"), 100), _str(entry.get("family"), 100)
+    given, family = clean_text(entry.get("given"), 100), clean_text(entry.get("family"), 100)
     return " ".join(part for part in (given, family) if part) or None
 
 
@@ -122,10 +125,12 @@ def to_record(item: dict[str, Any]) -> PaperRecord | None:
         year=_year(item),
         venue=_first(item.get("container-title"), 500),
         abstract=abstract,
-        url=_http(item.get("URL")),
+        url=clean_link(item.get("URL")),
         oa_url=None,  # Crossref has no reliable open-access location; Unpaywall (M1.4.5) does
         source_ids={NAME: doi},
         quality_flags=tuple(flags),
+        cited_by_count=citation_count(item.get("is-referenced-by-count")),
+        language=language_code(item.get("language")),
     )
 
 

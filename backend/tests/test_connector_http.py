@@ -17,10 +17,11 @@ from app.connectors.http import (
 class Env:
     """Scripted server + fake clock; `sleep` advances the clock instead of waiting."""
 
-    def __init__(self, *replies, policy=None, seed=1):
+    def __init__(self, *replies, policy=None, seed=1, breaker_sync=None, wall_now=1000.0):
         self.replies = list(replies)
         self.requests = []
         self.now = 1000.0
+        self.wall_now = wall_now
         self.sleeps = []
         self.client = ConnectorHttpClient(
             "fake",
@@ -30,6 +31,8 @@ class Env:
             clock=lambda: self.now,
             sleep=self._sleep,
             rng=random.Random(seed),
+            wall_clock=lambda: self.wall_now,
+            breaker_sync=breaker_sync,
         )
 
     def _respond(self, request):
@@ -42,6 +45,7 @@ class Env:
     def _sleep(self, seconds):
         self.sleeps.append(seconds)
         self.now += seconds
+        self.wall_now += seconds
 
 
 def ok(data=None):
@@ -239,3 +243,56 @@ def test_post_json_goes_through_the_circuit_breaker():
         env.client.post_json("/batch", {})
     with pytest.raises(CircuitOpenError):
         env.client.get_json("/w")  # same breaker for both verbs
+
+
+class FakeSync:
+    """A `BreakerSync` test double: an in-memory stand-in for the shared store (M1.3.8)."""
+
+    def __init__(self, failures=0, open_until=None):
+        self.failures = failures
+        self.open_until = open_until
+        self.saves = []
+
+    def load(self):
+        return self.failures, self.open_until
+
+    def save(self, failures, open_until):
+        self.saves.append((failures, open_until))
+        self.failures, self.open_until = failures, open_until
+
+
+def test_breaker_sync_blocks_a_fresh_instance_without_any_network_call():
+    sync = FakeSync(failures=5, open_until=2000.0)  # wall-clock seconds, still in the future
+    env = Env(ok(), breaker_sync=sync, wall_now=1000.0)
+    with pytest.raises(CircuitOpenError):
+        env.client.get_json("/w")
+    assert env.requests == []  # no network call: already known open before the HTTP call
+
+
+def test_breaker_sync_ignores_an_expired_remote_open_until():
+    sync = FakeSync(failures=5, open_until=500.0)  # already in the past
+    env = Env(ok(), breaker_sync=sync, wall_now=1000.0)
+    assert env.client.get_json("/w") == {"ok": True}
+
+
+def test_breaker_sync_saves_on_every_outcome_and_sub_threshold_failures_carry_over_to_a_new_instance():
+    sync = FakeSync()
+    policy = HttpPolicy(max_retries=0, breaker_threshold=2, breaker_cooldown_seconds=30)
+    env = Env(status(503), policy=policy, breaker_sync=sync, wall_now=1000.0)
+    with pytest.raises(ConnectorError):
+        env.client.get_json("/w")
+    assert sync.saves == [(1, None)]  # one of two failures: still closed, but the count is saved
+
+    # A brand-new instance (a different task/process) picks up the first failure and completes
+    # the threshold on its own call, without ever seeing the first instance directly.
+    other = Env(status(503), policy=policy, breaker_sync=sync, wall_now=1000.0)
+    with pytest.raises(ConnectorError):
+        other.client.get_json("/w")
+    assert sync.load() == (2, 1030.0)  # opened: wall_now (1000) + cooldown (30)
+
+
+def test_breaker_sync_resets_on_success_from_a_different_instance():
+    sync = FakeSync(failures=1, open_until=None)
+    env = Env(ok(), breaker_sync=sync, wall_now=1000.0)
+    env.client.get_json("/w")
+    assert sync.load() == (0, None)

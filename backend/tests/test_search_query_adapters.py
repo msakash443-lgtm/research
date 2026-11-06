@@ -14,7 +14,10 @@ WILD = q(("employ*", "job search"), ("India",))
 
 
 def test_every_supported_database_has_an_adapter_and_the_set_is_pinned():
-    assert set(ADAPTERS) == {"openalex", "semantic_scholar", "crossref", "arxiv", "pubmed", "core"}
+    assert set(ADAPTERS) == {
+        "openalex", "semantic_scholar", "crossref", "arxiv", "pubmed", "core",
+        "scopus", "web_of_science", "ieee_xplore",
+    }
 
 
 def test_core_keeps_the_boolean_string_but_says_it_searches_full_text():
@@ -74,9 +77,23 @@ def test_semantic_scholar_uses_bulk_search_syntax_and_is_exact():
     assert adapt(WILD, "semantic_scholar").text == '(employ* | "job search") + ("India")'
 
 
+def test_licensed_connectors_use_their_boolean_query_syntax():
+    scopus = adapt(BASIC, "scopus")
+    assert scopus.text == 'TITLE-ABS-KEY(("female labour" OR "women\'s work") AND ("India" OR "South Asia"))'
+    assert scopus.exact is True
+
+    wos = adapt(BASIC, "web_of_science")
+    assert wos.text == 'TS=(("female labour" OR "women\'s work") AND ("India" OR "South Asia"))'
+    assert wos.exact is True
+
+    ieee = adapt(BASIC, "ieee_xplore")
+    assert ieee.text == render(BASIC)
+    assert ieee.exact is True
+
+
 def test_unknown_database_is_refused_listing_the_supported_ones():
     with pytest.raises(QueryError, match="openalex"):
-        adapt(BASIC, "scopus")
+        adapt(BASIC, "no_such_database")
 
 
 def test_adapted_text_is_always_accepted_by_a_connector_request():
@@ -106,6 +123,7 @@ def test_hostile_terms_cannot_reach_any_adapter():
 
 
 def test_adapters_do_not_change_the_block_structure():
-    for database in ("openalex", "arxiv", "pubmed"):
+    for database in ("openalex", "arxiv", "pubmed", "scopus", "web_of_science", "ieee_xplore"):
         text = adapt(BASIC, database).text
-        assert text.count(" AND ") == 1 and text.count("(") == text.count(")") == 2
+        assert text.count(" AND ") == 1
+        assert text.count("(") == text.count(")") and text.count("(") >= 2

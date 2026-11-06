@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from app.database import Base, SessionLocal
 from app.main import app
-from app.models import AuditEvent, Cluster, ClusterMember, ClusterRun, Note, SourceEmbedding, Task
+from app.models import AuditEvent, Cluster, ClusterMember, ClusterRun, Note, ScreeningDecision, SourceEmbedding, Task
 from app.replication_export import CHILD_TABLES, EXCLUDED_TABLES, NOT_EXPORTED, project_tables, schema_revision
 
 
@@ -99,7 +99,9 @@ def test_private_and_derived_data_is_left_out_and_said_so(world):
     assert "vector" not in embedding and embedding["text_hash"] == "h" * 64
     assert all(world["email"] not in archive.read(n).decode() for n in names)
     manifest = json.loads(archive.read("manifest.json"))
-    assert set(manifest["excluded"]["tables"]) == {"notes", "tasks", "users", "external_identities", "note_revisions"}
+    assert set(manifest["excluded"]["tables"]) == {
+        "notes", "tasks", "users", "external_identities", "note_revisions", "note_attachments", "connector_breaker_state",
+    }
     assert "vector" in manifest["excluded"]["columns"]["source_embeddings"]
 
 
@@ -121,7 +123,18 @@ def test_the_export_is_audited_and_repeatable(world):
     assert "project.replication_exported" in {e["action"] for e in data(second, "audit_events")}  # the first export is in the second
 
 
-def test_a_reviewer_may_export_but_a_stranger_may_not(world):
+def test_only_the_owner_may_export_a_co_author_and_a_stranger_may_not(world):
+    """Owner decision 2026-10-19 (M2.3.2/M2.3.3): the replication package includes per-reviewer
+    screening decisions, so only the owner may download it."""
+    from app.models import ProjectMember, ProjectRole
+
+    co_author = _login(f"co-author-{uuid.uuid4().hex[:8]}@example.com")
+    me = co_author.get("/api/auth/me").json()["id"]
+    with SessionLocal() as db:
+        db.add(ProjectMember(project_id=uuid.UUID(world["pid"]), user_id=uuid.UUID(me), role=ProjectRole.co_author))
+        db.commit()
+    assert co_author.get(f"/api/projects/{world['pid']}/export/replication").status_code == 403
+
     stranger = _login(f"stranger-{uuid.uuid4().hex[:8]}@example.com")
     assert stranger.get(f"/api/projects/{world['pid']}/export/replication").status_code in (403, 404)
 
@@ -133,3 +146,58 @@ def test_every_table_is_either_exported_or_excluded_with_a_reason():
     assert exported.isdisjoint(excluded)
     assert set(Base.metadata.tables) == exported | excluded
     assert Note.__tablename__ in excluded  # notes are per-user
+
+
+def test_the_package_carries_known_items_recall_report_and_bibtex_of_verified_sources_only(world):
+    """X.8.4: the reproducibility files the spec asks for, identical to what the live endpoints return;
+    only metadata-verified sources reach the .bib (plan rule 24)."""
+    owner, pid = world["owner"], world["pid"]
+    seed = owner.post(f"/api/projects/{pid}/seeds", json={"title": "A Known Gold Paper", "year": 2020})
+    assert seed.status_code in (200, 201), seed.text
+    verified = owner.post(f"/api/projects/{pid}/sources", json={
+        "title": "Verified Paper", "authors": ["Smith, Jo"], "year": 2021, "doi": "10.1000/verified"}).json()["id"]
+    with SessionLocal() as db:
+        from app.models import Source
+
+        db.get(Source, uuid.UUID(verified)).metadata_verified = True
+        db.commit()
+    archive = download(world)
+    names = set(archive.namelist())
+    assert {"derived/known_items.json", "derived/recall_report.json", "derived/references.bib"} <= names
+    assert json.loads(archive.read("derived/known_items.json")) == owner.get(f"/api/projects/{pid}/known-items").json()
+    recall = json.loads(archive.read("derived/recall_report.json"))
+    assert recall == owner.get(f"/api/projects/{pid}/recall-report").json()
+    assert (recall["gold_papers"], recall["status"], recall["meets_target"]) == (1, "not_searched", None)  # no search ran: not a pass
+    bib = archive.read("derived/references.bib").decode()
+    assert "Verified Paper" in bib and "10.1000/verified" in bib
+    assert "HYPERLINK" not in bib  # the unverified source from the fixture is left out
+    manifest = json.loads(archive.read("manifest.json"))
+    assert {"derived/known_items.json", "derived/recall_report.json", "derived/references.bib"} <= set(manifest["files"])
+
+
+def test_an_empty_gold_set_still_gives_a_package_with_all_three_files(world):
+    archive = download(world)
+    assert archive.read("derived/references.bib") == b""  # fixture source is unverified
+    assert json.loads(archive.read("derived/recall_report.json"))["status"] == "no_gold_set"
+    assert "derived/known_items.json" in archive.namelist()
+
+
+def test_the_export_carries_kappa_and_the_conflicts_it_was_computed_from(world):
+    """Two reviewers on four sources: they agree on three (include, include, exclude), disagree on one.
+    Hand-computed: p_o = 3/4; p_a(include) = 3/4, p_b(include) = 2/4, so p_e = 3/4*2/4 + 1/4*2/4 = 1/2 and
+    kappa = (3/4 - 1/2) / (1 - 1/2) = 0.5."""
+    owner, pid = world["owner"], world["pid"]
+    sids = [owner.post(f"/api/projects/{pid}/sources", json={"title": f"Paper {letter}"}).json()["id"] for letter in "ABCD"]
+    votes = {"alice": ["include", "include", "exclude", "include"], "bob": ["include", "include", "exclude", "exclude"]}
+    with SessionLocal() as db:
+        for seq, decider in enumerate(votes, start=1):  # alice is seq 1 and bob seq 2 on every source
+            for sid, decision in zip(sids, votes[decider]):
+                db.add(ScreeningDecision(project_id=uuid.UUID(pid), source_id=uuid.UUID(sid), stage="title_abstract", seq=seq,
+                                         decision=decision, decided_by="human", decider=decider))
+        db.commit()
+    title_abstract = json.loads(download(world).read("derived/agreement.json"))["title_abstract"]
+    assert (title_abstract["n"], title_abstract["agreed"]) == (4, 3)
+    assert title_abstract["kappa"] == pytest.approx(0.5)
+    assert title_abstract["scope"]["two_reviewers"] == 4
+    assert [c["title"] for c in title_abstract["conflicts"]] == ["Paper D"]
+    assert [d["decider"] for d in title_abstract["conflicts"][0]["decisions"]] == ["alice", "bob"]

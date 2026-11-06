@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import audit
+from app.ai_controls import require_ai_on
 from app.config import get_settings
 from app.database import get_db
 from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_access
@@ -33,6 +34,7 @@ def create_research_run(
     db: Session = Depends(get_db),
 ):
     settings = get_settings()
+    require_ai_on(project)
     if payload.use_web_retrieval and not settings.arc_retrieval_enabled:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

@@ -2,7 +2,7 @@ import uuid
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select
+from sqlalchemy import false, func, select
 from sqlalchemy.exc import IntegrityError
 
 from app import task_queue as q
@@ -92,6 +92,29 @@ def test_the_database_itself_rejects_a_duplicate_key():
         db.add(Task(project_id=p, type="demo", idempotency_key="dup"))
         with pytest.raises(IntegrityError):
             db.commit()
+
+
+def test_an_enqueue_race_returns_the_task_that_won_without_poisoning_the_transaction(monkeypatch):
+    p = _project()
+    with SessionLocal() as db:
+        winner = Task(project_id=p, type="demo", idempotency_key="racing-key")
+        db.add(winner)
+        db.commit()
+
+        scalar = db.scalar
+        lookups = 0
+
+        def hide_the_first_lookup(statement, *args, **kwargs):
+            nonlocal lookups
+            lookups += 1
+            return None if lookups == 1 else scalar(statement, *args, **kwargs)
+
+        monkeypatch.setattr(db, "scalar", hide_the_first_lookup)
+        task = q.enqueue_task(db, p, "demo", idempotency_key="racing-key")
+        db.commit()
+
+    assert task.id == winner.id
+    assert _count(Task, project_id=p) == 1
 
 
 def test_a_research_run_is_enqueued_once_even_if_asked_twice():
@@ -210,6 +233,31 @@ def test_the_database_rejects_two_sources_with_the_same_ingest_key_but_allows_ma
         db.add(Source(project_id=p, title="Auto again", ingest_key="arc:r:1"))
         with pytest.raises(IntegrityError):
             db.commit()
+
+
+def test_an_arc_ingest_race_skips_the_item_another_worker_stored(monkeypatch, arc):
+    p = _project()
+    run = _new_run(p)
+    key = f"arc:{run}:{executor._item_identity_hash(_items()[0])}"
+    with SessionLocal() as db:
+        db.add(Source(project_id=p, title="Racing worker", ingest_key=key))
+        db.commit()
+
+        scalars = db.scalars
+        hidden = False
+
+        def hide_the_existing_key(statement, *args, **kwargs):
+            nonlocal hidden
+            if not hidden and "ingest_key" in str(statement):
+                hidden = True
+                return scalars(select(Source.ingest_key).where(false()))
+            return scalars(statement, *args, **kwargs)
+
+        monkeypatch.setattr(db, "scalars", hide_the_existing_key)
+        result = executor._ingest_arc_sources(db, db.get(Project, p), db.get(ResearchRun, run), get_settings())
+
+    assert result == {"status": "completed", "added": 2, "retrieved": 3}
+    assert _count(Source, project_id=p) == 3
 
 
 def test_a_run_resumed_after_a_crash_does_not_duplicate_retrieved_sources(arc, fake_llm):

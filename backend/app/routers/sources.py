@@ -2,26 +2,42 @@ from __future__ import annotations
 
 import uuid
 
+from datetime import datetime
+
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app import audit
+from app import audit, citation_rank, fulltext_coverage, own_paper
+from app.config import get_settings
+from app.connectors.access import is_enabled
+from app.connectors.arxiv import normalise_id
+from app.connectors.base import ConnectorError
+from app.arxiv_fulltext import ARXIV_FULLTEXT_FETCH
 from app.database import get_db
+from app.doi import normalize_doi
+from app.lookups import live_source_or_404
 from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_access
 from app.connectors.factory import enabled_lookup_names, unpaywall_unavailable_reason
-from app.models import Project, Source, SourceExcerpt, Task, TaskStatus, User, excerpt_hash, utcnow
-from app.task_handlers import FULLTEXT_FETCH, SOURCE_CHECK
+from app.fulltext import FullTextError, extract_pdf_text
+from app.models import SOURCE_ORIGIN_RETRIEVED, OwnPaperLookup, Project, Source, SourceExcerpt, Task, TaskStatus, User, excerpt_hash, utcnow
+from app.pagination import MAX_PAGE_SIZE, paginate
+from app.screening import screening_locked
+from app.object_storage import ObjectConflict, ObjectNotFound, ObjectStorageError, fulltext_key, get_object_store
+from app.task_handlers import FULLTEXT_FETCH, OWN_PAPER_LOOKUP, SOURCE_CHECK
 from app.task_queue import enqueue_task
-from app.refmanager import parse_bibtex, parse_ris, to_bibtex, to_ris
+from app.refmanager import parse_bibtex, parse_ris, source_records, to_bibtex, to_ris
 from app.schemas import SourceCreate, SourceMerge, SourceRead
 from app.source_merge import SourceMergeError, merge_sources
 
+PDF_SIGNATURE = b"%PDF-"
+
 _OPEN = {TaskStatus.queued, TaskStatus.running, TaskStatus.blocked, TaskStatus.paused}
+_FULLTEXT_TASK_TYPES = (FULLTEXT_FETCH, ARXIV_FULLTEXT_FETCH)
 router = APIRouter(prefix="/projects/{project_id}/sources", tags=["sources"])
 
 
@@ -48,8 +64,13 @@ def source_response(source: Source) -> SourceRead:
         source_ids=source.source_ids,
         fulltext_path=source.fulltext_path,
         fulltext_access=source.fulltext_access,
+        coverage=fulltext_coverage.coverage(source),
         quality_flags=source.quality_flags,
         found_via=source.found_via,
+        citation_count=source.citation_count,
+        citation_count_source=source.citation_count_source,
+        citation_count_at=source.citation_count_at,
+        language=source.language,
         evidence_excerpt=excerpt.content if excerpt else None,
         excerpt_locator=excerpt.locator if excerpt else None,
         created_at=source.created_at,
@@ -64,14 +85,56 @@ def _load_source(db: Session, source_id: uuid.UUID) -> Source:
 
 
 @router.get("", response_model=list[SourceRead])
-def list_sources(project: Project = Depends(project_access(READ_ROLES)), db: Session = Depends(get_db)):
+def list_sources(
+    response: Response,
+    limit: int | None = Query(None, ge=1, le=MAX_PAGE_SIZE),
+    cursor: str | None = Query(None, max_length=64),
+    project: Project = Depends(project_access(READ_ROLES)),
+    db: Session = Depends(get_db),
+):
+    """Newest first. With `limit`, one page; the next page's cursor is in `X-Next-Cursor` (X.142)."""
+    query = (
+        select(Source)
+        .where(Source.project_id == project.id, Source.merged_into.is_(None))
+        .options(selectinload(Source.excerpts))
+    )
+    sources = paginate(db, query, Source, (Source.created_at, Source.id), limit, cursor, response)
+    return [source_response(source) for source in sources]
+
+
+class CitationRankedSource(SourceRead):
+    citation_count_unknown: bool  # no service gave a count; kept in the list, never treated as 0
+
+
+class SourcesByCitations(BaseModel):
+    min_citations: int | None
+    threshold_from: str | None  # "request", "brief" (M2.12) or None (no threshold)
+    total: int
+    shown: int
+    hidden_below_threshold: int
+    unknown_count: int
+    sources: list[CitationRankedSource]
+
+
+@router.get("/by-citations", response_model=SourcesByCitations)
+def list_sources_by_citations(
+    min_citations: int | None = Query(default=None, ge=0, le=1_000_000),
+    project: Project = Depends(project_access(READ_ROLES)),
+    db: Session = Depends(get_db),
+):
+    """Sources ranked by citation count (M2.13); unknown counts are kept, flagged, and listed last."""
     sources = db.scalars(
         select(Source)
         .where(Source.project_id == project.id, Source.merged_into.is_(None))
         .options(selectinload(Source.excerpts))
         .order_by(Source.created_at.desc())
     ).all()
-    return [source_response(source) for source in sources]
+    threshold, threshold_from = citation_rank.resolve_threshold(db, project.id, min_citations)
+    shown, summary = citation_rank.rank(sources, lambda s: s.citation_count, threshold, threshold_from)
+    ranked = [
+        CitationRankedSource(**source_response(s).model_dump(), citation_count_unknown=unknown) for s, unknown in shown
+    ]
+    return SourcesByCitations(**summary, sources=ranked)
 
 
 @router.post("", response_model=SourceRead, status_code=status.HTTP_201_CREATED)
@@ -204,7 +267,7 @@ def queue_fulltext_fetch(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=reason)
     if source.fulltext_path:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This source already has stored full text")
-    for task in db.scalars(select(Task).where(Task.project_id == project.id, Task.type == FULLTEXT_FETCH)):
+    for task in db.scalars(select(Task).where(Task.project_id == project.id, Task.type.in_(_FULLTEXT_TASK_TYPES))):
         if task.status in _OPEN and (task.payload or {}).get("source_id") == str(source_id):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A full-text fetch for this source is already waiting or running")
     actor = audit.user_actor(user)
@@ -212,6 +275,216 @@ def queue_fulltext_fetch(
     audit.record(db, actor=actor, action="source.fulltext_requested", project_id=project.id, payload={"source_id": str(source_id), "task_id": str(task.id)})
     db.commit()
     return SourceCheckQueued(task_id=task.id, status=task.status.value)
+
+
+@router.post("/{source_id}/fulltext/arxiv/fetch", response_model=SourceCheckQueued, status_code=status.HTTP_202_ACCEPTED)
+def queue_arxiv_fulltext_fetch(
+    source_id: uuid.UUID,
+    project: Project = Depends(project_access(WRITE_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Queue an arXiv PDF fetch after checking the current version's licence."""
+    source = db.scalar(select(Source).where(Source.id == source_id, Source.project_id == project.id, Source.merged_into.is_(None)))
+    if source is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
+    source_ids = source.source_ids if isinstance(source.source_ids, dict) else {}
+    raw_id = source_ids.get("arxiv")
+    if source.origin != SOURCE_ORIGIN_RETRIEVED or not isinstance(raw_id, str):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This source has no retrieved arXiv id")
+    try:
+        normalise_id(raw_id)
+    except ConnectorError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This source has an invalid arXiv id") from None
+    settings = get_settings()
+    if not is_enabled("arxiv", settings.connectors_enabled, settings.connectors_allow_scraping):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="The arXiv connector is not enabled on this server")
+    if source.fulltext_path:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This source already has stored full text")
+    for task in db.scalars(select(Task).where(Task.project_id == project.id, Task.type.in_(_FULLTEXT_TASK_TYPES))):
+        if task.status in _OPEN and (task.payload or {}).get("source_id") == str(source_id):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A full-text fetch for this source is already waiting or running")
+    actor = audit.user_actor(user)
+    task = enqueue_task(
+        db,
+        project.id,
+        ARXIV_FULLTEXT_FETCH,
+        payload={"project_id": str(project.id), "source_id": str(source_id), "requested_by": actor},
+        actor=actor,
+    )
+    audit.record(
+        db,
+        actor=actor,
+        action="source.fulltext_requested",
+        project_id=project.id,
+        payload={"source_id": str(source.id), "task_id": str(task.id), "via": "arxiv"},
+    )
+    db.commit()
+    return SourceCheckQueued(task_id=task.id, status=task.status.value)
+
+
+@router.post("/{source_id}/fulltext/upload", response_model=SourceRead, status_code=status.HTTP_201_CREATED)
+async def upload_fulltext(
+    source_id: uuid.UUID,
+    request: Request,
+    project: Project = Depends(project_access(WRITE_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """A person uploads a PDF directly for a source the open-access fetch couldn't reach (paywalled;
+    `fulltext_access.status` in `no_oa`/`no_pdf`/`link_only` flags these, M2.7.1).
+
+    The body is the raw PDF bytes (`Content-Type: application/pdf`), not a multipart form. **Size**:
+    `ContentLengthLimitMiddleware` rejects a declared length over `object_storage_max_bytes` before
+    this handler runs; the handler also reads the body as a stream and aborts past the same cap, so a
+    missing or false Content-Length (or chunked transfer) can't exhaust memory either. **Type/scan**:
+    the bytes must start with the PDF signature and must be a PDF `pypdf` can open and extract text
+    from (the same check M3.4's span verification will rely on) — a non-PDF file, a corrupted one, or
+    one with no text layer (a scan with no OCR) is refused, not stored. There is no virus/malware
+    scanner in this deployment; this is a structural-validity check only.
+    """
+    content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if content_type != "application/pdf":
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Upload must be a PDF (Content-Type: application/pdf)")
+    source = db.scalar(select(Source).where(Source.id == source_id, Source.project_id == project.id, Source.merged_into.is_(None)))
+    if source is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
+    if source.fulltext_path:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This source already has stored full text")
+    settings = get_settings()
+    max_bytes = settings.object_storage_max_bytes
+    declared = request.headers.get("content-length")
+    if declared is not None:
+        try:
+            if int(declared) > max_bytes:
+                raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="File is too large")
+        except ValueError:
+            pass
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > max_bytes:
+            raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="File is too large")
+    data = bytes(body)
+    if not data.startswith(PDF_SIGNATURE):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="The uploaded file is not a PDF")
+    try:
+        extract_pdf_text(data, max_pages=settings.fulltext_max_pages)
+    except FullTextError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"The uploaded PDF could not be read: {exc}") from exc
+    store = get_object_store(settings)
+    key = fulltext_key(project.id, source.id, "pdf")
+    try:
+        stored = store.put(key, data)
+    except ObjectConflict as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A different file is already stored for this source; it was not replaced") from exc
+    actor = audit.user_actor(user)
+    source.fulltext_path = stored.key
+    source.fulltext_access = {
+        "via": "manual_upload", "status": "stored", "uploaded_by": actor,
+        "checked_at": utcnow().isoformat(), "sha256": stored.sha256, "size": stored.size,
+    }
+    audit.record(
+        db, actor=actor, action="source.fulltext_uploaded", project_id=project.id,
+        payload={"source_id": str(source_id), "sha256": stored.sha256, "size": stored.size},
+    )
+    db.commit()
+    return source_response(_load_source(db, source.id))
+
+@router.post("/{source_id}/fulltext/withdraw", response_model=SourceRead)
+def withdraw_fulltext(
+    source_id: uuid.UUID,
+    project: Project = Depends(project_access(WRITE_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Delete stored full text and record the licence withdrawal without deleting the source."""
+    source = db.scalar(select(Source).where(Source.id == source_id, Source.project_id == project.id, Source.merged_into.is_(None)))
+    if source is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
+    if not source.fulltext_path:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This source has no stored full text")
+    key = source.fulltext_path
+    previous_access = dict(source.fulltext_access or {})
+    try:
+        get_object_store(get_settings()).delete(key)
+    except ObjectStorageError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Stored full text could not be deleted") from exc
+    actor = audit.user_actor(user)
+    source.fulltext_path = None
+    source.fulltext_access = {
+        "status": "withdrawn",
+        "withdrawn_at": utcnow().isoformat(),
+        "withdrawn_by": actor,
+        "previous": previous_access,
+    }
+    audit.record(
+        db,
+        actor=actor,
+        action="source.fulltext_withdrawn",
+        project_id=project.id,
+        payload={"source_id": str(source_id)},
+    )
+    db.commit()
+    return source_response(_load_source(db, source.id))
+
+
+class FullTextPageRead(BaseModel):
+    number: int
+    label: str | None
+    start: int
+    end: int
+
+
+class FullTextSectionRead(BaseModel):
+    title: str
+    name: str
+    page: int
+    start: int
+
+
+class FullTextRead(BaseModel):
+    text: str
+    pages: list[FullTextPageRead]
+    sections: list[FullTextSectionRead]
+    empty_pages: list[int]
+    sha256: str
+
+
+@router.get("/{source_id}/fulltext", response_model=FullTextRead)
+def get_fulltext(
+    source_id: uuid.UUID,
+    project: Project = Depends(project_access(READ_ROLES)),
+    db: Session = Depends(get_db),
+):
+    """The stored full text, with page/section anchors, for full-text screening and later extraction (M3.4).
+
+    404 if no PDF has been fetched or uploaded for this source yet (`fulltext_access` on the source
+    says why: `no_oa`/`no_pdf`/`link_only`, or nothing attempted). Re-extracted on each call; the text
+    itself is not cached.
+    """
+    source = db.scalar(select(Source).where(Source.id == source_id, Source.project_id == project.id, Source.merged_into.is_(None)))
+    if source is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
+    if not source.fulltext_path:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No stored full text for this source yet")
+    settings = get_settings()
+    store = get_object_store(settings)
+    try:
+        data = store.get(source.fulltext_path)
+    except ObjectNotFound as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="The stored full text is missing from storage") from exc
+    try:
+        parsed = extract_pdf_text(data, max_pages=settings.fulltext_max_pages)
+    except FullTextError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"The stored full text could not be read: {exc}") from exc
+    return FullTextRead(
+        text=parsed.text,
+        pages=[FullTextPageRead(number=p.number, label=p.label, start=p.start, end=p.end) for p in parsed.pages],
+        sections=[FullTextSectionRead(title=s.title, name=s.name, page=s.page, start=s.start) for s in parsed.sections],
+        empty_pages=list(parsed.empty_pages),
+        sha256=parsed.sha256,
+    )
 
 
 class ReferenceImport(BaseModel):
@@ -261,6 +534,124 @@ def import_references(
     return ReferenceImportResult(created=created, skipped=skipped)
 
 
+@router.post("/own", response_model=SourceRead, status_code=status.HTTP_201_CREATED)
+def add_own_paper(
+    payload: dict,
+    project: Project = Depends(project_access(WRITE_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """The researcher adds a paper they already have straight into the retained set (M2.14).
+
+    Body: one BibTeX entry as `{"bibtex": "..."}`, or the `SourceCreate` fields directly. The source is
+    stored unverified (`origin=manual`) and the caller's own `include` decision is recorded at both
+    screening stages with the note "added by researcher", so it is a normal, auditable, undoable human
+    decision (under dual-screen it still waits for a second reviewer). A DOI already in the project is
+    a 409. Refused once G3 is approved. Attach the PDF afterwards with `…/fulltext/upload`.
+    """
+    if screening_locked(db, project):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=own_paper.LOCKED_MESSAGE)
+    if "bibtex" in payload:
+        if len(payload) != 1 or not isinstance(payload["bibtex"], str):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Give either one BibTeX entry or the paper's fields, not both")
+        parsed = parse_bibtex(payload["bibtex"])
+        if len(parsed.records) != 1 or parsed.skipped:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="The BibTeX text must hold exactly one entry with a title")
+        fields = parsed.records[0]
+    elif payload:
+        fields = payload
+    else:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Give either one BibTeX entry or the paper's fields")
+    try:
+        item = SourceCreate(**fields)
+    except (ValidationError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    if item.doi and db.scalar(select(Source.id).where(Source.project_id == project.id, Source.doi == item.doi, Source.merged_into.is_(None))):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This DOI is already in the project")
+    actor = audit.user_actor(user)
+    source = own_paper.create_own_paper_source(db, project=project, actor=actor, item=item)
+    db.commit()
+    return source_response(_load_source(db, source.id))
+
+
+class OwnPaperLookupCreate(BaseModel):
+    model_config = {"extra": "forbid"}
+    doi: str | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=500)
+
+
+class OwnPaperLookupRead(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    task_id: uuid.UUID
+    doi: str | None
+    title: str | None
+    status: str
+    source_id: uuid.UUID | None
+    matched_connector: str | None
+    detail: str | None
+    requested_by: str
+    created_at: datetime
+
+
+def _lookup_read(row: OwnPaperLookup) -> OwnPaperLookupRead:
+    return OwnPaperLookupRead(
+        id=row.id, project_id=row.project_id, task_id=row.task_id, doi=row.doi, title=row.title,
+        status=row.status, source_id=row.source_id, matched_connector=row.matched_connector,
+        detail=row.detail, requested_by=row.requested_by, created_at=row.created_at,
+    )
+
+
+@router.post("/own/lookup", status_code=status.HTTP_202_ACCEPTED)
+def queue_own_paper_lookup(
+    payload: OwnPaperLookupCreate,
+    project: Project = Depends(project_access(WRITE_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Queue a DOI-only or title-only own-paper lookup (M2.14.1): a background task resolves the match
+    through the enabled lookup connectors, then includes it the same way `POST .../sources/own` does.
+    Poll `GET .../sources/own/lookup?task_id=` for the outcome. Refused once G3 is approved."""
+    if screening_locked(db, project):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=own_paper.LOCKED_MESSAGE)
+    if bool(payload.doi) == bool(payload.title):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Give exactly one of doi or title, not both or neither")
+    doi = None
+    if payload.doi:
+        try:
+            doi = normalize_doi(payload.doi)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        if doi and db.scalar(select(Source.id).where(Source.project_id == project.id, Source.doi == doi, Source.merged_into.is_(None))):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This DOI is already in the project")
+    actor = audit.user_actor(user)
+    task = enqueue_task(
+        db, project.id, OWN_PAPER_LOOKUP,
+        payload={"project_id": str(project.id), "doi": doi, "title": payload.title, "actor": actor},
+        actor=actor,
+    )
+    audit.record(
+        db, actor=actor, action="source.own_paper_lookup_queued", project_id=project.id,
+        payload={"task_id": str(task.id), "has_doi": bool(doi)},
+    )
+    db.commit()
+    return {"task_id": str(task.id), "status": "queued"}
+
+
+@router.get("/own/lookup", response_model=OwnPaperLookupRead)
+def get_own_paper_lookup(
+    task_id: uuid.UUID = Query(...),
+    project: Project = Depends(project_access(READ_ROLES)),
+    db: Session = Depends(get_db),
+):
+    """The outcome of a queued own-paper lookup (M2.14.1), once the task has resolved it. 404 while it is
+    still queued or running: poll again."""
+    row = db.scalar(select(OwnPaperLookup).where(OwnPaperLookup.task_id == task_id, OwnPaperLookup.project_id == project.id))
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No resolved lookup for this task yet")
+    return _lookup_read(row)
+
+
 @router.get("/export")
 def export_references(
     format: Literal["bibtex", "ris"] = "bibtex",
@@ -272,11 +663,7 @@ def export_references(
     the `X-Unverified-Skipped` header."""
     sources = db.scalars(select(Source).where(Source.project_id == project.id, Source.merged_into.is_(None)).order_by(Source.created_at)).all()
     verified = [s for s in sources if s.metadata_verified]
-    records = [
-        {k: v for k, v in {"title": s.title, "authors": s.authors, "year": s.year, "doi": s.doi, "url": s.url,
-                           "venue": s.venue, "abstract": s.abstract, "source_type": s.source_type}.items() if v}
-        for s in verified
-    ]
+    records = source_records(verified)
     audit.record(
         db, actor=audit.user_actor(user), action="sources.exported", project_id=project.id,
         payload={"format": format, "exported": len(verified), "unverified_skipped": len(sources) - len(verified)},
@@ -288,3 +675,77 @@ def export_references(
         content=text, media_type="text/plain; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="sources.{ext}"', "X-Unverified-Skipped": str(len(sources) - len(verified))},
     )
+
+
+class ExcerptCreate(BaseModel):
+    """A passage a person copied from a source. The text is immutable once saved (see `SourceExcerpt`)."""
+
+    content: str = Field(min_length=1, max_length=5000)
+    locator: str | None = Field(default=None, max_length=255)
+
+
+class ExcerptRead(BaseModel):
+    id: uuid.UUID
+    source_id: uuid.UUID
+    content: str
+    locator: str | None
+    content_hash: str
+    created_by: str | None
+    created_at: datetime
+
+
+def _excerpt_read(excerpt: SourceExcerpt) -> ExcerptRead:
+    return ExcerptRead(
+        id=excerpt.id,
+        source_id=excerpt.source_id,
+        content=excerpt.content,
+        locator=excerpt.locator,
+        content_hash=excerpt.content_hash,
+        created_by=excerpt.created_by,
+        created_at=excerpt.created_at,
+    )
+
+
+@router.get("/{source_id}/excerpts", response_model=list[ExcerptRead])
+def list_excerpts(
+    source_id: uuid.UUID,
+    project: Project = Depends(project_access(READ_ROLES)),
+    db: Session = Depends(get_db),
+):
+    """Every saved passage for a source, with its locator (page or section). Passages saved in the same second may come back in either order."""
+    source = live_source_or_404(db, project, source_id)
+    excerpts = db.scalars(select(SourceExcerpt).where(SourceExcerpt.source_id == source.id).order_by(SourceExcerpt.created_at, SourceExcerpt.id)).all()
+    return [_excerpt_read(excerpt) for excerpt in excerpts]
+
+
+@router.post("/{source_id}/excerpts", response_model=ExcerptRead, status_code=status.HTTP_201_CREATED)
+def add_excerpt(
+    source_id: uuid.UUID,
+    payload: ExcerptCreate,
+    project: Project = Depends(project_access(WRITE_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Save a passage from a source (a new row each time; existing passages are never edited)."""
+    source = live_source_or_404(db, project, source_id)
+    content = payload.content.strip()
+    if not content:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="The passage is empty")
+    actor = audit.user_actor(user)
+    excerpt = SourceExcerpt(
+        source_id=source.id,
+        content=content,
+        locator=payload.locator.strip() if payload.locator and payload.locator.strip() else None,
+        content_hash=excerpt_hash(content),
+        created_by=actor,
+    )
+    db.add(excerpt)
+    db.flush()
+    audit.record(
+        db, actor=actor, action="source.excerpt_added", project_id=project.id,
+        payload={"source_id": str(source.id), "excerpt_id": str(excerpt.id), "content_hash": excerpt.content_hash},
+    )
+    project.touch()
+    db.commit()
+    db.refresh(excerpt)
+    return _excerpt_read(excerpt)

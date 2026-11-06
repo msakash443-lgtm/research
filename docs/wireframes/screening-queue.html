@@ -35,7 +35,7 @@
 </head>
 <body>
 <div class="wf-banner">
-  <span><strong>WIREFRAME</strong> · Screening queue (before M2.3) · invented example records, not real papers · nothing is saved</span>
+  <span><strong>WIREFRAME</strong> · Screening queue (before M2.3) · invented example records, not real papers · decisions are kept in this browser only, across reloads <a href="#" id="wf-reset">Clear saved decisions</a></span>
   <span class="row">
     <label>View as
       <select id="role">
@@ -207,6 +207,25 @@ const CONFLICT = { title:"Flexible schedules and the motherhood penalty (example
 
 const state = { tab:"todo", current:"r1", selected:new Set(), aiMode:"before", role:"owner", gate:"open", decisions:{} };
 RECORDS.forEach(r => { state.decisions[r.id] = []; });
+// X.14.3: decisions survive a reload, kept in this browser only (localStorage). Nothing leaves the page.
+const STORE_KEY = "wf-screening-decisions-v1";
+function loadDecisions() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORE_KEY) || "null");
+    if (saved && typeof saved === "object") RECORDS.forEach(r => { if (Array.isArray(saved[r.id])) state.decisions[r.id] = saved[r.id]; });
+  } catch (e) { /* storage blocked or unreadable: start with nothing decided */ }
+}
+function saveDecisions() {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(state.decisions)); } catch (e) { /* storage blocked: decisions last until the page closes */ }
+}
+function clearDecisions() {
+  try { localStorage.removeItem(STORE_KEY); } catch (e) { /* ignore */ }
+  RECORDS.forEach(r => { state.decisions[r.id] = []; });
+  state.selected.clear();
+  wfToast("Saved decisions cleared. Every record is back to unscreened.");
+  renderAll();
+}
+loadDecisions();
 
 const $ = id => document.getElementById(id);
 function finalOf(id) { // latest human row wins; an undo clears it
@@ -343,6 +362,7 @@ function renderBulk() {
 }
 function renderTabs() { document.querySelectorAll("#tabs button").forEach(b => b.setAttribute("aria-selected", b.dataset.tab === state.tab ? "true" : "false")); }
 function renderAll() {
+  saveDecisions();
   renderTabs(); renderQueue(); renderRecord(); renderGate(); renderBulk();
   $("role-chip").textContent = state.role;
   const locked = state.gate !== "open";
@@ -353,7 +373,7 @@ function now() { const d = new Date(); return d.toTimeString().slice(0, 5); }
 function decide(d, code, note) {
   if (state.gate !== "open") { wfToast("Screening is locked while G3 is requested or approved."); return; }
   state.decisions[state.current].push({ d, code, note, who: state.role === "owner" ? "Priya" : "Dr. Nair", at: now() });
-  wfToast(`${label(d)}${code ? " · " + code : ""}. Saved. Press U to undo.`);
+  wfToast(`${label(d)}${code ? " · " + code : ""}. Kept in this browser. Press U to undo.`);
   const next = listFor("todo").find(r => r.id !== state.current);
   if (state.tab === "todo" && next) go(next.id); else renderAll();
 }
@@ -436,6 +456,7 @@ document.addEventListener("keydown", e => {
     a: () => { state.aiMode = state.aiMode === "before" ? "after" : "before"; renderAll(); }, "?": () => $("help-dialog").showModal() };
   if (map[k]) { e.preventDefault(); map[k](); }
 });
+document.getElementById("wf-reset").addEventListener("click", e => { e.preventDefault(); clearDecisions(); });
 const start = location.hash.match(/^#(r\d+)$/); if (start) state.current = start[1];
 renderAll();
 </script>

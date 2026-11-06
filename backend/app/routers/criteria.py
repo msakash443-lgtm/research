@@ -6,6 +6,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app import audit
+from app.artifacts import register_artifact
 from app.criteria import (
     CODE_PREFIX,
     CODE_RE,
@@ -18,9 +19,11 @@ from app.criteria import (
 )
 from app.database import get_db
 from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_access
-from app.models import Project, ScreeningCriterion, User
+from app.models import Project, ProjectStage, ScreeningCriterion, User
 
 router = APIRouter(prefix="/projects/{project_id}/criteria", tags=["criteria"])
+
+CRITERIA_KIND = "criteria"  # artifact kind for a saved set of criteria (X.42)
 
 
 class CriterionIn(BaseModel):
@@ -174,9 +177,11 @@ def set_criteria(
         )
     project.criteria_framework = payload.framework
     project.touch()
-    audit.record(
+    event = audit.record(
         db, actor=actor, action="criteria.updated", project_id=project.id,
         payload={"framework": payload.framework, "codes_before": before, "codes_after": sorted(after)},
     )
+    db.flush()  # the audit row's id is the ref, so each save is its own artifact
+    register_artifact(db, project.id, CRITERIA_KIND, str(event.id), ProjectStage.search_planned, actor=actor)
     db.commit()
     return _view(db, project)

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app import audit
 from app.database import get_db
-from app.dependencies import READ_ROLES, current_user, project_access
+from app.dependencies import MANAGE_ROLES, current_user, project_access
 from app.models import Project, User, utcnow
 from app.replication_export import build_package
 
@@ -17,12 +17,14 @@ router = APIRouter(prefix="/projects/{project_id}/export", tags=["exports"])
 
 @router.get("/replication")
 def export_replication_package(
-    project: Project = Depends(project_access(READ_ROLES)),
+    project: Project = Depends(project_access(MANAGE_ROLES)),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
     """Every project table as JSON + CSV, PRISMA counts and a manifest of file hashes (see `app/replication_export.py`).
-    Any member may export it, as with the audit trail; the export is recorded in the audit trail after it is built."""
+    Owner only (owner decision 2026-10-19, M2.3.2/M2.3.3): the package includes per-reviewer screening
+    decisions and reasons, which a dual-screen reviewer must not see for records they haven't decided.
+    The export is recorded in the audit trail after it is built."""
     actor = audit.user_actor(user)
     exported_at = utcnow()
     body, summary = build_package(db, project, exported_by=actor, exported_at=exported_at)

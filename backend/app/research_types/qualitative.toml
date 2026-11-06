@@ -1,0 +1,75 @@
+# Research type: qualitative study (Q22 example, docs/step-by-step-journey-audit.md §3). The full journey without
+# plan_locked (G8: no pre-registered statistics to lock), with three stages relabelled for a qualitative audience.
+# Moving back and forth between data collection and analysis uses the existing re-entry feature.
+name = "qualitative"
+version = 1
+label = "Qualitative study"
+description = "Interviews or focus groups analysed thematically; no statistical analysis plan to lock."
+human_participants = true
+
+[[stages]]
+stage = "idea"
+
+[[stages]]
+stage = "scoped"
+gate = "G1"
+
+[[stages]]
+stage = "search_planned"
+gate = "G2"
+
+[[stages]]
+stage = "retrieved"
+
+[[stages]]
+stage = "screened"
+gate = "G3"
+
+[[stages]]
+stage = "extracted"
+gate = "G4"
+
+[[stages]]
+stage = "synthesized"
+
+[[stages]]
+stage = "gaps_selected"
+gate = "G5"
+
+[[stages]]
+stage = "framework"
+gate = "G6"
+label = "Sensitising concepts & questions"
+
+[[stages]]
+stage = "design_approved"
+gate = "G7"
+label = "Design, interview guide & ethics"
+
+[[stages]]
+stage = "data_collected"
+
+[[stages]]
+stage = "analyzed"
+gate = "G9"
+label = "Themes & interpretation"
+
+[[stages]]
+stage = "drafted"
+gate = "G10"
+
+[[stages]]
+stage = "revised"
+
+[[stages]]
+stage = "submission_ready"
+gate = "G11"
+
+[[stages]]
+stage = "submitted"
+
+[[stages]]
+stage = "revision_loop"
+
+[[stages]]
+stage = "accepted"

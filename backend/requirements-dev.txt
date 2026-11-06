@@ -1,0 +1,3 @@
+# Test tools; not installed in the web image (X.141).
+pytest==8.3.4
+pytest-xdist==3.8.0

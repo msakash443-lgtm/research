@@ -9,6 +9,8 @@ from sqlalchemy.exc import IntegrityError
 from app.database import SessionLocal
 from app.main import app
 from app.models import AuditEvent, Extraction, Gate, GateCode, GateStatus, ProjectMember, ProjectRole
+from app.object_storage import fulltext_key
+from tests.test_fulltext import make_pdf
 
 
 def _login(email):
@@ -18,7 +20,7 @@ def _login(email):
 
 
 @pytest.fixture
-def world():
+def world(monkeypatch):
     tag = uuid.uuid4().hex[:8]
     owner, owner_id = _login(f"extract-owner-{tag}@example.com")
     pid = owner.post("/api/projects", json={"title": "Extraction"}).json()["id"]
@@ -27,6 +29,28 @@ def world():
         db.add(ProjectMember(project_id=uuid.UUID(pid), user_id=uuid.UUID(reviewer_id), role=ProjectRole.reviewer))
         db.commit()
     sid = owner.post(f"/api/projects/{pid}/sources", json={"title": "A paper"}).json()["id"]
+    for stage in ("title_abstract", "full_text"):
+        response = owner.post(f"/api/projects/{pid}/screening/decisions", json={
+            "source_id": sid, "stage": stage, "decision": "include",
+        })
+        assert response.status_code == 201, response.text
+    pdf = make_pdf([["Other", "Unrelated page text"], [
+        "Introduction", "We ask whether remote work raises output",
+        "Method", "120 clerks in the Netherlands", "a randomised trial",
+    ]])
+    key = fulltext_key(uuid.UUID(pid), uuid.UUID(sid), "pdf")
+
+    class Store:
+        def get(self, requested_key):
+            assert requested_key == key
+            return pdf
+
+    from app.routers import extractions as extraction_routes
+    monkeypatch.setattr(extraction_routes, "get_object_store", lambda settings: Store())
+    with SessionLocal() as db:
+        from app.models import Source
+        db.get(Source, uuid.UUID(sid)).fulltext_path = key
+        db.commit()
     return {"owner": owner, "owner_id": owner_id, "reviewer": reviewer, "pid": pid, "sid": sid}
 
 
@@ -58,8 +82,19 @@ def test_a_well_formed_extraction_is_stored_unverified_with_its_schema_version(w
     assert world["reviewer"].get(f"/api/projects/{world['pid']}/extractions/{data['id']}").json() == data
 
 
+def test_extraction_capture_is_available_before_screening_is_final(world):
+    source = world["owner"].post(f"/api/projects/{world['pid']}/sources", json={"title": "Unscreened"}).json()["id"]
+    response = world["owner"].post(f"/api/projects/{world['pid']}/extractions", json={
+        "source_id": source, "fields": {}, "evidence": {},
+    })
+    assert response.status_code == 201, response.text
+
+
 def test_a_value_without_evidence_is_refused_with_every_problem(world):
-    body = {"fields": {"research_question": "Why?", "sample": {"n": 1}}, "evidence": {"sample": {"quote": "  ", "page": 1}}}
+    body = {
+        "fields": {"research_question": "Why?", "sample": {"n": 1, "population": "adults", "country": "UK"}},
+        "evidence": {"sample": {"quote": "  ", "page": 1}},
+    }
     r = create(world, body)
     assert r.status_code == 422
     assert r.json()["detail"] == [
@@ -67,6 +102,62 @@ def test_a_value_without_evidence_is_refused_with_every_problem(world):
         "sample: evidence needs a non-empty quote",
     ]
     assert world["owner"].get(f"/api/projects/{world['pid']}/extractions").json() == []
+
+
+def test_multibyte_evidence_is_counted_by_utf8_bytes_for_the_payload_limit(world):
+    body = {
+        "fields": {"research_question": "Q"},
+        "evidence": {"research_question": {"quote": "界" * 60_000, "page": 1}},
+    }
+    response = create(world, body)
+    assert response.status_code == 422, response.text
+    assert "does not appear verbatim" in response.text
+
+
+def test_a_quote_must_match_the_cited_page_and_section(world):
+    body = {
+        "fields": {"research_question": "Does remote work raise output?"},
+        "evidence": {"research_question": {
+            "quote": "We ask whether remote work raises output",
+            "page": 1, "section": "Introduction",
+        }},
+    }
+    response = create(world, body)
+    assert response.status_code == 422
+    assert "at cited page 1 and section 'Introduction'" in response.text
+    assert world["owner"].get(f"/api/projects/{world['pid']}/extractions").json() == []
+
+
+def test_layout_normalised_quote_matches_the_stored_pdf(world):
+    body = {
+        "fields": {"research_question": "Does remote work raise output?"},
+        "evidence": {"research_question": {
+            "quote": "We ask   whether remote work raises output",
+            "page": 2, "section": "introduction",
+        }},
+    }
+    response = create(world, body)
+    assert response.status_code == 201, response.text
+
+
+def test_source_quote_is_verified_before_save_with_matching_citation(world):
+    body = {
+        "fields": {"research_question": "Does remote work raise output?"},
+        "evidence": {"research_question": {
+            "quote": "We ask whether remote work raises output",
+            "page": 2, "section": "Introduction",
+        }},
+    }
+    response = create(world, body)
+    assert response.status_code == 201, response.text
+
+
+def test_payload_larger_than_the_utf8_byte_limit_is_refused(world):
+    body = {
+        "fields": {"research_question": "Q"},
+        "evidence": {"research_question": {"quote": "界" * 70_000, "page": 1}},
+    }
+    assert create(world, body).status_code == 413
 
 
 @pytest.mark.parametrize(
@@ -101,7 +192,10 @@ def test_an_edit_replaces_fields_and_is_checked_again(world):
     eid = create(world).json()["id"]
     url = f"/api/projects/{world['pid']}/extractions/{eid}"
     assert world["owner"].put(url, json={"fields": {"method": {"design": "RCT"}}}).status_code == 422  # no evidence
-    new = {"fields": {"method": {"design": "RCT"}}, "evidence": {"method": {"quote": "a randomised trial", "section": "Design"}}}
+    new = {
+        "fields": {"method": {"design": "RCT", "analysis": "intention-to-treat"}},
+            "evidence": {"method": {"quote": "a randomised trial", "section": "Method"}},
+    }
     r = world["owner"].put(url, json=new)
     assert r.status_code == 200, r.text
     assert r.json()["fields_json"] == new["fields"] and r.json()["evidence_spans"] == new["evidence"]

@@ -5,9 +5,10 @@ connection between all sessions, so it can't show what production relies on: two
 connections racing for the same rows. These tests need `TEST_POSTGRES_URL` (CI sets it; see ci.yml)
 and are skipped without it, e.g.
 
-    TEST_POSTGRES_URL=postgresql+psycopg://user:pass@localhost:5432/dbname pytest -q backend/tests/test_task_queue_postgres.py
+    TEST_POSTGRES_URL=postgresql+psycopg://user:pass@localhost:5432/dbname pytest -q -n 0 backend/tests/test_task_queue_postgres.py
 
-The database named there is wiped: use a throwaway one.
+The database named there is wiped: use a throwaway one. Run with `-n 0`: pytest.ini defaults to `-n 8`, and
+parallel workers each drop/create the same schema, which fails with a duplicate `project_stage` enum type.
 """
 
 import os

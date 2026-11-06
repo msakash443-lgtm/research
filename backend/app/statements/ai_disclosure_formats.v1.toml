@@ -1,0 +1,39 @@
+# AI-use disclosure wordings, version 1 (X.78).
+#
+# Each style is a TEMPLATE written in the manner of common journal and publisher AI-use policies. None of them is
+# a publisher's official text, and publisher rules change: the owner or the author must check the target journal's
+# current policy (plan X.81, the research into current rules, is not done) and may replace any wording here.
+# Keep the placeholders; bump `version` when wording changes. Every figure comes from the writing record (computed
+# by code); no model writes these statements.
+#
+# Placeholders: {tools} models used · {purposes} what the assistance was for · {sections} section titles ·
+# {n_ai} sections with AI-assisted text · {n_all} sections covered · {title} {share} {models} {purposes} per section.
+
+id = "ai_disclosure_formats"
+version = 1
+
+basis = "Basis: the writing record kept by the research workspace. It counts AI-produced text that was accepted into a saved section; AI output that was only read, or text written outside the workspace, is not in it."
+
+[styles.generic]
+label = "Plain statement"
+heading = "AI-use statement"
+with_ai = "AI assistance was recorded in {n_ai} of {n_all} section(s) of this manuscript ({sections}). Models used: {tools}. Kinds of assistance: {purposes}. The authors reviewed and accepted all AI-assisted text and are responsible for the whole manuscript."
+without_ai = "No AI-assisted text accepted into the manuscript is recorded for the {n_all} section(s) covered. The authors are responsible for all content."
+section_with = "{title}: {share}% of the characters came from accepted AI output ({models}; {purposes})."
+section_without = "{title}: no AI-assisted text recorded."
+
+[styles.elsevier_style]
+label = "Declaration of generative AI in the writing process (publisher-policy style)"
+heading = "Declaration of generative AI and AI-assisted technologies in the writing process"
+with_ai = "During the preparation of this work the author(s) used {tools} in order to {purposes}, in the following section(s): {sections}. After using this tool, the author(s) reviewed and edited the content as needed and take(s) full responsibility for the content of the publication."
+without_ai = "No generative AI or AI-assisted technologies were recorded in the writing process of the {n_all} section(s) covered. The author(s) take(s) full responsibility for the content of the publication."
+section_with = "{title}: AI-assisted text, {share}% of characters ({models})."
+section_without = "{title}: none."
+
+[styles.acknowledgements]
+label = "Short acknowledgements note"
+heading = "Acknowledgements: use of AI tools"
+with_ai = "The authors used {tools} to {purposes} in the section(s) {sections}. The authors checked all AI-assisted text and are responsible for the manuscript."
+without_ai = "The authors did not use AI tools in writing the section(s) covered, according to the workspace writing record."
+section_with = "{title}: {share}% AI-assisted."
+section_without = "{title}: none."

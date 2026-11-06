@@ -13,7 +13,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 SCHEMA_DIR = Path(__file__).resolve().parent / "extraction_schemas"
 _ID = re.compile(r"^[a-z][a-z0-9_]{1,59}$")
@@ -24,10 +24,27 @@ class SchemaError(RuntimeError):
     pass
 
 
-class FieldSpec(BaseModel):
+class ValueSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    key: str = Field(pattern=_ID.pattern)
+
     type: Literal["string", "integer", "number", "list", "object"]
+    nullable: bool = False
+    items: ValueSpec | None = None
+    properties: dict[str, ValueSpec] | None = None
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> ValueSpec:
+        if self.items is not None and self.type != "list":
+            raise ValueError("items is only valid for list values")
+        if self.properties is not None and self.type != "object":
+            raise ValueError("properties is only valid for object values")
+        return self
+
+
+class FieldSpec(ValueSpec):
+    model_config = ConfigDict(extra="forbid")
+
+    key: str = Field(pattern=_ID.pattern)
     description: str = Field(min_length=1, max_length=500)
     critical: bool = False  # critical fields need a person's check at gate G4 (M3.6)
 
@@ -74,6 +91,25 @@ def schema_version(schema: ExtractionSchema) -> str:
     return f"{schema.name}@{schema.version}"
 
 
+def _check_value(spec: ValueSpec, value: Any, path: str, problems: list[str]) -> None:
+    if value is None and spec.nullable:
+        return
+    expected = _TYPES[spec.type]
+    if isinstance(value, bool) or not isinstance(value, expected):
+        problems.append(f"{path}: expected {spec.type}")
+        return
+    if spec.items is not None:
+        for index, item in enumerate(value):
+            _check_value(spec.items, item, f"{path}[{index}]", problems)
+    if spec.properties is not None:
+        for key in sorted(value.keys() - spec.properties.keys()):
+            problems.append(f"{path}.{key}: unexpected property")
+        for key in sorted(spec.properties.keys() - value.keys()):
+            problems.append(f"{path}.{key}: missing property")
+        for key in sorted(spec.properties.keys() & value.keys()):
+            _check_value(spec.properties[key], value[key], f"{path}.{key}", problems)
+
+
 def check_extraction(schema: ExtractionSchema, fields: dict[str, Any], evidence: dict[str, Any]) -> list[str]:
     """Problems with an extraction payload; an empty list means it is well formed.
 
@@ -89,15 +125,19 @@ def check_extraction(schema: ExtractionSchema, fields: dict[str, Any], evidence:
             if span is not None:
                 problems.append(f"{spec.key}: evidence given for an empty field")
             continue
-        expected = _TYPES[spec.type]
-        if isinstance(value, bool) or not isinstance(value, expected):
-            problems.append(f"{spec.key}: expected {spec.type}")
+        _check_value(spec, value, spec.key, problems)
         if not isinstance(span, dict):
             problems.append(f"{spec.key}: a non-null field needs evidence {{quote, page, section}}")
             continue
         quote = span.get("quote")
         if not isinstance(quote, str) or not quote.strip():
             problems.append(f"{spec.key}: evidence needs a non-empty quote")
+        page = span.get("page")
+        valid_page = (
+            isinstance(page, int) and not isinstance(page, bool) and page > 0
+        ) or (isinstance(page, str) and bool(page.strip()))
+        if page is not None and not valid_page:
+            problems.append(f"{spec.key}: page must be a positive number or a non-empty printed label")
         if span.get("page") is None and not (isinstance(span.get("section"), str) and span["section"].strip()):
             problems.append(f"{spec.key}: evidence needs a page or a section")
     return problems

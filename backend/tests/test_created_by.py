@@ -41,7 +41,7 @@ def test_a_collaborator_is_recorded_as_the_creator_not_the_owner():
     assert source["created_by"] == co_id
 
 
-def test_arc_sources_are_attributed_to_the_agent_not_a_person(monkeypatch):
+def test_arc_sources_are_attributed_to_the_agent_not_a_person(monkeypatch, fake_llm):
     settings = get_settings()
     monkeypatch.setattr(settings, "arc_retrieval_enabled", True)
     monkeypatch.setattr(settings, "arc_retrieval_base_url", "http://arc.test")

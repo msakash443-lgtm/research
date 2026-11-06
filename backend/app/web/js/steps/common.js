@@ -1,6 +1,7 @@
 import { $, el, label, toast, confirmAction } from "../dom.js";
 import { request, projectApi } from "../api.js";
 import { GATE_NAMES } from "../workflow.js";
+import { coverageSummary } from "../fulltextCoverageLogic.js";
 
 // One gate's row, reused on Scope (G1), Search (G2) and the full Approvals list.
 export function gateCard(ctx, code) {
@@ -29,6 +30,19 @@ export function gateCard(ctx, code) {
   }
   if (gate.can_decide && gate.status !== "approved") {
     const approve = el("button", { text: "Approve" });
+    // G7 on a research type with no human participants (X.43.8, decision 5): approval needs an explicit
+    // confirmation instead of a full ethics pack, so the button stays disabled until it is checked.
+    const needsConfirm = gate.code === "G7" && ctx.summary.stage?.human_participants === false;
+    if (needsConfirm) {
+      const confirmLabel = el("label", { className: "checkbox-label" });
+      const checkbox = el("input", { attrs: { type: "checkbox" } });
+      confirmLabel.append(checkbox, document.createTextNode(" Confirm: this study has no human participants"));
+      row.append(confirmLabel);
+      approve.disabled = true;
+      checkbox.addEventListener("change", () => {
+        approve.disabled = !checkbox.checked;
+      });
+    }
     approve.addEventListener("click", async () => {
       const ok = await confirmAction(
         `Approve ${gate.code} (${GATE_NAMES[gate.code]})?`,
@@ -38,11 +52,11 @@ export function gateCard(ctx, code) {
       if (!ok) return;
       approve.disabled = true;
       try {
-        await request(projectApi(ctx.project.id, `/gates/${gate.code}/approve`), { method: "POST", body: "{}" });
+        const body = needsConfirm ? { confirm_no_human_participants: true } : {};
+        await request(projectApi(ctx.project.id, `/gates/${gate.code}/approve`), { method: "POST", body: JSON.stringify(body) });
         await ctx.refresh();
       } catch (error) {
         toast(error.message);
-      } finally {
         approve.disabled = false;
       }
     });
@@ -57,6 +71,27 @@ export function gateCard(ctx, code) {
   }
   list.append(row);
   return list;
+}
+
+// Collects a written reason (10-500 chars) for each unmet Recommended exit condition, prompting
+// one at a time; `null` if the researcher cancels any of them (X.165). A native `window.prompt` is
+// used here rather than a styled dialog (see `confirmAction`'s note: CSP allows it) because the
+// number of conditions to ask about is only known once the server refuses the advance.
+async function collectOverrideReasons(conditions) {
+  const reasons = {};
+  for (const condition of conditions) {
+    let reason = null;
+    while (reason === null) {
+      const input = window.prompt(
+        `${condition.message}\n\nYou can move on without this, but write why (10-500 characters), or Cancel to stop.`
+      );
+      if (input === null) return null;
+      const trimmed = input.trim();
+      if (trimmed.length >= 10 && trimmed.length <= 500) reason = trimmed;
+    }
+    reasons[condition.id] = reason;
+  }
+  return reasons;
 }
 
 // One "Next: <stage>" card from GET .../stage's `next` array.
@@ -75,10 +110,31 @@ export function advanceCard(ctx, option) {
           });
           await ctx.refresh();
         } catch (error) {
-          toast(error.message);
-        } finally {
-          go.disabled = false;
+          const recommended = error.status === 409 && Array.isArray(error.detail?.recommended) ? error.detail.recommended : [];
+          if (recommended.length === 0) {
+            toast(error.message);
+            go.disabled = false;
+            return;
+          }
+          const overrideReasons = await collectOverrideReasons(recommended);
+          if (overrideReasons === null) {
+            go.disabled = false;
+            return;
+          }
+          try {
+            await request(projectApi(ctx.project.id, "/stage/advance"), {
+              method: "POST",
+              body: JSON.stringify({ stage: option.stage, override_reasons: overrideReasons }),
+            });
+            await ctx.refresh();
+          } catch (retryError) {
+            toast(retryError.message);
+          } finally {
+            go.disabled = false;
+          }
+          return;
         }
+        go.disabled = false;
       });
       box.append(go);
     } else {
@@ -106,4 +162,19 @@ export function errorCard(message, retry) {
   button.addEventListener("click", retry);
   card.append(button);
   return card;
+}
+
+// How much of the paper the project holds (X.76): a coloured label, what it means for the decision, the reason a
+// PDF is missing, and the open-access copy to open when there is one. Shown wherever a person decides from a paper.
+export function coverageBadge(coverage) {
+  const summary = coverageSummary(coverage);
+  const box = el("div", { className: "coverage" });
+  box.append(el("span", { className: `coverage-badge coverage-${summary.tone}`, text: summary.text }));
+  if (summary.advice) box.append(el("span", { className: "muted small", text: ` ${summary.advice}` }));
+  if (summary.reason) box.append(el("span", { className: "muted small", text: ` (${summary.reason})` }));
+  if (summary.link) {
+    box.append(document.createTextNode(" "), el("a", { className: "small", text: "Open-access copy",
+      attrs: { href: summary.link, target: "_blank", rel: "noopener noreferrer" } }));
+  }
+  return box;
 }

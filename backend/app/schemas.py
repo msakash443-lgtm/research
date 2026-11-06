@@ -1,12 +1,16 @@
 import uuid
 from datetime import datetime
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, HttpUrl, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, HttpUrl, StringConstraints, field_validator, model_validator
 
 from app.discipline import EffectiveSettings, ProfileSettings, available_profiles
 from app.doi import normalize_doi
+from app.exit_conditions import Level
 from app.models import (
     ARC_SOURCE_TYPES,
+    AiInvolvement,
+    AiModelRoute,
     ArtifactStatus,
     ContextKind,
     GateCode,
@@ -42,6 +46,9 @@ class ProjectRead(ProjectBase):
     id: uuid.UUID
     stage: ProjectStage
     discipline: str | None = None
+    ai_involvement: AiInvolvement
+    ai_model_route: AiModelRoute
+    archived_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -52,13 +59,42 @@ class ContextItemCreate(BaseModel):
     rationale: str | None = None
 
 
+class ContextItemUpdate(BaseModel):
+    """A correction to an entry's wording. The kind is not changeable: a different kind is a new entry."""
+
+    model_config = ConfigDict(extra="forbid")
+    content: str | None = Field(default=None, min_length=1)
+    rationale: str | None = None
+
+    @field_validator("content")
+    @classmethod
+    def _content_not_blank(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("The statement cannot be blank")
+        return value
+
+    @model_validator(mode="after")
+    def _something_to_change(self) -> "ContextItemUpdate":
+        if not self.model_fields_set:
+            raise ValueError("Give a new statement or reason")
+        return self
+
+
 class ContextItemRead(ContextItemCreate):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID
     created_by: str | None = None
     created_at: datetime
+    # Earlier wordings of an amended entry, oldest first: {content, rationale, changed_by, changed_at} (X.161).
+    history: list[dict] | None = None
+    retired_at: datetime | None = None
     # Set by the list endpoint: whether research runs are given this item (agent/context.py).
     used_by_agent: bool | None = None
+    # Set by the list endpoint: whether the item is set to "never for this item" (ai_item_locks.py).
+    ai_locked: bool | None = None
+    # Read-only links (X.31.2): the note this came from, and for a decision the item it concerns.
+    promoted_from_note_id: uuid.UUID | None = None
+    related_item_id: uuid.UUID | None = None
 
 
 class SourceCreate(BaseModel):
@@ -119,8 +155,13 @@ class SourceRead(BaseModel):
     source_ids: dict | None = None
     fulltext_path: str | None = None
     fulltext_access: dict | None = None
+    coverage: dict | None = None  # full text / abstract only / not accessible, derived (X.76)
     quality_flags: list | None = None
     found_via: dict | None = None  # how an automated method found it, e.g. snowballing (M1.9.2); system-set
+    citation_count: int | None = None  # times cited per `citation_count_source` (M2.13); None = unknown, not 0
+    citation_count_source: str | None = None
+    citation_count_at: datetime | None = None
+    language: str | None = None  # two-letter code a connector reported (X.86); None = not reported
     evidence_excerpt: str | None = None
     excerpt_locator: str | None = None
     created_at: datetime
@@ -191,6 +232,9 @@ class AuditEventRead(BaseModel):
 
 class GateDecision(BaseModel):
     note: str | None = Field(default=None, max_length=4000)
+    # G7 on a research type with no human participants (X.43.8, decision 5): approval needs this
+    # explicit confirmation instead of a full ethics pack. Ignored for every other gate/type.
+    confirm_no_human_participants: bool = False
 
     @field_validator("note")
     @classmethod
@@ -271,6 +315,10 @@ class AdvanceRequest(BaseModel):
     # Optional: only needed where there is a choice (after `submitted`). Passing it also makes a retried
     # request safe: asking twice for the same stage is refused the second time instead of moving twice.
     stage: ProjectStage | None = None
+    # Reasons for unmet Recommended conditions, by condition id; 10–500 characters each. Required ones cannot be overridden.
+    override_reasons: dict[str, Annotated[str, StringConstraints(strip_whitespace=True, min_length=10, max_length=500)]] = Field(
+        default_factory=dict
+    )
 
 
 class AdvanceRead(BaseModel):
@@ -279,16 +327,49 @@ class AdvanceRead(BaseModel):
     gate: GateCode | None
 
 
+class ConditionRead(BaseModel):
+    id: str
+    level: Level
+    met: bool
+    message: str
+    fix: str | None
+
+
+class SuggestionRead(BaseModel):
+    """An unmet exit condition of a next move, explained (X.55). Advice only: it decides nothing."""
+
+    target: ProjectStage
+    condition_id: str
+    level: Level
+    message: str
+    fix: str | None
+    meaning: str | None  # None only for a condition the guide does not describe
+    step: str | None  # the web screen where it is fixed; None = no screen yet
+
+
 class StageOptionRead(BaseModel):
     stage: ProjectStage
     gate: GateCode | None
     gate_status: GateStatus | None
     ready: bool
+    conditions: list[ConditionRead]  # every exit condition for moving to this option (X.48.2)
+
+
+class StageChainItem(BaseModel):
+    stage: ProjectStage
+    gate: GateCode | None
+    label: str | None = None
 
 
 class StageRead(BaseModel):
     stage: ProjectStage
     next: list[StageOptionRead]
+    chain: list[StageChainItem]  # every stage in workflow order, with the gate that completes it (X.49)
+    suggestions: list[SuggestionRead]  # unmet, built exit conditions of the next moves, most binding first (X.55)
+    # Whether this project's own research type involves human participants (X.43.6/X.43.8, decision 4b/5).
+    human_participants: bool
+    # The project's research type name (X.43.9): the Scope screen's picker shows which type is saved.
+    research_type: str
 
 
 class DisciplineProfileRead(BaseModel):
@@ -297,6 +378,19 @@ class DisciplineProfileRead(BaseModel):
     label: str
     description: str
     settings: ProfileSettings
+
+
+class ResearchTypeRead(BaseModel):
+    name: str
+    version: int
+    label: str
+    description: str
+    human_participants: bool
+    stages: list[StageStep]
+
+
+class ResearchTypeUpdate(BaseModel):
+    name: str = Field(min_length=2, max_length=60, pattern=r"^[a-z][a-z0-9_]{1,59}$")
 
 
 class ProfileUpdate(BaseModel):
@@ -365,6 +459,38 @@ class NoteCreate(BaseModel):
         return self
 
 
+class NoteAttachmentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    media_type: str
+    size: int
+    sha256: str
+    created_at: datetime
+class HighlightCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    client_id: str = Field(min_length=1, max_length=64)
+    source_id: uuid.UUID
+    quoted_text: str = Field(min_length=1, max_length=5000)
+    body: str = Field(default="", max_length=20000)
+    locator: str | None = Field(default=None, max_length=255)
+    captured_at: datetime | None = None
+
+    @field_validator("quoted_text", "body", "locator")
+    @classmethod
+    def _strip_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        return value or None
+
+    @model_validator(mode="after")
+    def _require_quote(self) -> "HighlightCreate":
+        if not self.quoted_text:
+            raise ValueError("A highlight needs quoted text")
+        return self
+
+
+
 class NoteRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID
@@ -373,16 +499,17 @@ class NoteRead(BaseModel):
     status: NoteStatus
     body: str
     quoted_text: str | None
-    source_url: str | None
+    source_id: uuid.UUID | None
+    excerpt_id: uuid.UUID | None
     locator: str | None
     ai_locked: bool
     revision: int
     captured_at: datetime
     device: str | None
     owner_id: uuid.UUID
+    attachments: list[NoteAttachmentRead] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
-
 
 class NotePatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -411,3 +538,137 @@ class NoteRevisionRead(BaseModel):
     edited_by: str | None
     created_at: datetime
 
+
+class NoteFile(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    project_id: uuid.UUID
+
+
+class NotePromote(BaseModel):
+    """Promote a filed note to a research item (X.31.2). The text is the researcher's, not copied from the note."""
+
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["idea", "gap", "hypothesis", "claim", "memo", "decision"]
+    content: str = Field(min_length=1, max_length=20000)
+    rationale: str | None = Field(default=None, max_length=20000)
+    related_item_id: uuid.UUID | None = None
+
+    @field_validator("content")
+    @classmethod
+    def _strip_content(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("content cannot be blank")
+        return stripped
+
+
+class NoteSuggestionRead(BaseModel):
+    """A non-AI triage suggestion (`app/note_suggest.py`). `project` and `source` are things to file the note
+    under or cite; `stage` is the suggested project's current stage, shown as a chip."""
+
+    kind: Literal["project", "source", "stage"]
+    target_id: str
+    project_id: str | None = None
+    label: str
+    score: float
+
+
+class JournalCandidateCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=300)
+    scope_terms: list[str] = Field(default_factory=list, max_length=100)
+    indexes: list[str] = Field(default_factory=list, max_length=50)
+    apc: float | None = Field(default=None, ge=0)
+    review_days: int | None = Field(default=None, ge=0)
+    source_url: HttpUrl
+    checked_at: str = Field(min_length=1, max_length=64)
+
+
+class JournalCandidateRead(JournalCandidateCreate):
+    model_config = ConfigDict(from_attributes=True)
+    official_predatory: bool = False
+    id: uuid.UUID
+    project_id: uuid.UUID
+    created_by: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class InstitutionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=300)
+    ror_id: str | None = Field(default=None, max_length=64)
+
+
+class InstitutionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    project_id: uuid.UUID
+    name: str
+    ror_id: str | None
+    created_by: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class PersonCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=300)
+    orcid: str | None = Field(default=None, max_length=64)
+    institution_id: uuid.UUID | None = None
+
+
+class PersonRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    project_id: uuid.UUID
+    name: str
+    orcid: str | None
+    institution_id: uuid.UUID | None
+    created_by: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class JournalMatchRequest(BaseModel):
+    scope: list[str] = Field(default_factory=list, max_length=100)
+    required_index: str | None = Field(default=None, max_length=100)
+    max_apc: float | None = Field(default=None, ge=0)
+    max_review_days: int | None = Field(default=None, ge=0)
+
+class SubmissionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    journal_name: str = Field(min_length=1, max_length=300)
+    manuscript_url: HttpUrl | None = None
+    external_id: str | None = Field(default=None, max_length=255)
+
+
+class SubmissionTransition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: str
+
+
+class SubmissionRead(SubmissionCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    project_id: uuid.UUID
+    status: str
+    submitted_at: datetime | None
+    created_by: str
+    created_at: datetime
+    updated_at: datetime
+class SubmissionReminderCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    submission_id: uuid.UUID
+    due_at: datetime
+    message: str = Field(min_length=1, max_length=500)
+
+
+class SubmissionReminderRead(SubmissionReminderCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    project_id: uuid.UUID
+    status: str
+    created_by: str
+    created_at: datetime
+    updated_at: datetime

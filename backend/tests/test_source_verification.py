@@ -12,7 +12,7 @@ from app.config import get_settings
 from app.connectors.base import ConnectorBase, ConnectorError, PaperRecord, SearchPage
 from app.database import SessionLocal
 from app.main import app
-from app.models import Source
+from app.models import Claim, ClaimEvidence, Source, SourceExcerpt, excerpt_hash
 
 TITLE = "Remote work and worker productivity: evidence from a field experiment"
 AUTHORS = ["Ada Lovelace", "Grace Hopper"]
@@ -176,6 +176,29 @@ def test_a_later_mismatch_revokes_an_automatic_verification_but_not_a_persons(wo
     assert h["metadata_verified"] is True and h["verification_method"] == "human" and h["verification"]["verdict"] == "mismatch"
 
 
+def test_source_revocation_unverifies_linked_claim_and_audits_it(world, services):
+    c, pid = world
+    sid = add(c, pid)
+    with SessionLocal() as db:
+        excerpt = SourceExcerpt(source_id=uuid.UUID(sid), content="Observed effect.", content_hash=excerpt_hash("Observed effect."))
+        db.add(excerpt)
+        db.flush()
+        claim = Claim(project_id=uuid.UUID(pid), text="Observed effect [S1]", verified=False, created_by="reviewer")
+        claim.evidence = [ClaimEvidence(source_id=uuid.UUID(sid), excerpt_id=excerpt.id, quote="Observed effect.")]
+        db.add(claim)
+        db.commit()
+        claim.verified = True  # the DB refuses a claim inserted as verified; verify once evidence is stored
+        db.commit()
+        claim_id = claim.id
+    check(c, pid, sid)
+    services.record = rec(year=2001)
+    check(c, pid, sid)
+    with SessionLocal() as db:
+        assert db.get(Claim, claim_id).verified is False
+    events = audit_of(c, pid, "claim.verification_revoked")
+    assert len(events) == 1 and str(claim_id) in events[0]["payload_json"]["claim_ids"]
+
+
 def test_not_found_or_outage_does_not_revoke(world, services):
     c, pid = world
     sid = add(c, pid)
@@ -205,6 +228,29 @@ def test_merging_clears_a_stale_automatic_verification(world, services):
         db.commit()
     merged = c.post(f"/api/projects/{pid}/sources/merge", json={"source_ids": [a, b], "keep": a}).json()
     assert merged["metadata_verified"] is False and merged["verification_method"] is None and merged["verification"] is None
+
+
+def test_merging_any_claim_evidence_source_invalidates_verified_claim(world, services):
+    c, pid = world
+    kept = add(c, pid)
+    merged = add(c, pid)
+    with SessionLocal() as db:
+        excerpt = SourceExcerpt(source_id=uuid.UUID(merged), content="Merged evidence.", content_hash=excerpt_hash("Merged evidence."))
+        db.add(excerpt)
+        db.flush()
+        claim = Claim(project_id=uuid.UUID(pid), text="Merged evidence", verified=False, created_by="reviewer")
+        claim.evidence = [ClaimEvidence(source_id=uuid.UUID(merged), excerpt_id=excerpt.id, quote="Merged evidence.")]
+        db.add(claim)
+        db.commit()
+        claim.verified = True
+        db.commit()
+        claim_id = claim.id
+    response = c.post(f"/api/projects/{pid}/sources/merge", json={"source_ids": [kept, merged], "keep": kept})
+    assert response.status_code == 200, response.text
+    with SessionLocal() as db:
+        assert db.get(Claim, claim_id).verified is False
+    events = audit_of(c, pid, "claim.verification_revoked")
+    assert any(str(claim_id) in event["payload_json"]["claim_ids"] and event["payload_json"]["reason"] == "source_merge" for event in events)
 
 
 def test_requests_are_validated(world, services, monkeypatch):

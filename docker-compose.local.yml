@@ -1,0 +1,14 @@
+services:
+  db:
+    ports: !override
+      - "127.0.0.1:15432:5432"
+  web:
+    environment:
+      LOCAL_LLM_API_BASE_URL: http://host.docker.internal:11434/v1
+      LOCAL_LLM_MODEL: qwen2.5:latest
+      LOCAL_LLM_ALLOW_HTTP: "true"
+  worker:
+    environment:
+      LOCAL_LLM_API_BASE_URL: http://host.docker.internal:11434/v1
+      LOCAL_LLM_MODEL: qwen2.5:latest
+      LOCAL_LLM_ALLOW_HTTP: "true"

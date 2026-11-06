@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.dedupe import DedupeRecord, doi_key, first_author_key, normalise_title, work_key
 from app.models import Project, SeedPaper
-from app.prisma import _latest_runs
+from app.prisma import latest_runs
 
 
 def _matches(seed: SeedPaper, entry: dict[str, Any]) -> bool:
@@ -50,7 +50,7 @@ def check(db: Session, project: Project) -> dict[str, Any]:
     seeds = db.scalars(
         select(SeedPaper).where(SeedPaper.project_id == project.id).order_by(SeedPaper.created_at, SeedPaper.id)
     ).all()
-    runs = _latest_runs(db, project)
+    runs = latest_runs(db, project)
     run_info = [
         {"search_id": str(r.search_id), "database": r.database, "version": r.version, "truncated": bool(r.counts.get("truncated"))}
         for r in runs

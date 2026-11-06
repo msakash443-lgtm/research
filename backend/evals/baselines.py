@@ -7,7 +7,7 @@ import importlib
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 HERE = Path(__file__).parent
 APP_DIR = HERE.parent / "app"
@@ -40,8 +40,17 @@ def live_prompt_refs(app_dir: Path = APP_DIR) -> dict[str, str]:
     return refs
 
 
-def problems(baselines: dict[str, Any], live: set[str], *, has_gold: bool, current_hash: str, report_dir: Path) -> list[str]:
-    """Everything wrong with `baselines` for these live prompt refs. Empty means the rule holds."""
+def problems(
+    baselines: dict[str, Any], live: set[str], *, has_gold: bool, current_hash: str, report_dir: Path,
+    has_extraction_gold: bool = False, extraction_hash: Callable[[str], str | None] | None = None,
+) -> list[str]:
+    """Everything wrong with `baselines` for these live prompt refs. Empty means the rule holds.
+
+    `has_gold` says the screening gold set has papers; `has_extraction_gold` says it has verified extractions.
+    `current_hash` is the screening dataset hash. An extraction report is hashed with its own schema, so
+    `extraction_hash` maps the report's `schema` (`name@version`) to the current hash, or None if the app
+    has no such schema.
+    """
     found: list[str] = []
     for ref in sorted(live - set(baselines)):
         found.append(f"{ref}: no baseline entry; run the evaluation (or add an eval 'none' entry with a reason)")
@@ -58,8 +67,9 @@ def problems(baselines: dict[str, Any], live: set[str], *, has_gold: bool, curre
                 found.append(f"{ref}: eval 'none' needs a reason")
             continue
         status = entry.get("status")
-        if kind == "extraction" or not has_gold:
-            # No extraction runner yet (M3.3); without gold data nothing can be measured.
+        has_data = has_extraction_gold if kind == "extraction" else has_gold
+        if not has_data:
+            # Without gold data of this kind nothing can be measured yet.
             if status != "unevaluated" or not str(entry.get("reason", "")).strip():
                 found.append(f"{ref}: can't be evaluated yet, so status must be 'unevaluated' with a reason")
             continue
@@ -76,7 +86,13 @@ def problems(baselines: dict[str, Any], live: set[str], *, has_gold: bool, curre
         report = json.loads(report_file.read_text(encoding="utf-8"))
         if report.get("prompt") != ref or report.get("kind") != kind:
             found.append(f"{ref}: report {report_name} is for {report.get('kind')} {report.get('prompt')}")
-        if report.get("dataset_sha256") != current_hash:
+        expected_hash = current_hash
+        if kind == "extraction":
+            expected_hash = extraction_hash(str(report.get("schema"))) if extraction_hash else None
+            if expected_hash is None:
+                found.append(f"{ref}: report {report_name} names extraction schema {report.get('schema')!r}, "
+                             "which the app does not have; re-run it")
+        if expected_hash is not None and report.get("dataset_sha256") != expected_hash:
             found.append(f"{ref}: report {report_name} was made from a different gold set or criteria; re-run it")
         if report.get("result", {}).get("status") != status:
             found.append(f"{ref}: baseline says {status!r} but the report says {report.get('result', {}).get('status')!r}")

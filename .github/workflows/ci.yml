@@ -36,25 +36,32 @@ jobs:
         # Matches the runtime image (Dockerfile).
         python-version: "3.12"
         cache: pip
-        cache-dependency-path: backend/requirements.txt
+        cache-dependency-path: backend/requirements*.txt
     - name: Install dependencies
-      run: python -m pip install -r backend/requirements.txt
+      # App, vendored ARC service (its tests) and test tools; the web image installs requirements.txt only (X.141).
+      run: python -m pip install -r backend/requirements.txt -r backend/requirements-arc.txt -r backend/requirements-dev.txt
     - name: Run tests
       # tests/conftest.py forces an in-memory SQLite database; the Postgres-only tests skip here (no TEST_POSTGRES_URL).
       run: pytest -q
     - name: Apply Alembic migrations to PostgreSQL
       env:
+        # Settings requires ENVIRONMENT (X.105); migrations/env.py reads DATABASE_URL through Settings.
+        ENVIRONMENT: development
         DATABASE_URL: postgresql+psycopg://research_ai_test:research_ai_test@localhost:5432/research_ai_test
       run: |
         alembic -c alembic.ini upgrade head
         alembic -c alembic.ini check
         alembic -c alembic.ini downgrade base
         alembic -c alembic.ini upgrade head
-    - name: Run the task-queue tests on PostgreSQL
-      # Two workers on separate connections, retry/backoff, lease expiry. The suite wipes this database.
+    - name: Run the Postgres-only tests
+      # Task queue: two workers on separate connections, retry/backoff, lease expiry (X.1.1).
+      # Guards: append-only/immutable triggers refuse raw UPDATE/DELETE/TRUNCATE, gate decide/reopen row lock (X.44).
+      # The suite wipes this database.
       env:
         TEST_POSTGRES_URL: postgresql+psycopg://research_ai_test:research_ai_test@localhost:5432/research_ai_test
-      run: pytest -q backend/tests/test_task_queue_postgres.py
+      # `-n 0` overrides pytest.ini's `-n 8`: every test wipes and recreates the schema in this one database,
+      # so parallel workers race on CREATE TYPE (duplicate key on pg_type_typname_nsp_index).
+      run: pytest -q -n 0 backend/tests/test_task_queue_postgres.py backend/tests/test_guards_postgres.py
 
   build:
 

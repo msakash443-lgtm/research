@@ -7,14 +7,20 @@ from app.connectors.base import Connector, ConnectorError
 from app.connectors.arxiv import ArxivConnector
 from app.connectors.core import CoreConnector
 from app.connectors.crossref import CrossrefConnector
+from app.connectors.ieee_xplore import IeeeXploreConnector
 from app.connectors.openalex import OpenAlexConnector
 from app.connectors.opencitations import OpenCitationsConnector
 from app.connectors.pubmed import PubMedConnector
+from app.connectors.scopus import ScopusConnector
 from app.connectors.semantic_scholar import SemanticScholarConnector
 from app.connectors.unpaywall import UnpaywallConnector
+from app.connectors.web_of_science import WebOfScienceConnector
 
 # Connectors that can run a keyword search. Unpaywall and OpenCitations look works up by id only.
-SEARCHABLE = ("openalex", "crossref", "semantic_scholar", "arxiv", "pubmed", "core")
+SEARCHABLE = (
+    "openalex", "crossref", "semantic_scholar", "arxiv", "pubmed", "core",
+    "scopus", "web_of_science", "ieee_xplore",
+)
 
 
 # Services the citation verifier asks, in this order.
@@ -31,7 +37,7 @@ def enabled_lookup_names() -> list[str]:
 def build_connector(name: str) -> Connector:
     settings = get_settings()
     if name == "openalex":
-        return OpenAlexConnector(contact_email=settings.connector_contact_email)
+        return OpenAlexConnector(contact_email=settings.connector_contact_email, api_key=settings.openalex_api_key)
     if name == "crossref":
         return CrossrefConnector(contact_email=settings.connector_contact_email)
     if name == "semantic_scholar":
@@ -42,6 +48,12 @@ def build_connector(name: str) -> Connector:
         return PubMedConnector(contact_email=settings.connector_contact_email, api_key=settings.ncbi_api_key)
     if name == "core":
         return CoreConnector(api_key=settings.core_api_key)
+    if name == "scopus":
+        return ScopusConnector(api_key=settings.scopus_api_key, inst_token=settings.scopus_inst_token)
+    if name == "web_of_science":
+        return WebOfScienceConnector(api_key=settings.web_of_science_api_key)
+    if name == "ieee_xplore":
+        return IeeeXploreConnector(api_key=settings.ieee_xplore_api_key)
     if name == "opencitations":
         return OpenCitationsConnector(access_token=settings.opencitations_access_token)
     raise ConnectorError(f"No connector named '{name}'")
@@ -61,3 +73,27 @@ def unpaywall_unavailable_reason() -> str | None:
 
 def build_unpaywall() -> UnpaywallConnector:
     return UnpaywallConnector(contact_email=get_settings().connector_contact_email)
+
+
+def build_openalex_oa() -> OpenAlexConnector:
+    settings = get_settings()
+    return OpenAlexConnector(contact_email=settings.connector_contact_email, api_key=settings.openalex_api_key)
+
+
+def build_core_oa() -> CoreConnector:
+    return CoreConnector(api_key=get_settings().core_api_key)
+
+
+def oa_source_enabled(name: str) -> bool:
+    """Whether an optional open-access source (OpenAlex, CORE) is consulted for full text (M2.7.6).
+
+    It must be listed in CONNECTORS_ENABLED. CORE also needs its API key: without one it is off, never anonymous.
+    """
+    from app.connectors.access import is_enabled
+
+    settings = get_settings()
+    if not is_enabled(name, settings.connectors_enabled, settings.connectors_allow_scraping):
+        return False
+    if name == "core":
+        return bool(settings.core_api_key and settings.core_api_key.get_secret_value().strip())
+    return True

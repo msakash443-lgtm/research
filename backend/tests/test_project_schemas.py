@@ -4,12 +4,15 @@ import uuid
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import DatabaseError
 
 from app.database import SessionLocal
 from app.extraction_schema import load_schema
 from app.main import app
-from app.models import AuditEvent, ProjectExtractionSchema
+from app.models import AuditEvent, ProjectExtractionSchema, Source
+from app.object_storage import fulltext_key
+from tests.test_fulltext import make_pdf
 
 
 def _login(email):
@@ -19,11 +22,28 @@ def _login(email):
 
 
 @pytest.fixture
-def world():
+def world(monkeypatch):
     tag = uuid.uuid4().hex[:8]
     owner = _login(f"schema-owner-{tag}@example.com")
     pid = owner.post("/api/projects", json={"title": "Schemas"}).json()["id"]
     sid = owner.post(f"/api/projects/{pid}/sources", json={"title": "A paper"}).json()["id"]
+    pdf = make_pdf([
+        ["Introduction", "The paper asks why", "one", "two"],
+        ["Other", "Unrelated text"],
+        ["Methods", "120 clerks took part"],
+    ])
+    key = fulltext_key(uuid.UUID(pid), uuid.UUID(sid), "pdf")
+
+    class Store:
+        def get(self, requested_key):
+            assert requested_key == key
+            return pdf
+
+    from app.routers import extractions as extraction_routes
+    monkeypatch.setattr(extraction_routes, "get_object_store", lambda settings: Store())
+    with SessionLocal() as db:
+        db.get(Source, uuid.UUID(sid)).fulltext_path = key
+        db.commit()
     return {"c": owner, "pid": pid, "sid": sid, "base": f"/api/projects/{pid}/extraction-schemas"}
 
 
@@ -61,6 +81,34 @@ def test_copy_of_default_is_version_one_with_the_same_fields(world):
     assert body["based_on"] == "default@1" and body["label"] == f"{default.label} (copy)"
     assert [f["key"] for f in body["fields"]] == [f.key for f in default.fields]
     assert [s["ref"] for s in world["c"].get(world["base"]).json()["project"]] == ["project:lab"]
+
+
+def test_copy_of_default_preserves_nested_value_validation(world):
+    assert copy(world).status_code == 201
+    response = extract(
+        world,
+        "project:lab",
+        {"sample": {"n": "many", "population": [], "country": {}}},
+        {"sample": {"quote": "Participants were recruited", "page": 2}},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == [
+        "sample.country: expected string",
+        "sample.n: expected integer",
+        "sample.population: expected string",
+    ]
+    missing_property = extract(
+        world,
+        "project:lab",
+        {"sample": {}},
+        {"sample": {"quote": "Participants were recruited", "page": 2}},
+    )
+    assert missing_property.status_code == 422
+    assert missing_property.json()["detail"] == [
+        "sample.country: missing property",
+        "sample.n: missing property",
+        "sample.population: missing property",
+    ]
 
 
 def test_copy_name_rules(world):
@@ -138,6 +186,29 @@ def test_an_extraction_made_with_an_older_version_must_be_redone(world):
     assert r.status_code == 409 and "project:lab@2" in r.json()["detail"]
 
 
+def test_stale_extraction_update_returns_conflict_before_new_schema_validation(world):
+    copy(world)
+    row = extract(
+        world,
+        "project:lab",
+        {"research_question": "Why?"},
+        {"research_question": {"quote": "The paper asks why", "page": 1}},
+    ).json()
+    edit(world, "lab", [SAMPLE_SIZE])
+
+    response = world["c"].put(
+        f"/api/projects/{world['pid']}/extractions/{row['id']}",
+        json={
+            "fields": {"research_question": "Updated question"},
+            "evidence": {"research_question": {"quote": "The paper asks why", "page": 1}},
+        },
+    )
+
+    assert response.status_code == 409
+    assert "project:lab@1" in response.json()["detail"]
+    assert "project:lab@2" in response.json()["detail"]
+
+
 def test_a_project_schema_can_be_copied_again(world):
     copy(world)
     edit(world, "lab", [SAMPLE_SIZE])
@@ -183,3 +254,19 @@ def test_reviewer_can_read_but_not_copy(world):
         db.commit()
     assert reviewer.get(world["base"]).status_code == 200
     assert reviewer.post(world["base"], json={"name": "mine"}).status_code == 403
+
+
+def test_project_schema_versions_are_immutable_outside_the_versioned_api(world):
+    assert copy(world).status_code == 201
+    with SessionLocal() as db:
+        row = db.scalar(select(ProjectExtractionSchema).where(ProjectExtractionSchema.project_id == uuid.UUID(world["pid"])))
+        row.label = "Tampered"
+        with pytest.raises(ValueError, match="append-only"):
+            db.commit()
+        db.rollback()
+
+        with pytest.raises(DatabaseError, match="append-only"):
+            db.execute(text("DELETE FROM project_extraction_schemas WHERE id = :id"), {"id": row.id.hex})
+            db.commit()
+        db.rollback()
+        assert db.get(ProjectExtractionSchema, row.id) is not None

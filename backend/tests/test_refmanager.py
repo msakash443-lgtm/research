@@ -1,3 +1,5 @@
+import re
+
 from app.refmanager import parse_bibtex, parse_ris, to_bibtex, to_ris
 
 BIB = """
@@ -82,3 +84,38 @@ def test_a_paren_delimited_bibtex_entry_keeps_every_field():
     [record] = parse_bibtex(text).records
     assert record["title"] == "Wages (and prices)" and record["year"] == 2020
     assert record["doi"] == "10.1/x" and record["venue"] == "J (Econ)" and record["authors"] == ["Smith, Jane"]
+
+
+def test_bibtex_export_collapses_whitespace_to_one_line_like_ris():
+    rec = {
+        "title": "A study\nspanning   several\nlines",
+        "authors": ["Smith,\n  Jane", "Doe, John"],
+        "venue": "Journal of\tTests",
+        "year": 2020,
+        "source_type": "article",
+    }
+    text = to_bibtex([rec])
+    assert text.splitlines() == [
+        "@article{smith2020,",
+        "  title = {A study spanning several lines},",
+        "  author = {Smith, Jane and Doe, John},",
+        "  year = {2020},",
+        "  journal = {Journal of Tests},",
+        "}",
+    ]
+    [again] = parse_bibtex(text).records
+    assert again["title"] == "A study spanning several lines" and again["authors"] == ["Smith, Jane", "Doe, John"]
+
+
+def test_bibtex_export_keeps_every_field_on_a_single_line():
+    rec = {
+        "title": "line one\nline two",
+        "authors": ["A\nB"],
+        "venue": "v\nv",
+        "doi": "10.1000/abc.def",
+        "url": "https://example.org/\npaper",
+        "year": 2021,
+        "source_type": "conference",
+    }
+    for line in to_bibtex([rec]).splitlines():
+        assert re.match(r"^(@\w+\{\S+,|  [a-z]+ = \{.*\},|})$", line), repr(line)

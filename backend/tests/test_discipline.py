@@ -37,8 +37,10 @@ reporting_guideline = "STROBE"
 
 # ---- the shipped profiles ----------------------------------------------------------------------
 
-def test_the_two_example_profiles_ship_and_are_valid():
-    assert d.available_profiles() == ["economics", "health_sciences"]
+def test_the_shipped_profiles_are_the_disciplines_the_product_owner_chose_and_are_valid():
+    assert d.available_profiles() == [
+        "commerce", "economics", "english_literature", "management", "psychology", "social_sciences",
+    ]
     for name in d.available_profiles():
         profile = d.load_profile(name)
         assert profile.name == name and profile.version >= 1 and profile.label and profile.description
@@ -48,12 +50,26 @@ def test_the_two_example_profiles_ship_and_are_valid():
 
 
 def test_the_profiles_differ_in_the_ways_the_spec_says_fields_differ():
-    economics, health = d.load_profile("economics").settings, d.load_profile("health_sciences").settings
+    economics = d.load_profile("economics").settings
+    psychology = d.load_profile("psychology").settings
+    english = d.load_profile("english_literature").settings
 
-    assert economics.citation_style != health.citation_style
-    assert "pubmed" in health.databases and "pubmed" not in economics.databases
-    assert "econlit" in economics.databases and "econlit" not in health.databases
-    assert "difference_in_differences" in economics.methods and "cohort_study" in health.methods
+    for name in ("commerce", "economics", "management", "psychology", "social_sciences"):
+        assert d.load_profile(name).settings.citation_style == "apa"
+    assert english.citation_style == "modern-language-association"
+
+    assert "psycinfo" in psychology.databases
+    for name in ("commerce", "economics", "english_literature", "management", "social_sciences"):
+        assert "psycinfo" not in d.load_profile(name).settings.databases
+    assert "econlit" in economics.databases
+    for name in ("commerce", "english_literature", "management", "psychology", "social_sciences"):
+        assert "econlit" not in d.load_profile(name).settings.databases
+    assert "mla_international_bibliography" in english.databases
+    for name in ("commerce", "economics", "management", "psychology", "social_sciences"):
+        assert "mla_international_bibliography" not in d.load_profile(name).settings.databases
+
+    assert "difference_in_differences" in economics.methods
+    assert "close_reading" in english.methods
 
 
 # ---- loader strictness ---------------------------------------------------------------------------
@@ -129,8 +145,8 @@ def test_valid_settings_are_accepted_and_unset_fields_stay_none():
 def test_the_profile_alone_gives_its_settings_and_reports_which_profile_and_version():
     e = d.effective_settings("economics", None)
 
-    assert (e.profile, e.profile_version) == ("economics", 1)
-    assert e.databases == d.load_profile("economics").settings.databases and e.citation_style == "chicago-author-date"
+    assert (e.profile, e.profile_version) == ("economics", 2)
+    assert e.databases == d.load_profile("economics").settings.databases and e.citation_style == "apa"
 
 
 def test_a_project_override_replaces_a_setting_and_lists_are_replaced_not_merged():
@@ -138,7 +154,7 @@ def test_a_project_override_replaces_a_setting_and_lists_are_replaced_not_merged
 
     assert e.databases == ["openalex"]  # not merged with the profile's five
     assert e.reporting_guideline == "MOOSE"
-    assert e.citation_style == "chicago-author-date" and "instrumental_variables" in e.methods  # the rest inherited
+    assert e.citation_style == "apa" and "instrumental_variables" in e.methods  # the rest inherited
 
 
 def test_without_a_profile_only_the_overrides_apply_and_lists_default_to_empty():
@@ -175,16 +191,17 @@ def test_the_catalogue_lists_the_profiles_but_only_to_a_signed_in_user():
 
     body = client.get("/api/discipline-profiles").json()
 
-    assert [p["name"] for p in body] == ["economics", "health_sciences"]
-    assert body[0]["settings"]["databases"] and body[0]["version"] == 1 and body[0]["label"] == "Economics"
+    by_name = {p["name"]: p for p in body}
+    assert list(by_name) == ["commerce", "economics", "english_literature", "management", "psychology", "social_sciences"]
+    assert by_name["economics"]["settings"]["databases"] and by_name["economics"]["version"] == 2 and by_name["economics"]["label"] == "Economics"
 
 
 def test_a_project_can_start_with_a_discipline_and_an_unknown_one_is_refused():
-    _c, _u, ok = _project("disc-create-ok@example.com", discipline="health_sciences")
+    _c, _u, ok = _project("disc-create-ok@example.com", discipline="psychology")
     _c, _u, bad = _project("disc-create-bad@example.com", discipline="astrology")
     _c, _u, none = _project("disc-create-none@example.com")
 
-    assert ok.status_code == 201 and ok.json()["discipline"] == "health_sciences"
+    assert ok.status_code == 201 and ok.json()["discipline"] == "psychology"
     assert bad.status_code == 422 and "astrology" in bad.text and "economics" in bad.text  # the message lists the options
     assert none.status_code == 201 and none.json()["discipline"] is None
 
@@ -204,15 +221,15 @@ def test_the_owner_sets_a_profile_with_overrides_and_the_effective_settings_comb
 
     response = client.put(
         f"/api/projects/{pid}/profile",
-        json={"discipline": "economics", "overrides": {"databases": ["openalex", "repec"], "citation_style": "apa"}},
+        json={"discipline": "economics", "overrides": {"databases": ["openalex", "repec"], "citation_style": "chicago-author-date"}},
     )
 
     assert response.status_code == 200
     body = response.json()
     assert body["discipline"] == "economics" and body["label"] == "Economics"
-    assert body["overrides"] == {"citation_style": "apa", "databases": ["openalex", "repec"]}  # only what was set
-    assert body["effective"]["databases"] == ["openalex", "repec"] and body["effective"]["citation_style"] == "apa"
-    assert body["effective"]["reporting_guideline"] == "PRISMA-2020" and body["effective"]["profile_version"] == 1
+    assert body["overrides"] == {"citation_style": "chicago-author-date", "databases": ["openalex", "repec"]}  # only what was set
+    assert body["effective"]["databases"] == ["openalex", "repec"] and body["effective"]["citation_style"] == "chicago-author-date"
+    assert body["effective"]["reporting_guideline"] == "PRISMA-2020" and body["effective"]["profile_version"] == 2
     assert client.get(f"/api/projects/{pid}").json()["discipline"] == "economics"
     assert client.get(f"/api/projects/{pid}/profile").json() == body
 
@@ -222,9 +239,9 @@ def test_putting_a_profile_replaces_the_previous_choice_and_overrides_and_null_c
     pid = created.json()["id"]
     client.put(f"/api/projects/{pid}/profile", json={"discipline": "economics", "overrides": {"methods": ["panel_fixed_effects"]}})
 
-    switched = client.put(f"/api/projects/{pid}/profile", json={"discipline": "health_sciences"}).json()
+    switched = client.put(f"/api/projects/{pid}/profile", json={"discipline": "psychology"}).json()
 
-    assert switched["discipline"] == "health_sciences" and switched["overrides"] == {}  # old overrides gone
+    assert switched["discipline"] == "psychology" and switched["overrides"] == {}  # old overrides gone
     assert "pubmed" in switched["effective"]["databases"]
     cleared = client.put(f"/api/projects/{pid}/profile", json={"discipline": None}).json()
     assert cleared["discipline"] is None and cleared["effective"]["databases"] == []
@@ -241,7 +258,7 @@ def test_putting_a_profile_replaces_the_previous_choice_and_overrides_and_null_c
     ],
 )
 def test_an_invalid_profile_is_rejected_and_the_project_is_unchanged(bad):
-    client, _u, created = _project("disc-invalid@example.com", discipline="health_sciences")
+    client, _u, created = _project("disc-invalid@example.com", discipline="psychology")
     pid = created.json()["id"]
     before = client.get(f"/api/projects/{pid}/profile").json()
 
@@ -262,7 +279,7 @@ def test_only_the_owner_may_change_the_profile_and_everyone_on_the_project_can_r
         clients[role] = client
 
     for role, client in clients.items():
-        assert client.put(f"/api/projects/{pid}/profile", json={"discipline": "health_sciences"}).status_code == 403
+        assert client.put(f"/api/projects/{pid}/profile", json={"discipline": "psychology"}).status_code == 403
         assert client.get(f"/api/projects/{pid}/profile").json()["discipline"] == "economics"
 
 
@@ -270,14 +287,14 @@ def test_a_profile_change_is_audited_with_the_before_and_after():
     client, owner_id, created = _project("disc-audit@example.com", discipline="economics")
     pid = created.json()["id"]
 
-    client.put(f"/api/projects/{pid}/profile", json={"discipline": "health_sciences", "overrides": {"methods": ["meta_analysis"]}})
+    client.put(f"/api/projects/{pid}/profile", json={"discipline": "psychology", "overrides": {"methods": ["meta_analysis"]}})
 
     with SessionLocal() as db:
         (event,) = db.scalars(select(AuditEvent).where(AuditEvent.project_id == uuid.UUID(pid), AuditEvent.action == "project.profile_changed")).all()
     assert event.actor == owner_id
     assert event.payload_json == {
         "from": {"discipline": "economics", "overrides": {}},
-        "to": {"discipline": "health_sciences", "overrides": {"methods": ["meta_analysis"]}},
+        "to": {"discipline": "psychology", "overrides": {"methods": ["meta_analysis"]}},
     }
 
 

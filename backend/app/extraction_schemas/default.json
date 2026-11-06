@@ -5,13 +5,13 @@
   "description": "Spec Appendix B: question, theory, constructs, measures, sample, method, findings, limitations, future research.",
   "fields": [
     {"key": "research_question", "type": "string", "description": "The paper's stated research question or objective."},
-    {"key": "theory_used", "type": "list", "description": "Theories the paper uses or tests."},
-    {"key": "constructs", "type": "list", "description": "Constructs studied, each with the authors' definition ({name, definition})."},
-    {"key": "measures", "type": "list", "description": "Measures/scales used ({construct, scale, reliability or null}).", "critical": true},
-    {"key": "sample", "type": "object", "description": "Sample ({n, population, country}).", "critical": true},
-    {"key": "method", "type": "object", "description": "Design and analysis ({design, analysis})."},
-    {"key": "key_findings", "type": "list", "description": "Findings ({statement, effect_size or null, p_or_ci or null}).", "critical": true},
-    {"key": "limitations", "type": "list", "description": "Limitations the authors state."},
-    {"key": "future_research", "type": "list", "description": "Future-research statements by the authors."}
+    {"key": "theory_used", "type": "list", "items": {"type": "string"}, "description": "Theories the paper uses or tests."},
+    {"key": "constructs", "type": "list", "items": {"type": "object", "properties": {"name": {"type": "string"}, "definition": {"type": "string"}}}, "description": "Constructs studied, each with the authors' definition ({name, definition})."},
+    {"key": "measures", "type": "list", "items": {"type": "object", "properties": {"construct": {"type": "string"}, "scale": {"type": "string"}, "reliability": {"type": "number", "nullable": true}}}, "description": "Measures/scales used ({construct, scale, reliability or null}).", "critical": true},
+    {"key": "sample", "type": "object", "properties": {"n": {"type": "integer"}, "population": {"type": "string"}, "country": {"type": "string"}}, "description": "Sample ({n, population, country}).", "critical": true},
+    {"key": "method", "type": "object", "properties": {"design": {"type": "string"}, "analysis": {"type": "string"}}, "description": "Design and analysis ({design, analysis})."},
+    {"key": "key_findings", "type": "list", "items": {"type": "object", "properties": {"statement": {"type": "string"}, "effect_size": {"type": "string", "nullable": true}, "p_or_ci": {"type": "string", "nullable": true}}}, "description": "Findings ({statement, effect_size or null, p_or_ci or null}).", "critical": true},
+    {"key": "limitations", "type": "list", "items": {"type": "string"}, "description": "Limitations the authors state."},
+    {"key": "future_research", "type": "list", "items": {"type": "string"}, "description": "Future-research statements by the authors."}
   ]
 }

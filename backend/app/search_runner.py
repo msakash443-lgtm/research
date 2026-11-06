@@ -14,17 +14,19 @@ Rules this module keeps:
   complete.
 * A connector is used only if it is enabled in settings (default off, plan rule 18).
 * Records are not saved as `Source` rows here: they are unverified third-party data. Storing them
-  is M1.6.4. The row keeps only ids, DOI and a title key.
+  is M1.6.4 (X.167). The row keeps ids, DOI, title, year, a dedup title key and the connector's citation count (M2.13).
 * Only the `search_run` task handler calls it, and that task type needs gate G2 (M1.8.1): nothing
   runs a bulk search until a person has approved the search strategy and criteria.
 
-Counts cover this one run. "Duplicates removed" is within the run only (repeated ids, then DOI /
+Counts cover this one run. Connector records are persisted as unverified `Source` rows for human
+metadata review and screening; verification is never inferred from retrieval. "Duplicates removed" is within the run only (repeated ids, then DOI /
 title+year+author matches); removing duplicates across databases needs the stored `results` of all
 runs of a project, which M1.7.3 will do from the DOI and work key kept here.
 """
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -33,16 +35,20 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import audit
+from app.artifacts import register_artifact
 from app.connectors.http import bypass_cache
 from app.config import get_settings
 from app.connectors.access import is_enabled
 from app.connectors.base import Connector, ConnectorError, PaperRecord, SearchRequest
 from app.dedupe import doi_key, group_duplicates, work_key
-from app.models import Project, SearchQuery
+from app.models import SOURCE_ORIGIN_RETRIEVED, Project, ProjectStage, SearchQuery, Source
 from app.search_query import BooleanQuery
 from app.search_limits import DEFAULT_MAX_RESULTS, HARD_MAX_RESULTS
+
 from app.search_query_adapters import adapt
 from app.search_rerun import rerun_refusal
+
+SEARCH_RUN_KIND = "search_run"  # artifact kind for one completed search (X.42)
 
 PAGE_SIZE = 100
 
@@ -64,28 +70,41 @@ def _check(connector: Connector, max_results: int) -> None:
 
 
 def _collect(connector: Connector, text: str, filters: dict[str, Any], max_results: int):
-    """Page through results. Returns (records, reported_total, truncated).
+    """Page through results. Returns (records, reported_total, truncated, stopped_early).
 
     A connector whose `search` is relevance-only may offer `boolean_search`, which applies the
     adapter's Boolean string as written (Semantic Scholar bulk search, M1.5.5); it is used when present.
+
+    A `ConnectorError` on the *first* page means nothing was retrieved: it propagates, so the whole
+    search fails and nothing is saved (plan rule 22). A `ConnectorError` on a *later* page (e.g.
+    OpenAlex's "API key required for cursor paging" once a key-less caller goes past page 1, X.166)
+    keeps the records already collected instead of discarding them: `truncated` is set and
+    `stopped_early` names why, so the caller can record it as a caveat.
     """
     search = getattr(connector, "boolean_search", None) or connector.search
     records: list[PaperRecord] = []
     cursor: str | None = None
     total: int | None = None
+    page_number = 0
     while True:
-        page = search(
-            SearchRequest(query=text, limit=min(PAGE_SIZE, max_results - len(records)), cursor=cursor, filters=filters)
-        )
+        page_number += 1
+        try:
+            page = search(
+                SearchRequest(query=text, limit=min(PAGE_SIZE, max_results - len(records)), cursor=cursor, filters=filters)
+            )
+        except ConnectorError as exc:
+            if page_number == 1:
+                raise
+            return records, total, True, f"{connector.name} stopped paging after page {page_number - 1}: {exc}"
         if total is None:
             total = page.total
         records.extend(page.records)
         if len(records) > max_results:  # a page may hold more than asked for (S2 bulk pages hold 1,000)
-            return records[:max_results], total, True
+            return records[:max_results], total, True, None
         if not page.records or page.next_cursor is None:
-            return records, total, False
+            return records, total, bool(getattr(connector, "last_search_capped", False)), None
         if len(records) >= max_results:
-            return records[:max_results], total, True
+            return records[:max_results], total, True, None
         cursor = page.next_cursor
 
 
@@ -101,11 +120,24 @@ def _summarise(records: list[PaperRecord]) -> tuple[list[dict[str, Any]], dict[s
     results = []
     for group in groups:
         anchor = distinct[group[0]]
+        known = [c for i in group if (c := distinct[i].cited_by_count) is not None]
         results.append(
             {
                 "id": f"{anchor.connector}:{anchor.external_id}",
                 "doi": doi_key(anchor.doi),
                 "work_key": work_key(anchor),
+                "title": anchor.title,
+                "authors": list(anchor.authors),
+                "year": anchor.year,
+                "venue": anchor.venue,
+                "abstract": anchor.abstract,
+                "url": anchor.url,
+                "oa_url": anchor.oa_url,
+                "source_ids": dict(anchor.source_ids),
+                "quality_flags": list(anchor.quality_flags),
+                "language": anchor.language,
+                # Highest count among the merged duplicates (M2.13); None = no record had one, not 0.
+                "cited_by_count": max(known) if known else None,
             }
         )
     counts = {
@@ -115,6 +147,39 @@ def _summarise(records: list[PaperRecord]) -> tuple[list[dict[str, Any]], dict[s
         "duplicates_removed": len(records) - len(groups),
     }
     return results, counts
+
+
+def _ingest_key(search_id: uuid.UUID, result: dict[str, Any]) -> str:
+    """Stable, bounded idempotency key for one stored result in one saved search."""
+    digest = hashlib.sha256(f"{search_id}:{result['id']}".encode("utf-8")).hexdigest()[:24]
+    return f"search:{search_id}:{digest}"
+
+
+def _store_results_as_sources(
+    db: Session, *, project: Project, actor: str, search_id: uuid.UUID, connector: str, results: list[dict[str, Any]], run_at: datetime
+) -> int:
+    """Persist completed search records as unverified sources, idempotently for a task retry."""
+    created = 0
+    for result in results:
+        key = _ingest_key(search_id, result)
+        if db.scalar(select(Source.id).where(Source.project_id == project.id, Source.ingest_key == key)) is not None:
+            continue
+        citation_count = result.get("cited_by_count")
+        db.add(
+            Source(
+                project_id=project.id,
+                title=result["title"][:500], doi=result.get("doi"), url=result.get("url"),
+                authors=result.get("authors") or None, year=result.get("year"), venue=result.get("venue"),
+                abstract=result.get("abstract"), oa_url=result.get("oa_url"), source_ids=result.get("source_ids") or None,
+                quality_flags=result.get("quality_flags") or None, language=result.get("language"),
+                origin=SOURCE_ORIGIN_RETRIEVED, metadata_verified=False, citation_count=citation_count,
+                citation_count_source=connector if citation_count is not None else None,
+                citation_count_at=run_at if citation_count is not None else None, created_by=actor, ingest_key=key,
+                found_via={"method": "database_search", "search_id": str(search_id), "connector": connector},
+            )
+        )
+        created += 1
+    return created
 
 
 def _execute(
@@ -133,7 +198,7 @@ def _execute(
 ) -> SearchQuery:
     try:
         with bypass_cache():  # a search is always live, never answered from the connector cache (M1.3.7)
-            records, total, truncated = _collect(connector, text, filters, max_results)
+            records, total, truncated, stopped_early = _collect(connector, text, filters, max_results)
     except ConnectorError as exc:
         audit.record(
             db,
@@ -148,13 +213,16 @@ def _execute(
     counts["truncated"] = truncated
     counts["cache_bypassed"] = True
     counts["skipped_records"] = int(getattr(connector, "skipped_records", 0) or 0)
+    run_at = datetime.now(timezone.utc)
+    if stopped_early:
+        caveats = [*caveats, stopped_early]
     row = SearchQuery(
         project_id=project.id,
         search_id=search_id,
         database=connector.name,
         query_string=text,
         filters=filters,
-        run_at=datetime.now(timezone.utc),
+        run_at=run_at,
         n_results=counts["unique"],
         version=version,
         exact=exact,
@@ -165,6 +233,11 @@ def _execute(
     )
     db.add(row)
     db.flush()
+    stored_sources = _store_results_as_sources(
+        db, project=project, actor=actor, search_id=search_id, connector=connector.name, results=results, run_at=run_at
+    )
+    db.flush()
+    register_artifact(db, project.id, SEARCH_RUN_KIND, str(row.id), ProjectStage.retrieved, actor=actor)
     audit.record(
         db,
         actor=actor,
@@ -175,7 +248,7 @@ def _execute(
             "version": version,
             "database": connector.name,
             "exact": exact,
-            "counts": counts,
+            "counts": counts, "sources_created": stored_sources,
         },
     )
     return row

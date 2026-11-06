@@ -1,13 +1,23 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 import httpx
 import jsonschema
+from httpx import HTTPStatusError, TransportError
 from pydantic import SecretStr
 
 from app.config import Settings
+
+# X.109: a dropped connection, a timeout, rate limiting or a gateway error is retried a few times
+# before the step fails loudly; a request the service refuses (bad key, bad request) is not.
+TRANSIENT_ATTEMPTS = 3
+TRANSIENT_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
+BACKOFF_SECONDS = 1.0
+MAX_RETRY_AFTER_SECONDS = 30.0
+_sleep = time.sleep
 
 
 class LLMConfigurationError(RuntimeError):
@@ -58,6 +68,56 @@ def _violation(output: str, schema: dict[str, Any]) -> tuple[Any, str | None]:
     return value, None
 
 
+def _transient(exc: Exception) -> bool:
+    if isinstance(exc, HTTPStatusError):
+        if exc.response.status_code == 429 and _api_error_code(exc.response) in {
+            "credit_balance_exhausted",
+            "organization_usage_limit_exceeded",
+            "organization_spend_limit_exceeded",
+            "project_spend_limit_exceeded",
+        }:
+            return False
+        return exc.response.status_code in TRANSIENT_STATUS_CODES
+    return isinstance(exc, TransportError)
+
+
+def _api_error_code(response: httpx.Response) -> str | None:
+    """Read a provider error code without echoing response content or credentials."""
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return None
+    code = error.get("code")
+    return code if isinstance(code, str) else None
+
+
+def _http_error_message(exc: HTTPStatusError) -> str:
+    """Return a short, actionable failure that is safe to persist and show to users."""
+    code = _api_error_code(exc.response)
+    if code == "credit_balance_exhausted":
+        return "The configured LLM API account has no credits remaining. Add API credits, then retry."
+    if code in {"organization_usage_limit_exceeded", "organization_spend_limit_exceeded", "project_spend_limit_exceeded"}:
+        return "The configured LLM API account has reached a usage or spend limit. Review its API billing limits, then retry."
+    if exc.response.status_code in {401, 403}:
+        return "The configured LLM API rejected its credentials or model access. Check the API key and model permissions."
+    return "The configured LLM service could not be reached."
+
+
+def _retry_delay(exc: Exception, attempt: int) -> float:
+    """A numeric `Retry-After` (capped), else doubling backoff from BACKOFF_SECONDS."""
+    if isinstance(exc, HTTPStatusError):
+        try:
+            return min(max(float(exc.response.headers["retry-after"]), 0.0), MAX_RETRY_AFTER_SECONDS)
+        except (KeyError, ValueError):
+            pass
+    return BACKOFF_SECONDS * 2 ** (attempt - 1)
+
+
 _UNSET = object()
 
 
@@ -86,6 +146,7 @@ class OpenAICompatibleLLM:
         self._timeout_seconds = timeout_seconds if timeout_seconds is not None else settings.llm_timeout_seconds
         self._require_api_key = require_api_key
         self._meter = meter  # optional: .before_call() may refuse, .after_call(model, response) records usage
+        self._last_model = self._model
 
     @classmethod
     def for_participant_data(cls, settings: Settings, *, meter: Any = None) -> "OpenAICompatibleLLM":
@@ -120,11 +181,32 @@ class OpenAICompatibleLLM:
             )
         return cls(settings, meter=meter)
 
-    def complete(self, system_prompt: str, user_prompt: str) -> str:
-        if (self._require_api_key and not self._api_key) or not self._api_base_url or not self._model:
+    @classmethod
+    def local(cls, settings: Settings, *, meter: Any = None) -> "OpenAICompatibleLLM":
+        """An adapter for the local/self-hosted endpoint only. Fails loudly, never falls back to the third-party model."""
+        if not (settings.local_llm_api_base_url and settings.local_llm_model):
             raise LLMConfigurationError(
-                "The agent is not connected to an LLM yet. Configure LLM_API_KEY, LLM_API_BASE_URL, and LLM_MODEL."
+                "This project is set to use only the local model, but none is configured. Set "
+                "LOCAL_LLM_API_BASE_URL and LOCAL_LLM_MODEL, or change the project's model route."
             )
+        return cls(
+            settings,
+            api_key=settings.local_llm_api_key,
+            api_base_url=settings.local_llm_api_base_url,
+            model=settings.local_llm_model,
+            timeout_seconds=settings.local_llm_timeout_seconds,
+            require_api_key=False,
+            meter=meter,
+        )
+
+    @property
+    def model(self) -> str:
+        """The model that supplied the latest reply, recorded with every AI output."""
+        return self._last_model
+
+    def complete(self, system_prompt: str, user_prompt: str, *, max_tokens: int = 1800) -> str:
+        self.validate_configuration()
+        self._last_model = self._model
 
         base_url = self._api_base_url.rstrip("/")
         url = base_url if base_url.endswith("/chat/completions") else f"{base_url}/chat/completions"
@@ -135,25 +217,37 @@ class OpenAICompatibleLLM:
                 {"role": "user", "content": user_prompt},
             ],
             "temperature": 0.1,
-            "max_tokens": 1800,
+            "max_tokens": max_tokens,
         }
-        if self._meter is not None:
-            self._meter.before_call()
+        ticket = self._meter.before_call(max_tokens) if self._meter is not None else None
         headers = {"Content-Type": "application/json"}
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key.get_secret_value()}"
         try:
-            with httpx.Client(timeout=self._timeout_seconds, follow_redirects=False) as client:
-                response = client.post(url, headers=headers, json=payload)
-                response.raise_for_status()
-                data = response.json()
-        except httpx.HTTPError as exc:
-            raise LLMResponseError("The configured LLM service could not be reached.") from exc
-        except ValueError as exc:
-            raise LLMResponseError("The configured LLM service returned invalid JSON.") from exc
+            for attempt in range(1, TRANSIENT_ATTEMPTS + 1):
+                try:
+                    with httpx.Client(timeout=self._timeout_seconds, follow_redirects=False) as client:
+                        response = client.post(url, headers=headers, json=payload)
+                        response.raise_for_status()
+                        data = response.json()
+                    break
+                except httpx.HTTPError as exc:
+                    if attempt < TRANSIENT_ATTEMPTS and _transient(exc):
+                        _sleep(_retry_delay(exc, attempt))
+                        continue
+                    if isinstance(exc, HTTPStatusError):
+                        raise LLMResponseError(_http_error_message(exc)) from exc
+                    raise LLMResponseError("The configured LLM service could not be reached.") from exc
+                except ValueError as exc:
+                    raise LLMResponseError("The configured LLM service returned invalid JSON.") from exc
+        except BaseException:
+            # No usage to record: give the reservation back so the budget is not held by a call that never answered.
+            if self._meter is not None:
+                self._meter.abort_call(ticket)
+            raise
 
         if self._meter is not None:
-            self._meter.after_call(self._model, data)
+            self._meter.after_call(self._model, data, ticket)
         try:
             answer = _message_text(data["choices"][0]["message"]["content"])
         except (KeyError, IndexError, TypeError) as exc:
@@ -162,12 +256,21 @@ class OpenAICompatibleLLM:
             raise LLMResponseError("The configured LLM service returned an empty answer.")
         return answer
 
+    def validate_configuration(self) -> None:
+        """Raise when this adapter does not have the configuration needed to call its model."""
+        if (self._require_api_key and not self._api_key) or not self._api_base_url or not self._model:
+            raise LLMConfigurationError(
+                "The agent is not connected to an LLM yet. Configure LLM_API_KEY, LLM_API_BASE_URL, and LLM_MODEL."
+            )
+
     def complete_json(
         self,
         system_prompt: str,
         user_prompt: str,
         schema: dict[str, Any],
         max_attempts: int | None = None,
+        *,
+        max_tokens: int = 1800,
     ) -> Any:
         """Call the model until its reply is JSON that satisfies `schema`.
 
@@ -183,7 +286,12 @@ class OpenAICompatibleLLM:
         prompt = user_prompt
         reason = ""
         for _ in range(attempts):
-            output = self.complete(system_prompt, prompt)
+            # Keep the original call shape for adapters/test doubles when using the existing default.
+            output = (
+                self.complete(system_prompt, prompt)
+                if max_tokens == 1800
+                else self.complete(system_prompt, prompt, max_tokens=max_tokens)
+            )
             value, reason = _violation(output, schema)
             if reason is None:
                 return value

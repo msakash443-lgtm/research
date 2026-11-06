@@ -1,0 +1,18 @@
+# Discipline profile: Management studies (chosen by the product owner, plan Q3, 2026-10-09). Projects can override any setting.
+name = "management"
+version = 1
+label = "Management studies"
+description = "Management and organisation studies: survey, case and panel methods; business databases and working papers."
+
+[settings]
+citation_style = "apa"
+databases = ["openalex", "crossref", "semantic_scholar", "scopus", "web_of_science", "business_source_complete", "ssrn"]
+methods = [
+  "survey_study",
+  "case_study",
+  "structural_equation_modeling",
+  "panel_fixed_effects",
+  "qualitative_interview_study",
+  "meta_analysis",
+]
+reporting_guideline = "PRISMA-2020"

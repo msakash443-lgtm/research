@@ -1,0 +1,7 @@
+name = "dpdp"
+version = 1
+label = "India DPDP Act"
+description = "Digital Personal Data Protection Act, 2023. Personal data should be erased once its purpose is served; this profile does not choose a retention period for you. Not legal advice."
+
+[settings]
+regulation = "DPDP Act 2023"

@@ -358,7 +358,7 @@ Gates are enforced by the orchestrator: downstream tasks stay in `blocked` state
 | Reliability | Idempotent tasks; resumable workflows; no data loss on crash |
 | Security | Encrypted at rest/in transit; role-based access (owner, co-author, supervisor, reviewer); secrets vaulted |
 | Auditability | Immutable audit log exportable per project |
-| Performance | Screen ≥ 1,000 abstracts/hour (AI-assisted); full-text indexing of 500 papers in < 1 hour |
+| Performance | Screen ≥ 1,000 abstracts/hour (AI-assisted); full-text indexing of 500 papers in < 1 hour. *Owner decision 2026-10-21 (plan X.19): the 1,000/hour figure applied to a third-party API is dropped; the reference is the measured local Ollama rate of 113.8 abstracts/hour. The 500-papers-in-1-hour target is unchanged.* |
 | Scalability | Multi-project, multi-user; queue-based workers |
 | Usability | Keyboard-first screening, side-by-side PDF + extraction view, diff-based editing |
 | Portability | Export to open formats: CSV, BibTeX/RIS, DOCX, LaTeX, Markdown, JSON |

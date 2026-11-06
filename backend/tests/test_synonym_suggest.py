@@ -44,13 +44,18 @@ def project(fake_llm):
     return client, client.post("/api/projects", json={"title": "Remote work"}).json()["id"]
 
 
-def test_proposals_come_back_filtered_with_provenance_and_nothing_is_saved(project, fake_llm):
+def test_proposals_come_back_filtered_with_provenance_and_are_saved_as_shared_suggestions(project, fake_llm):
     client, pid = project
     fake_llm.handler = lambda r: _reply(("telework", "already used"), ("working from home", "common phrase"))
     body = client.post(f"/api/projects/{pid}/searches/suggest-synonyms", json={"block": {"label": "work", "terms": ["remote work", "telework"]}}).json()
     assert [p["term"] for p in body["proposals"]] == ["working from home"] and body["dropped"] == 1
     assert body["model_id"] == "fake-model" and body["prompt_version"] == "synonym_suggestions@1"
+    assert body["target_id"] and body["proposals"][0]["suggestion_id"]
     assert client.get(f"/api/projects/{pid}/searches").json()["searches"] == []
+    suggestions = client.get(f"/api/projects/{pid}/suggestions", params={"target_kind": "synonym", "target_id": body["target_id"]}).json()
+    assert len(suggestions) == 1
+    assert suggestions[0]["id"] == str(body["proposals"][0]["suggestion_id"])
+    assert suggestions[0]["content"].startswith("working from home:")
     events = client.get(f"/api/projects/{pid}/audit").json()
     suggested = [e for e in events if e["action"] == "search.synonyms_suggested"]
     assert len(suggested) == 1 and suggested[0]["model_id"] == "fake-model" and "working from home" not in json.dumps(suggested)

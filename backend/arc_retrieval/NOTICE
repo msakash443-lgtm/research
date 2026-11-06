@@ -1,0 +1,10 @@
+This package is vendored from AutoResearchClaw (ARC), MIT License,
+copied from the local ARC checkout on 2026-10-13 (plan.md X.1.2).
+
+Files copied: retrieval_api.py, middleware/auth.py, web/{__init__,_ssrf,agent,crawler,
+pdf_extractor,scholar,search}.py. Changes from upstream:
+- package renamed researchclaw -> arc_retrieval (imports and messages).
+- web/scholar.py: removed to_literature_paper(); it imported ARC's pipeline package,
+  which research-main must not import (plan.md §1.6). The retrieval service does not use it.
+
+Re-vendor by copying again and re-applying the two changes above; keep it in sync with ARC by hand.

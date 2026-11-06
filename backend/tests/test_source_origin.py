@@ -68,7 +68,7 @@ def test_sql_expression_matches_python_property():
     assert b not in flagged and c not in flagged
 
 
-def test_arc_ingest_marks_sources_retrieved(monkeypatch):
+def test_arc_ingest_marks_sources_retrieved(monkeypatch, fake_llm):
     from app.config import get_settings
 
     settings = get_settings()

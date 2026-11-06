@@ -11,9 +11,10 @@ URL is untrusted input. `fetch_pdf(url)` therefore:
   - streams the body with a byte cap and an overall deadline, and checks the `%PDF-` signature,
     so a landing page served as `application/pdf` is not stored as one.
 
-Known limit: the address is checked, then httpx resolves the name again to connect, so a DNS
-server that answers differently the second time (DNS rebinding) can slip past. Plan task M2.7.5
-tracks pinning the connection to the checked address.
+Connections are pinned to the address that was checked (plan M2.7.5): the URL handed to httpx
+carries the validated address, so the name is never resolved again (no DNS rebinding). The original
+name goes in the `Host` header and as the TLS server name, so the certificate is still checked
+against it. Every redirect hop is checked and pinned the same way.
 
 `FetchRefused` means retrying won't help (blocked address, not a PDF, too large, 4xx);
 `FetchFailed` means it might (network error, timeout, 5xx, 429).
@@ -25,7 +26,7 @@ import ipaddress
 import socket
 import time
 from typing import Callable
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import httpx
 
@@ -67,8 +68,11 @@ def is_public_address(address: str) -> bool:
     return ip.is_global and not ip.is_multicast
 
 
-def check_url(url: str, resolver: Resolver = resolve_host) -> None:
-    """Raise `FetchRefused` unless `url` is http(s) on a default port and its host is public."""
+def check_url(url: str, resolver: Resolver = resolve_host) -> str:
+    """Raise `FetchRefused` unless `url` is http(s) on a default port and its host is public.
+
+    Returns the checked address; the caller must connect to that address, not to the name.
+    """
     try:
         parts = urlsplit(url)
         port = parts.port
@@ -89,6 +93,7 @@ def check_url(url: str, resolver: Resolver = resolve_host) -> None:
         raise FetchFailed(f"Could not resolve {host}")
     if not all(is_public_address(a) for a in addresses):
         raise FetchRefused("The PDF link points to a private or reserved network address")
+    return addresses[0]
 
 
 def fetch_pdf(
@@ -101,15 +106,18 @@ def fetch_pdf(
 ) -> tuple[bytes, str]:
     """Download a PDF. Returns `(bytes, final_url)`; raises `FetchRefused` / `FetchFailed`."""
     deadline = time.monotonic() + timeout_seconds
-    with httpx.Client(
-        transport=transport, timeout=timeout_seconds, follow_redirects=False, trust_env=False,
-        headers={"User-Agent": USER_AGENT, "Accept": "application/pdf"},
-    ) as client:
-        current = url
-        for _ in range(MAX_REDIRECTS + 1):
-            check_url(current, resolver)
+    current = url
+    for _ in range(MAX_REDIRECTS + 1):
+        address = check_url(current, resolver)
+        target, pinned_headers, extensions = _pinned_request(current, address)
+        # One client per hop: its pool is keyed by address, so a connection verified for one name
+        # could otherwise carry a request for another name that resolves to the same address.
+        with httpx.Client(
+            transport=transport, timeout=timeout_seconds, follow_redirects=False, trust_env=False,
+            headers={"User-Agent": USER_AGENT, "Accept": "application/pdf"},
+        ) as client:
             try:
-                with client.stream("GET", current) as response:
+                with client.stream("GET", target, headers=pinned_headers, extensions=extensions) as response:
                     if response.is_redirect:
                         location = response.headers.get("location")
                         if not location:
@@ -122,7 +130,24 @@ def fetch_pdf(
                 raise FetchFailed("The PDF host timed out") from exc
             except httpx.TransportError as exc:
                 raise FetchFailed("Could not connect to the PDF host") from exc
-        raise FetchRefused(f"The PDF link redirected more than {MAX_REDIRECTS} times")
+    raise FetchRefused(f"The PDF link redirected more than {MAX_REDIRECTS} times")
+
+
+def _pinned_request(url: str, address: str) -> tuple[str, dict[str, str], dict[str, str]]:
+    """Return `(target, headers, extensions)` so that httpx dials `address` for the host of `url`.
+
+    httpx dials the host in the URL, so the URL carries the checked address and the name is never
+    looked up again. The name goes in the `Host` header and, as `sni_hostname`, is what httpcore
+    verifies the TLS certificate against.
+    """
+    parts = urlsplit(url)
+    name = parts.hostname or ""
+    target = urlunsplit((parts.scheme, _bracketed(address), parts.path, parts.query, ""))
+    return target, {"Host": _bracketed(name)}, {"sni_hostname": name}
+
+
+def _bracketed(host: str) -> str:
+    return f"[{host}]" if ":" in host else host
 
 
 def _check_status(code: int) -> None:

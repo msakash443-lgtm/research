@@ -30,7 +30,7 @@ from app import audit
 from app.connectors.base import PaperRecord
 from app.dedupe import group_duplicates
 from app.merge import MergeError, merge_records
-from app.models import Project, Source
+from app.models import Claim, ClaimEvidence, Project, Source
 
 MAX_MERGE = 20
 _SYNTHETIC = re.compile(r"^src\d+$")
@@ -73,6 +73,7 @@ def merge_sources(
         for s in db.scalars(
             select(Source)
             .where(Source.project_id == project.id, Source.id.in_(ids), Source.merged_into.is_(None))
+            .with_for_update()
             .options(selectinload(Source.excerpts))
         )
     }
@@ -84,6 +85,19 @@ def merge_sources(
     else:  # verified first, then oldest
         order = sorted(found.values(), key=lambda s: (not s.metadata_verified, s.created_at, str(s.id)))
     anchor = order[0]
+
+    claim_ids = db.scalars(
+        select(Claim.id).join(ClaimEvidence, ClaimEvidence.claim_id == Claim.id).where(
+            Claim.project_id == project.id, ClaimEvidence.source_id.in_(ids), Claim.verified.is_(True)
+        ).distinct()
+    ).all()
+    if claim_ids:
+        db.query(Claim).filter(Claim.id.in_(claim_ids)).update({Claim.verified: False}, synchronize_session=False)
+        audit.record(
+            db, actor=actor, action="claim.verification_revoked", project_id=project.id,
+            payload={"source_ids": [str(source_id) for source_id in ids], "claim_ids": [str(claim_id) for claim_id in claim_ids],
+                     "claim_count": len(claim_ids), "reason": "source_merge"},
+        )
 
     records = [_record(i, s) for i, s in enumerate(order)]
     if len(group_duplicates(records)) != 1:
@@ -124,5 +138,6 @@ def merge_sources(
     payload["kept"] = str(anchor.id)
     payload["merged"] = [str(s.id) for s in order[1:]]
     payload["verification_cleared"] = cleared
+    payload["claims_invalidated"] = len(claim_ids)
     audit.record(db, actor=actor, action="source.merged", project_id=project.id, payload=payload)
     return anchor

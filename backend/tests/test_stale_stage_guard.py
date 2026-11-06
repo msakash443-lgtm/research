@@ -57,7 +57,16 @@ def _reenter(world, stage):
 
 
 def _advance(world):
-    return world["client"].post(f"/api/projects/{world['project']}/stage/advance", json={})
+    body = {}
+    url = f"/api/projects/{world['project']}/stage/advance"
+    response = world["client"].post(url, json=body)
+    detail = response.json().get("detail") if response.status_code == 409 else None
+    locked = detail.get("recommended") if isinstance(detail, dict) else None
+    if locked:
+        # These tests check staleness and re-entry; lock levels are covered in test_stage_condition_overrides.py.
+        body["override_reasons"] = {c["id"]: "Set up by this test; not what it checks." for c in locked}
+        response = world["client"].post(url, json=body)
+    return response
 
 
 def _stage(world):
@@ -147,6 +156,20 @@ def test_a_current_result_older_than_the_staleness_is_not_a_replacement(world):
         db.rollback()
 
 
+def test_a_current_result_of_the_same_kind_at_a_different_stage_does_not_replace_a_stale_one(world):
+    """The same kind can be registered at several stages (e.g. section drafts); only the stage that
+    produced the stale result can replace it, even when the other one is newer."""
+    _set_stage(world, S.synthesized)
+    stale_id = _artifact(world, "research_run", S.extracted)
+    _artifact(world, "research_run", S.synthesized)  # current, same kind, newer, different stage
+    with SessionLocal() as db:
+        stale = db.get(Artifact, stale_id)
+        stale.status, stale.stale_reason, stale.stale_at = ArtifactStatus.stale, "r", utcnow() - timedelta(hours=1)
+        project = db.get(Project, world["pid"])
+        assert [a.id for a in art.unreplaced_stale(db, project, S.synthesized)] == [stale_id]
+        db.rollback()
+
+
 def test_stale_results_of_later_stages_do_not_block_earlier_steps(world):
     _set_stage(world, S.gaps_selected)
     _artifact(world, "gap_list", S.gaps_selected)
@@ -176,7 +199,8 @@ def test_the_stage_view_shows_the_next_stage_as_not_ready(after_reentry):
 
     body = world["client"].get(f"/api/projects/{world['project']}/stage").json()
 
-    assert body["next"] == [{"stage": "synthesized", "gate": None, "gate_status": None, "ready": False}]
+    option = body["next"][0]
+    assert (option["stage"], option["gate"], option["gate_status"], option["ready"]) == ("synthesized", None, None, False)
     _artifact(world, "research_run", S.synthesized)
     assert world["client"].get(f"/api/projects/{world['project']}/stage").json()["next"][0]["ready"] is True
 

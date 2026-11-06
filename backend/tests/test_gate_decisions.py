@@ -70,6 +70,13 @@ def test_supervisor_approves_a_normal_gate_and_it_is_recorded(team):
 def test_owner_only_gates_refuse_a_supervisor_but_accept_the_owner(team, code):
     clients, _, project_id = team
     approve_earlier_gates(project_id, code)
+    if code == "G8":  # M5.3.4: G8 needs a locked analysis plan first
+        dataset = clients["owner"].post(f"/api/projects/{project_id}/datasets", json={"name": "s", "csv_text": "x\n1\n2\n"}).json()["id"]
+        plan = clients["owner"].post(
+            f"/api/projects/{project_id}/datasets/{dataset}/analysis-plans",
+            json={"tests": ["descriptives"], "variables": ["x"], "seed": 1},
+        ).json()["id"]
+        assert clients["owner"].post(f"/api/projects/{project_id}/analysis-plans/{plan}/lock").status_code == 200
 
     assert clients["supervisor"].post(_url(project_id, code, "approve")).status_code == 403
     assert clients["owner"].post(_url(project_id, code, "approve")).status_code == 200

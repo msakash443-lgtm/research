@@ -51,7 +51,7 @@ def test_an_inline_run_that_cannot_proceed_still_returns_normally():
     assert body["status"] == "needs_configuration" and "LLM_API_KEY" in body["error_message"]
 
 
-def test_an_unexpected_executor_error_is_a_failed_run_not_a_500(fake_llm, monkeypatch):
+def test_an_unexpected_executor_error_fails_the_run_at_once_in_inline_mode(fake_llm, monkeypatch):
     def explode(*args, **kwargs):
         raise RuntimeError("boom inside the executor")
 
@@ -62,13 +62,13 @@ def test_an_unexpected_executor_error_is_a_failed_run_not_a_500(fake_llm, monkey
 
     assert response.status_code == 202
     body = response.json()
+    # Inline mode has no worker to pick up a retry, so the run fails now instead of waiting as queued for ever.
     assert body["status"] == "failed" and "unexpectedly" in body["error_message"] and body["answer"] is None
     with SessionLocal() as db:
         task = db.scalars(select(Task)).one()
         actions = [e.action for e in db.scalars(select(AuditEvent).where(AuditEvent.project_id == uuid.UUID(project_id)))]
-    # Retrying can't fix it, so the task fails at once instead of looping.
     assert task.status == TaskStatus.failed and task.attempts == 1
-    assert actions.count("task.failed") == 1 and "research_run.failed" in actions
+    assert "task.requeued" not in actions
 
 
 def test_an_inline_request_runs_only_its_own_task_not_someone_elses(fake_llm):

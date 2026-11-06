@@ -2,7 +2,7 @@ from typing import Any
 
 from authlib.integrations.starlette_client import OAuth
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -10,7 +10,9 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.database import get_db
 from app.dependencies import session_user
+from app.erasure import ErasureBlocked, erase_account
 from app.models import ExternalIdentity, User
+from app.personal_data_export import export_personal_data
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
@@ -89,6 +91,7 @@ async def callback(request: Request, db: Session = Depends(get_db)):
         claims = await client.parse_id_token(request, token)
     user = user_from_google_claims(claims, db)
     request.session["user_id"] = str(user.id)
+    request.session["session_epoch"] = user.session_epoch
     return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -105,6 +108,48 @@ def logout(request: Request):
     request.session.clear()
 
 
+@router.post("/logout-everywhere", status_code=status.HTTP_204_NO_CONTENT)
+def logout_everywhere(request: Request, db: Session = Depends(get_db)):
+    """Ends every browser session for this user, including this one (X.4.3)."""
+    user = session_user(request, db)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not signed in")
+    user.session_epoch += 1
+    db.commit()
+    request.session.clear()
+
+
+@router.get("/export-my-data")
+def export_my_data(request: Request, db: Session = Depends(get_db)):
+    """Download the signed-in user's own personal data as JSON (X.4.8); each export is audited."""
+    user = session_user(request, db)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not signed in")
+    data = export_personal_data(db, user)
+    db.commit()
+    return JSONResponse(data, headers={"Content-Disposition": 'attachment; filename="my-personal-data.json"'})
+
+
+class EraseAccount(BaseModel):
+    confirm_email: str
+
+
+@router.post("/erase-account", status_code=status.HTTP_204_NO_CONTENT)
+def erase_own_account(payload: EraseAccount, request: Request, db: Session = Depends(get_db)):
+    """Pseudonymise the signed-in user's account (X.4.7.1). The person must type their own email to confirm."""
+    user = session_user(request, db)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not signed in")
+    if payload.confirm_email.strip().lower() != user.email:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Type your account email to confirm erasure")
+    try:
+        erase_account(db, user)
+    except ErasureBlocked as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    db.commit()
+    request.session.clear()
+
+
 @router.post("/development/login")
 def development_login(payload: DevelopmentLogin, request: Request, db: Session = Depends(get_db)):
     if get_settings().environment != "development":
@@ -116,4 +161,5 @@ def development_login(payload: DevelopmentLogin, request: Request, db: Session =
         db.commit()
         db.refresh(user)
     request.session["user_id"] = str(user.id)
+    request.session["session_epoch"] = user.session_epoch
     return profile(user)
