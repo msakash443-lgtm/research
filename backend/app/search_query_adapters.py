@@ -14,11 +14,9 @@ filtered, by the blocks. A caller must keep the caveats with the search record.
 Syntax per database follows the documented API query syntax. Connector tests use mock transports;
 they do not verify account entitlements, quotas, or live-service behavior. Wildcard use is flagged
 where the API documentation does not clearly establish its behavior:
-
-* openalex         `search=` accepts uppercase AND / OR with quotes and parentheses.
+* openalex         `search=` accepts uppercase AND / OR, but phrase matching is relevance-ranked rather than exact.
 * arxiv            `search_query=` accepts `all:"phrase"` terms with AND / OR and parentheses.
-* pubmed           `"phrase"[tiab]` field-tagged terms (title/abstract) with AND / OR; the tag
-                   stops PubMed's automatic term mapping from widening the search.
+* pubmed           `"phrase"[tiab]` field-tagged terms (title/abstract) with AND / OR; the tag stops PubMed's automatic term mapping from widening the search.
 * core             `q=` accepts uppercase AND / OR with quotes and parentheses, but searches full
                    text as well as title and abstract, so it matches more widely (caveat).
 * scopus           `TITLE-ABS-KEY(...)` with uppercase AND / OR and quoted phrases.
@@ -75,8 +73,12 @@ def _flat(blocks: tuple[ConceptBlock, ...]) -> str:
 
 
 def openalex(query: BooleanQuery) -> AdaptedQuery:
-    caveats = (WILDCARD_UNVERIFIED,) if _has_wildcard(query) else ()
-    return AdaptedQuery("openalex", _join(query, _quoted), exact=not caveats, caveats=caveats)
+    caveats = [
+        "OpenAlex search is relevance-ranked; exact phrase matching is not supported."
+    ]
+    if _has_wildcard(query):
+        caveats.append(WILDCARD_UNVERIFIED)
+    return AdaptedQuery("openalex", _join(query, lambda t: t.rstrip("*")), exact=False, caveats=tuple(caveats))
 
 
 def arxiv(query: BooleanQuery) -> AdaptedQuery:

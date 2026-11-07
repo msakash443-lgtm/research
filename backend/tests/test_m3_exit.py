@@ -104,8 +104,8 @@ def test_m3_exit_question_search_screen_verified_evidence_and_ranked_gap(monkeyp
     assert client.get(f"/api/projects/{project_id}/context").json()[0]["content"] == question
     search = client.get(f"/api/projects/{project_id}/searches").json()["searches"][0]
     run = search["versions"][0]
-    assert search["database"] == "openalex" and search["query_string"] == '("remote work") AND ("productivity")'
-    assert search["filters"] == {"year_from": 2020} and search["exact"] is True
+    assert search["database"] == "openalex" and search["query_string"] == '(remote work) AND (productivity)'
+    assert search["filters"] == {"year_from": 2020} and search["exact"] is False
     assert run["n_results"] == 2 and run["counts"]["unique"] == 2 and run["counts"]["truncated"] is False
     prisma = client.get(f"/api/projects/{project_id}/prisma").json()
     assert prisma["identification"]["identified"] == 2

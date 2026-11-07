@@ -41,3 +41,9 @@ def test_an_unset_environment_refuses_to_start_instead_of_defaulting_to_developm
 def test_the_two_known_environments_are_accepted():
     assert Settings(_env_file=None, environment="development").environment == "development"
     assert Settings(**PRODUCTION).environment == "production"
+
+
+def test_development_runtime_refuses_a_sqlite_database(monkeypatch):
+    monkeypatch.delenv("RESEARCH_TEST_MODE", raising=False)
+    with pytest.raises(ValueError, match="DATABASE_URL must use PostgreSQL"):
+        Settings(_env_file=None, environment="development", database_url="sqlite+pysqlite://")

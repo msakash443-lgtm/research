@@ -119,7 +119,7 @@ def test_approval_releases_the_search_which_then_runs_once_and_is_attributed(tea
     (row,) = rows(team["pid"])
     assert str(row.search_id) == queued["search_id"] and row.version == 1 and row.n_results == 3
     assert row.created_by == team["owner_id"]  # the person who asked, not the approver
-    assert row.query_string == '("remote work" OR "telework") AND ("productivity")'
+    assert row.query_string == '(remote work OR telework) AND (productivity)'
     assert FakeConnector.calls == 1
     assert {"search.requested", "task.blocked", "gate.approved", "task.released", "search.run"} <= set(actions(team))
     listing = team["owner"].get(f"/api/projects/{team['pid']}/searches").json()
