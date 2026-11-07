@@ -2,6 +2,8 @@ import atexit
 import contextlib
 import os
 
+# Test-only database isolation. Application runtime requires PostgreSQL.
+os.environ["RESEARCH_TEST_MODE"] = "true"
 # Set this before importing app modules. Tests must never reuse a developer's
 # DATABASE_URL from .env, because the fixture below drops all test tables.
 os.environ["DATABASE_URL"] = "sqlite+pysqlite://"
@@ -19,6 +21,8 @@ for _ambient_setting in (
     "LOCAL_LLM_API_BASE_URL",
     "LOCAL_LLM_API_KEY",
     "LOCAL_LLM_MODEL",
+    "CONNECTORS_ENABLED",
+    "CONNECTORS_ALLOW_SCRAPING",
 ):
     os.environ.pop(_ambient_setting, None)
 

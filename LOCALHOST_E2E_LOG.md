@@ -198,3 +198,27 @@ Scope: user-authorized localhost workflow validation using a synthetic developme
 
 - The response was rechecked with the API's current output-token parameter: `error.type=insufficient_quota`, `error.code=credit_balance_exhausted`, no Retry-After header. This excludes temporary rate limiting and confirms the key's organization has no available prepaid API credit.
 - The adapter previously collapsed this billing response into “service could not be reached.” It now stops immediately for credit/spend-limit codes and returns a safe actionable message; no error body, request ID, or credential is persisted. Focused retry tests: 18 passed.
+### 2026-11-06 — host startup and readiness
+
+- Docker could not be used because the Docker Desktop Linux engine was unavailable (`docker compose ... ps` could not connect to the Docker API).
+- Started the documented host-installed FastAPI service on `http://127.0.0.1:8001` with the local SQLite database and inline research execution enabled.
+- `/ready` returned `{"status":"ready","database":"available"}`. It also reported the local database is **43 migrations behind** (`db_revision=20261013_0051`, `code_revision=20261029_0101`). This is a logged environment defect; no migration was run and no application data was changed.
+### 2026-11-06 — fresh PostgreSQL E2E database
+
+- At the user's request, the PostgreSQL `public` schema was reset after stopping the web and worker. This removed the prior local E2E users, projects, searches, sources, tasks, gates, audit events, and related application records from PostgreSQL.
+- All Alembic migrations were applied from an empty schema through `20261029_0101`; `alembic check` reported no pending operations.
+- PostgreSQL counts after reset: `users=0`, `projects=0`, `search_queries=0`, `sources=0`, `tasks=0`.
+- Web and worker were restarted. `/ready` returned `{"status":"ready","database":"available"}`. SQLite files were not deleted.
+### 2026-11-06 — OpenAlex zero-result search repaired
+
+- Reproduced the new search. The corrected phrase was still sent as a quoted OpenAlex query, and OpenAlex returned HTTP 200 with `reported_total=0` and no records. The earlier query also contained the typo `anlaysis`.
+- Confirmed live OpenAlex behavior: the quoted phrase returns zero, while the unquoted corrected query returns HTTP 200 with `reported_total=81200` and records.
+- Changed `backend/app/search_query_adapters.py` so OpenAlex receives unquoted Boolean terms and is recorded as approximate with the caveat that OpenAlex search is relevance-ranked and does not support exact phrase matching.
+- Added/updated regression coverage in `backend/tests/test_search_query_adapters.py` and `backend/tests/test_search_runner.py`. Focused suite: **32 passed**.
+- Rebuilt and restarted the Docker web and worker. `/ready` returned `{"status":"ready","database":"available"}`. The deployed adapter produced the unquoted query and the live unquoted OpenAlex request returned five records.
+### 2026-11-06 — automatic OA PDF retrieval workflow deployed
+
+- Added automatic queueing after a source receives a final human `full_text=include` decision. Single-reviewer inclusion queues immediately; dual-screen inclusion queues only after reviewer agreement.
+- The workflow reuses the existing licence-checked `FULLTEXT_FETCH` or arXiv fetch task, skips stored PDFs, avoids duplicate open tasks, records an automatic-request audit event, and leaves manual upload available when no permitted resolver is configured.
+- It does not approve metadata, bypass G3/G4, start AI extraction, or mark evidence verified.
+- Focused screening/full-text tests: **83 passed**. Docker web and worker were rebuilt; PostgreSQL `/ready` remained healthy.

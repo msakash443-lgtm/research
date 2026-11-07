@@ -65,7 +65,7 @@ def test_run_records_query_filters_counts_and_results():
         row = run_search(db, project=project, actor="u1", connector=conn, query=QUERY, filters={"year_from": 2015})
         db.commit()
         assert row.version == 1 and row.database == "openalex"
-        assert row.query_string == '("remote work" OR "telework") AND ("productivity")'
+        assert row.query_string == '(remote work OR telework) AND (productivity)'
         assert row.filters == {"year_from": 2015}
         assert row.run_at is not None and row.created_by == "u1"
         assert row.n_results == 5
@@ -80,7 +80,7 @@ def test_run_records_query_filters_counts_and_results():
         assert len(sources) == 5
         assert all(source.metadata_verified is False and source.origin == "retrieved" for source in sources)
         assert all(source.ingest_key and source.found_via["method"] == "database_search" for source in sources)
-        assert row.exact is True and row.caveats == []
+        assert row.exact is False and any("OpenAlex" in caveat for caveat in row.caveats)
         assert len(conn.requests) == 3  # paged 2 + 2 + 1
         event = db.scalar(select(AuditEvent).where(AuditEvent.action == "search.run"))
         assert event.actor == "u1" and event.payload_json["counts"]["unique"] == 5

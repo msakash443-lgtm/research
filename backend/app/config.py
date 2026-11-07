@@ -59,7 +59,7 @@ def _file_secret_fields(settings_cls: type[BaseSettings]) -> list[str]:
 
 
 class Settings(BaseSettings):
-    database_url: str = "sqlite:///./research_ai.db"
+    database_url: str = "postgresql+psycopg://research_ai:change-me-local-only@127.0.0.1:5432/research_ai"
     # Required, and exactly one of these (X.105): the production checks run only for "production", so any
     # other value (a typo, a different case, "prod") refuses to start instead of silently running without
     # them. No default: an unset value would otherwise turn on the development and X-User-Id logins.
@@ -314,6 +314,8 @@ class Settings(BaseSettings):
             privacy = load_privacy_profile(self.privacy_profile)
         except PrivacyProfileError as exc:
             raise ValueError(str(exc)) from None
+        if not self.database_url.startswith("postgresql") and os.getenv("RESEARCH_TEST_MODE") != "true":
+            raise ValueError("DATABASE_URL must use PostgreSQL")
         if self.environment != "production":
             return self
         problem = residency_problem(privacy, self.data_residency_region)

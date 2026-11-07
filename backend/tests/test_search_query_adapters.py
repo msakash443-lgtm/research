@@ -27,10 +27,11 @@ def test_core_keeps_the_boolean_string_but_says_it_searches_full_text():
     assert any("Wildcard" in c for c in adapt(WILD, "core").caveats)
 
 
-def test_openalex_keeps_the_generic_boolean_string():
+def test_openalex_uses_supported_unquoted_relevance_search():
     a = adapt(BASIC, "openalex")
-    assert a.text == '("female labour" OR "women\'s work") AND ("India" OR "South Asia")' == render(BASIC)
-    assert a.exact is True and a.caveats == ()
+    assert a.text == "(female labour OR women's work) AND (India OR South Asia)"
+    assert a.exact is False
+    assert any("relevance" in caveat.lower() for caveat in a.caveats)
 
 
 def test_arxiv_field_prefixes_every_term():
@@ -67,7 +68,7 @@ def test_flat_text_drops_duplicates_across_blocks_and_wildcard_stars():
 def test_wildcards_where_support_is_unverified_are_flagged_inexact(database):
     a = adapt(WILD, database)
     assert a.exact is False and any("Wildcard" in c for c in a.caveats)
-    assert adapt(BASIC, database).exact is True  # only flagged when a wildcard is actually used
+    assert adapt(BASIC, database).exact is (database != "openalex")
 
 
 def test_semantic_scholar_uses_bulk_search_syntax_and_is_exact():

@@ -18,7 +18,10 @@ from app.lookups import live_source_or_404
 from app.dependencies import APPROVE_ROLES, MANAGE_ROLES, READ_ROLES, WRITE_ROLES, current_user, project_access, project_role
 from app.prescreen import confidence_level
 from app.models import AiSuggestion, AutoExcludeAudit, Project, ProjectRole, ProjectStage, ScreeningDecision, SeedCheckRun, Source, Task, TaskStatus, User
-from app.task_handlers import SCREENING_PRESCREEN, SEED_FALSE_EXCLUSION_CHECK
+from app.task_handlers import FULLTEXT_FETCH, SCREENING_PRESCREEN, SEED_FALSE_EXCLUSION_CHECK
+from app.arxiv_fulltext import ARXIV_FULLTEXT_FETCH
+from app.connectors.access import is_enabled
+from app.connectors.factory import unpaywall_unavailable_reason
 from app.task_queue import enqueue_task
 from app.screening import (
     ARBITER,
@@ -457,6 +460,37 @@ def _blocked_by_full_text(db: Session, project: Project, source: Source, stage: 
     return final_decision(full_text_rows) is not None
 
 
+def _queue_included_fulltext_fetch(db: Session, project: Project, source: Source, actor: str) -> Task | None:
+    """Queue one licence-checked fetch after a source becomes finally included at full text."""
+    if source.fulltext_path:
+        return None
+    source_ids = source.source_ids if isinstance(source.source_ids, dict) else {}
+    settings = get_settings()
+    if isinstance(source_ids.get("arxiv"), str) and is_enabled("arxiv", settings.connectors_enabled, settings.connectors_allow_scraping):
+        task_type = ARXIV_FULLTEXT_FETCH
+    elif source.doi and not unpaywall_unavailable_reason():
+        task_type = FULLTEXT_FETCH
+    else:
+        return None
+    open_tasks = db.scalars(
+        select(Task).where(Task.project_id == project.id, Task.type.in_((FULLTEXT_FETCH, ARXIV_FULLTEXT_FETCH)))
+    )
+    for task in open_tasks:
+        if task.status in {TaskStatus.queued, TaskStatus.running, TaskStatus.blocked, TaskStatus.paused} and (task.payload or {}).get("source_id") == str(source.id):
+            return task
+    task = enqueue_task(
+        db, project.id, task_type,
+        payload={"project_id": str(project.id), "source_id": str(source.id), "requested_by": actor, "automatic": True},
+        actor=actor,
+        idempotency_key=f"fulltext-auto:{source.id}",
+    )
+    audit.record(
+        db, actor=actor, action="source.fulltext_automatically_requested", project_id=project.id,
+        payload={"source_id": str(source.id), "task_id": str(task.id), "via": "arxiv" if task_type == ARXIV_FULLTEXT_FETCH else "doi"},
+    )
+    return task
+
+
 @router.post("/decisions", response_model=DecisionRead, status_code=status.HTTP_201_CREATED)
 def decide(
     payload: DecisionIn,
@@ -483,6 +517,10 @@ def decide(
     )
     db.flush()  # the row's id is the ref: each decision is its own artifact
     register_artifact(db, project.id, SCREENING_KIND, str(row.id), ProjectStage.screened, actor=audit.user_actor(user))
+    if payload.stage == "full_text" and payload.decision == "include":
+        current = rows_for_stage(db, project, "full_text").get(source.id, [])
+        if final_decision(current) is not None and final_decision(current).decision == "include":
+            _queue_included_fulltext_fetch(db, project, source, audit.user_actor(user))
     _commit(db)
     db.refresh(row)
     return row
