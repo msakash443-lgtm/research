@@ -6,7 +6,7 @@ from sqlalchemy import func, select, text
 
 from app.database import SessionLocal
 from app.main import app
-from app.models import AuditEvent, AutoExcludeAudit, Gate, GateCode, GateStatus, ProjectMember, ProjectRole, ScreeningDecision, Source
+from app.models import AuditEvent, AutoExcludeAudit, Gate, GateCode, GateStatus, ProjectMember, ProjectRole, ScreeningDecision, Source, Task
 
 
 def _login(email):
@@ -160,6 +160,24 @@ def test_full_text_only_takes_sources_a_person_passed_at_title_abstract(world):
     assert {i["source_id"] for i in queue(world["owner"], p, "full_text")["items"]} == {ids[0], ids[1]}
     assert decide(world["owner"], p, ids[2], "include", stage="full_text").status_code == 409
     assert decide(world["owner"], p, ids[0], "exclude", reason_code="E2", stage="full_text").status_code == 201
+
+
+def test_final_full_text_include_queues_automatic_arxiv_fetch(world, monkeypatch):
+    import app.routers.screening as screening_router
+
+    monkeypatch.setattr(screening_router, "is_enabled", lambda name, enabled, scraping: name == "arxiv")
+    p, s = world["pid"], world["ids"][0]
+    with SessionLocal() as db:
+        source = db.get(Source, uuid.UUID(s))
+        source.source_ids = {"arxiv": "2401.12345"}
+        db.commit()
+    decide(world["owner"], p, s, "include")
+    assert decide(world["owner"], p, s, "include", stage="full_text").status_code == 201
+    with SessionLocal() as db:
+        tasks = db.scalars(select(Task).where(Task.project_id == uuid.UUID(p), Task.type == "arxiv_fulltext_fetch")).all()
+        assert len(tasks) == 1
+        assert tasks[0].payload["source_id"] == s
+        assert tasks[0].payload["automatic"] is True
 
 
 def test_the_full_text_queue_shows_whether_the_pdf_was_fetched(world):

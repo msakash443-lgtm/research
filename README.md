@@ -73,14 +73,15 @@ For a private first deployment, run the web service and worker as two processes 
 
 5. Open [http://localhost:8000](http://localhost:8000). While `ENVIRONMENT=development`, choose the local development account.
 
-The Docker worker processes queued research runs. For a non-Docker local run, copy `.env.example` to `.env` (or set `ENVIRONMENT=development` in the shell), set `RUN_RESEARCH_INLINE=true` and start the API with:
+For a host-installed PostgreSQL server, copy `.env.example` to `.env`, set `DATABASE_URL` to `postgresql+psycopg://<user>:<password>@127.0.0.1:5432/<database>`, set `AUTO_CREATE_SCHEMA=false`, apply migrations, then start the API and worker:
 
 ```powershell
-python -m pip install -r backend/requirements.txt -r backend/requirements-arc.txt -r backend/requirements-dev.txt
+.venv\Scripts\python.exe -m alembic -c alembic.ini upgrade head
+.venv\Scripts\python.exe -m alembic -c alembic.ini check
 uvicorn app.main:app --reload --app-dir backend
 ```
 
-For a host-installed PostgreSQL server instead of Docker, set `DATABASE_URL` in `.env` to `postgresql+psycopg://<user>:<password>@127.0.0.1:5432/<database>` and run `alembic -c alembic.ini upgrade head` before starting the API and worker. See [the local PostgreSQL migration guide](docs/LOCAL_POSTGRES_MIGRATION.md) before copying data from an existing SQLite file.
+The application has no SQLite runtime fallback. See [the local PostgreSQL migration guide](docs/LOCAL_POSTGRES_MIGRATION.md).
 
 
 `requirements.txt` is the web app's runtime (the only file the Docker image installs); `requirements-arc.txt` is the vendored ARC retrieval service (`backend/arc_retrieval/`) and `requirements-dev.txt` the test tools.
@@ -119,13 +120,13 @@ Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` in `.e
 
 ## Database migrations
 
-Development can bootstrap a new schema with `AUTO_CREATE_SCHEMA=true`. A production deployment must set it to `false` and run a versioned migration before starting web/worker services:
+All application environments use PostgreSQL. Set `AUTO_CREATE_SCHEMA=false` and apply the versioned schema before starting web or worker services:
 
 ```powershell
 alembic -c alembic.ini upgrade head
 ```
 
-Do not run test fixtures against a shared or production database. The test configuration always forces an in-memory SQLite database before importing the app.
+Do not run test fixtures against a shared or production database. Test isolation is configured separately from the application runtime.
 
 ## Deploy
 

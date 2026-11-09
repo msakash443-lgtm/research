@@ -1,11 +1,11 @@
 # Local PostgreSQL migration
 
-The application already supports PostgreSQL as its canonical runtime database:
+The application uses PostgreSQL as its only runtime database:
 
 - Docker Compose runs `pgvector/pgvector:pg16` and injects a `postgresql+psycopg://...@db:5432/...` URL into both web and worker.
+- Host-installed runs must set `DATABASE_URL` to a PostgreSQL URL.
 - Alembic reads `DATABASE_URL` from settings (`backend/migrations/env.py`).
-- Tests intentionally override `DATABASE_URL` to in-memory SQLite and must remain isolated from developer databases.
-
+- The test harness is separately isolated and is not an application runtime.
 ## New local PostgreSQL installation
 
 1. Create a database and role in PostgreSQL. Keep the password out of the repository.
@@ -28,18 +28,13 @@ The application already supports PostgreSQL as its canonical runtime database:
 
 5. Start the API and worker with the same `.env` so both processes use PostgreSQL.
 
-## Preserving an existing SQLite database
+## Verification
 
-Do not point the application at PostgreSQL until the data copy has been checked. The repository contains multiple scratch SQLite files; they are not a reliable source of application data. Select the one database explicitly and make a backup copy outside the repository.
+After applying the schema, start the API and worker with the same PostgreSQL configuration and verify:
 
-A safe cutover is:
+1. `/health` and `/ready` return success.
+2. Development login and project creation work.
+3. Source/excerpt persistence and audit reads work.
+4. One worker task completes against PostgreSQL.
 
-1. Stop the API and worker.
-2. Back up the selected SQLite file and create a fresh PostgreSQL database.
-3. Apply all Alembic migrations to PostgreSQL.
-4. Copy application rows using a reviewed data-migration tool or a one-off SQLAlchemy script that preserves primary keys, foreign keys, timestamps, JSON values, and append-only records. Do not copy SQLite's `alembic_version` row; Alembic owns that table on the destination.
-5. Reset PostgreSQL sequences after the copy, then run row-count and foreign-key consistency checks for every copied table.
-6. Run the application against PostgreSQL and verify login, project creation, source/excerpt persistence, audit reads, and one worker task before deleting or changing the SQLite file.
-7. Keep the SQLite backup until the PostgreSQL verification and rollback window are complete.
-
-This repository does not include an automatic SQLite-to-PostgreSQL copier because silently choosing one of the local `.db` files or copying integrity-sensitive tables without an explicit source database would risk data loss. The PostgreSQL server/client was not available in this environment, so the live migration and Postgres smoke checks remain unexecuted.
+The application does not include a SQLite-to-PostgreSQL runtime fallback or automatic data copier. Any historical data transfer must use an explicitly selected source, a reviewed migration procedure, and row-count/foreign-key verification before cutover.
