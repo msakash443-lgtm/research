@@ -5,16 +5,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-
-
-def _login(email):
-    client = TestClient(app)
-    user_id = client.post("/api/auth/development/login", json={"email": email, "display_name": "A"}).json()["id"]
-    return client, user_id
+from tests.api_helpers import sign_in_user
 
 
 def _project_with_activity():
-    owner, owner_id = _login("api-owner@example.com")
+    owner, owner_id = sign_in_user("api-owner@example.com")
     project_id = owner.post("/api/projects", json={"title": "=HYPERLINK(\"http://evil\")"}).json()["id"]
     owner.post(f"/api/projects/{project_id}/context", json={"kind": "question", "content": "Why?"})
     owner.post(f"/api/projects/{project_id}/sources", json={"title": "S"})
@@ -23,7 +18,7 @@ def _project_with_activity():
 
 def test_members_can_read_the_trail_and_filter_it():
     owner, owner_id, project_id = _project_with_activity()
-    reviewer, _ = _login("api-reviewer@example.com")
+    reviewer, _ = sign_in_user("api-reviewer@example.com")
     owner.post(f"/api/projects/{project_id}/members", json={"email": "api-reviewer@example.com", "role": "reviewer"})
     url = f"/api/projects/{project_id}/audit"
 
@@ -40,7 +35,7 @@ def test_members_can_read_the_trail_and_filter_it():
 
 def test_non_members_cannot_read_or_export():
     _, _, project_id = _project_with_activity()
-    stranger, _ = _login("api-stranger@example.com")
+    stranger, _ = sign_in_user("api-stranger@example.com")
 
     assert stranger.get(f"/api/projects/{project_id}/audit").status_code == 404
     assert stranger.get(f"/api/projects/{project_id}/audit/export").status_code == 404

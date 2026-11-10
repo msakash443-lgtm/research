@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, HttpUrl, StringConstraints, field_validator, model_validator
@@ -95,6 +95,62 @@ class ContextItemRead(ContextItemCreate):
     # Read-only links (X.31.2): the note this came from, and for a decision the item it concerns.
     promoted_from_note_id: uuid.UUID | None = None
     related_item_id: uuid.UUID | None = None
+
+
+class ObjectiveCreate(BaseModel):
+    """A research objective (X.193): what the work is for, how success is judged, and what it delivers."""
+
+    model_config = ConfigDict(extra="forbid")
+    statement: str = Field(min_length=1)
+    rationale: str | None = None
+    measure: str | None = None
+    deliverable: str | None = None
+    target_date: date | None = None
+    research_question_id: uuid.UUID | None = None
+
+    @field_validator("statement")
+    @classmethod
+    def _statement_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("The statement cannot be blank")
+        return value
+
+
+class ObjectiveUpdate(BaseModel):
+    """A correction to an objective. Only the fields sent are changed; a nullable field can be cleared with null."""
+
+    model_config = ConfigDict(extra="forbid")
+    statement: str | None = Field(default=None, min_length=1)
+    rationale: str | None = None
+    measure: str | None = None
+    deliverable: str | None = None
+    target_date: date | None = None
+    research_question_id: uuid.UUID | None = None
+
+    @field_validator("statement")
+    @classmethod
+    def _statement_not_blank(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("The statement cannot be blank")
+        return value
+
+
+class ObjectiveRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    project_id: uuid.UUID
+    research_question_id: uuid.UUID | None = None
+    statement: str
+    rationale: str | None = None
+    measure: str | None = None
+    deliverable: str | None = None
+    target_date: date | None = None
+    created_by: str | None = None
+    created_at: datetime
+    # Earlier wordings of an amended objective, oldest first: {statement, rationale, changed_by, changed_at} (X.193).
+    history: list[dict] | None = None
+    retired_at: datetime | None = None
+
 
 
 class SourceCreate(BaseModel):

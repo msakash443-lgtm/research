@@ -13,23 +13,6 @@ from app.models import NoteRevision
 
 APPEND_ONLY_MESSAGE = "note_revisions is append-only: rows cannot be updated or deleted"
 
-SQLITE_TRIGGERS = [
-    f"""
-CREATE TRIGGER IF NOT EXISTS note_revisions_no_update
-BEFORE UPDATE ON note_revisions
-BEGIN
-    SELECT RAISE(ABORT, '{APPEND_ONLY_MESSAGE}');
-END;
-""",
-    f"""
-CREATE TRIGGER IF NOT EXISTS note_revisions_no_delete
-BEFORE DELETE ON note_revisions
-BEGIN
-    SELECT RAISE(ABORT, '{APPEND_ONLY_MESSAGE}');
-END;
-""",
-]
-
 POSTGRES_FUNCTION = f"""
 CREATE OR REPLACE FUNCTION note_revisions_append_only() RETURNS trigger AS $$
 BEGIN
@@ -52,11 +35,9 @@ def _reject_note_revision_change(mapper, connection, target: NoteRevision) -> No
     raise ValueError(APPEND_ONLY_MESSAGE)
 
 
-# Tables built by create_all (tests, local SQLite) get the triggers too; Alembic installs
-# the same SQL for PostgreSQL.
+# Tables built by create_all (tests) get the triggers too; Alembic installs the same SQL
+# for existing databases.
 _table = NoteRevision.__table__
-for _sql in SQLITE_TRIGGERS:
-    event.listen(_table, "after_create", DDL(_sql).execute_if(dialect="sqlite"))
 event.listen(_table, "after_create", DDL(POSTGRES_FUNCTION).execute_if(dialect="postgresql"))
 for _sql in POSTGRES_TRIGGERS:
     event.listen(_table, "after_create", DDL(_sql).execute_if(dialect="postgresql"))

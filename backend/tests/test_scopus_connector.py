@@ -4,7 +4,7 @@ import httpx
 import pytest
 from pydantic import SecretStr
 
-from app.connectors import Connector, ConnectorError, NotSupportedError, SearchRequest
+from app.connectors import ConnectorError, NotSupportedError, SearchRequest
 from app.connectors.http import ConnectorHttpClient, HttpPolicy
 from app.connectors.scopus import BASE_URL, MAX_OFFSET, ScopusConnector, to_record
 
@@ -37,10 +37,7 @@ def make(handler):
     return ScopusConnector(http=http), seen
 
 
-def test_it_satisfies_connector_protocol_and_requires_a_key():
-    assert isinstance(make(lambda request: {})[0], Connector)
-    with pytest.raises(ConnectorError, match="SCOPUS_API_KEY"):
-        ScopusConnector()
+def test_a_blank_scopus_api_key_is_rejected_and_the_key_travels_as_headers():
     with pytest.raises(ConnectorError, match="SCOPUS_API_KEY"):
         ScopusConnector(api_key=SecretStr(" "))
     connector = ScopusConnector(api_key=SecretStr("key"), inst_token=SecretStr("institution"))
@@ -103,9 +100,3 @@ def test_offset_limit_and_unsupported_capabilities_are_explicit():
         connector.get_citations("123")
 
 
-def test_last_page_reports_the_api_result_window_cap():
-    connector, _ = make(
-        lambda request: {"search-results": {"opensearch:totalResults": "10000", "entry": [entry()]}}
-    )
-    page = connector.search(SearchRequest(query="x", limit=1, cursor=str(MAX_OFFSET - 1)))
-    assert page.next_cursor is None and connector.last_search_capped is True

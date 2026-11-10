@@ -48,11 +48,13 @@ step = "ask"
 title = "Gaps selected"
 meaning = "You have chosen and justified which gaps in the literature your work will address (gate G5)."
 advice = "A gap should be supported by at least two studies or by an empty cell in your evidence matrix, not by an impression. Prefer gaps that matter to the field over gaps that are merely untested."
+step = "gaps"
 
 [stages.framework]
 title = "Framework"
 meaning = "Research questions, hypotheses and the conceptual model are approved (gate G6)."
 advice = "Ground each hypothesis in theory and in the reviewed evidence. Define every construct and how it will be measured."
+step = "gaps"
 
 [stages.design_approved]
 title = "Design approved"

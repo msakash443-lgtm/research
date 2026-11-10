@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from app.agent.llm import LLMConfigurationError
 from app.main import app
 from app.routers.idea_brief import get_embedder
+from tests.api_helpers import create_project, create_source
 
 
 class FakeEmbedder:
@@ -35,23 +36,15 @@ def client():
     return c
 
 
-def _project(client: TestClient) -> str:
-    return client.post("/api/projects", json={"title": "Semantic"}).json()["id"]
-
-
 def _idea(client: TestClient, pid: str, content: str) -> None:
     assert client.post(f"/api/projects/{pid}/context", json={"kind": "idea", "content": content}).status_code in (200, 201)
 
 
-def _source(client: TestClient, pid: str, title: str) -> None:
-    assert client.post(f"/api/projects/{pid}/sources", json={"title": title, "year": 2020}).status_code in (200, 201)
-
-
 def test_comparators_are_ranked_by_meaning_and_the_model_is_recorded(client, fake):
-    pid = _project(client)
+    pid = create_project(client, "Semantic")
     _idea(client, pid, "Teams stall without trust")
-    _source(client, pid, "Trust in teams")
-    _source(client, pid, "Memory of cats")
+    create_source(client, pid, "Trust in teams", year=2020)
+    create_source(client, pid, "Memory of cats", year=2020)
     body = client.get(f"/api/projects/{pid}/idea-brief/semantic-novelty").json()
     assert body["model_id"] == "test-embed"
     idea = body["ideas"][0]
@@ -61,7 +54,7 @@ def test_comparators_are_ranked_by_meaning_and_the_model_is_recorded(client, fak
 
 
 def test_no_sources_means_no_score_and_no_embedding_call(client, fake):
-    pid = _project(client)
+    pid = create_project(client, "Semantic")
     _idea(client, pid, "Teams stall")
     body = client.get(f"/api/projects/{pid}/idea-brief/semantic-novelty").json()
     assert body["ideas"][0]["distinctiveness"] is None
@@ -69,16 +62,16 @@ def test_no_sources_means_no_score_and_no_embedding_call(client, fake):
 
 
 def test_no_ideas_means_no_embedding_call(client, fake):
-    pid = _project(client)
-    _source(client, pid, "Trust in teams")
+    pid = create_project(client, "Semantic")
+    create_source(client, pid, "Trust in teams", year=2020)
     assert client.get(f"/api/projects/{pid}/idea-brief/semantic-novelty").json()["ideas"] == []
     assert fake.calls == 0
 
 
 def test_ai_off_is_refused_before_any_embedding(client, fake):
-    pid = _project(client)
+    pid = create_project(client, "Semantic")
     _idea(client, pid, "Teams stall")
-    _source(client, pid, "Trust in teams")
+    create_source(client, pid, "Trust in teams", year=2020)
     assert client.put(f"/api/projects/{pid}/ai-settings", json={"ai_involvement": "off"}).status_code == 200
     assert client.get(f"/api/projects/{pid}/idea-brief/semantic-novelty").status_code == 409
     assert fake.calls == 0
@@ -93,9 +86,9 @@ def test_no_embedding_model_configured_fails_loudly(client):
 
     app.dependency_overrides[get_embedder] = lambda: Unconfigured()
     try:
-        pid = _project(client)
+        pid = create_project(client, "Semantic")
         _idea(client, pid, "Teams stall")
-        _source(client, pid, "Trust in teams")
+        create_source(client, pid, "Trust in teams", year=2020)
         r = client.get(f"/api/projects/{pid}/idea-brief/semantic-novelty")
         assert r.status_code == 503
         assert "EMBEDDING_MODEL" in r.json()["detail"]

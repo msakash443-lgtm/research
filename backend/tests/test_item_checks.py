@@ -11,33 +11,34 @@ def _kinds(text: str) -> list[str]:
     return [f.kind for f in check_item(text).flags]
 
 
-@pytest.mark.parametrize("text", [
-    "Don't you agree that the course was useful?",
-    "Isn't it true that the new process is faster?",
-    "Wouldn't you say the manager is fair?",
-    "Most people agree the reform worked.",
-    "As we all know, remote work is productive.",
-])
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param("Don't you agree that the course was useful?", id="dont-you-agree"),
+        pytest.param("Isn't it true that the new process is faster?", id="isnt-it-true"),
+        pytest.param("Wouldn't you say the manager is fair?", id="wouldnt-you-say"),
+        pytest.param("Most people agree the reform worked.", id="most-people-agree"),
+        pytest.param("As we all know, remote work is productive.", id="as-we-all-know"),
+        # curly quotes (M4.4.1 review defect): pasted items use curly quotes, which the
+        # straight-quote pattern never matched.
+        pytest.param(
+            "Don’t you agree that the course was useful?",
+            id="curly-apostrophe-right-single-quotation-mark",
+        ),
+        pytest.param(
+            "Isn‘t it true that the new process is faster?",
+            id="curly-apostrophe-left-single-quotation-mark",
+        ),
+        pytest.param(
+            "Wouldnʼt you say the manager is fair?", id="curly-apostrophe-modifier-letter"
+        ),
+        # presupposition patterns (M4.4.1 codex nit): previously untested.
+        pytest.param("Everyone knows the policy works.", id="everyone-knows"),
+        pytest.param("It is clear that the plan works.", id="it-is-clear-that"),
+        pytest.param("How much do you love this product?", id="assumed-strong-view-how-much"),
+    ],
+)
 def test_leading_wording_is_flagged(text):
-    assert "leading" in _kinds(text)
-
-
-@pytest.mark.parametrize("text", [
-    "Don’t you agree that the course was useful?",  # right single quotation mark, as word processors insert
-    "Isn‘t it true that the new process is faster?",  # left single quotation mark
-    "Wouldnʼt you say the manager is fair?",  # modifier letter apostrophe
-])
-def test_curly_apostrophes_do_not_hide_leading_wording(text):
-    # review defect (M4.4.1): pasted items use curly quotes, which the straight-quote pattern never matched
-    assert "leading" in _kinds(text)
-
-
-@pytest.mark.parametrize("text", [
-    "Everyone knows the policy works.",  # codex nit (M4.4.1): the presupposition patterns were untested
-    "It is clear that the plan works.",
-    "How much do you love this product?",  # the assumed-strong-view form
-])
-def test_each_leading_pattern_is_pinned_by_a_test(text):
     assert "leading" in _kinds(text)
 
 

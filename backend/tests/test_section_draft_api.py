@@ -4,21 +4,19 @@ import json
 import uuid
 from types import SimpleNamespace
 
-from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.ai_item_locks import set_lock
 from app.database import SessionLocal
-from app.main import app
 from app.models import AiSuggestion, AuditEvent, Document, Task
 from app.task_handlers import SECTION_DRAFT
 from app.task_registry import get_handler
+from tests.api_helpers import create_project, sign_in
 
 
-def _project(email, *, ai="suggestions_only"):
-    client = TestClient(app)
-    assert client.post("/api/auth/development/login", json={"email": email, "display_name": "U"}).status_code == 200
-    pid = client.post("/api/projects", json={"title": "Section Draft"}).json()["id"]
+def _project_with_ai_mode(email, *, ai="suggestions_only"):
+    client = sign_in(email)
+    pid = create_project(client, "Section Draft")
     if ai != "suggestions_only":
         assert client.put(f"/api/projects/{pid}/ai-settings", json={"ai_involvement": ai}).status_code == 200
     return client, pid
@@ -42,7 +40,7 @@ def _reply(fake_llm, payload):
     fake_llm.handler = lambda request: {"choices": [{"message": {"content": json.dumps(payload)}}]}
 
 
-def _run_task(payload):
+def _run_section_draft_task(payload):
     handler = get_handler(SECTION_DRAFT)
     handler(SimpleNamespace(payload=payload, ensure_owned=lambda: None))
 
@@ -59,7 +57,7 @@ def _audit(pid, action):
 
 
 def test_with_ai_off_the_request_is_refused_and_nothing_is_queued(fake_llm):
-    client, pid = _project("sd-off@example.com", ai="off")
+    client, pid = _project_with_ai_mode("sd-off@example.com", ai="off")
     doc = _document(client, pid)
     response = _request(client, pid, doc)
     assert response.status_code == 409
@@ -68,7 +66,7 @@ def test_with_ai_off_the_request_is_refused_and_nothing_is_queued(fake_llm):
 
 
 def test_a_locked_section_is_never_sent(fake_llm):
-    client, pid = _project("sd-lock@example.com")
+    client, pid = _project_with_ai_mode("sd-lock@example.com")
     doc = _document(client, pid)
     with SessionLocal() as db:
         set_lock(db, uuid.UUID(pid), "document", doc, "user:test")
@@ -80,14 +78,14 @@ def test_a_locked_section_is_never_sent(fake_llm):
 
 
 def test_a_request_is_allowed_at_suggestions_only_level(fake_llm):
-    client, pid = _project("sd-level@example.com", ai="suggestions_only")
+    client, pid = _project_with_ai_mode("sd-level@example.com", ai="suggestions_only")
     doc = _document(client, pid)
     response = _request(client, pid, doc)
     assert response.status_code == 202
 
 
 def test_a_valid_request_queues_one_task_and_audits_it(fake_llm):
-    client, pid = _project("sd-queue@example.com")
+    client, pid = _project_with_ai_mode("sd-queue@example.com")
     doc = _document(client, pid)
     response = _request(client, pid, doc)
     assert response.status_code == 202
@@ -101,13 +99,13 @@ def test_a_valid_request_queues_one_task_and_audits_it(fake_llm):
 
 
 def test_the_handler_refuses_loudly_when_the_section_has_no_claims(fake_llm):
-    client, pid = _project("sd-empty@example.com")
+    client, pid = _project_with_ai_mode("sd-empty@example.com")
     doc = _document(client, pid)
     from app.task_registry import PermanentTaskError
     import pytest
 
     with pytest.raises(PermanentTaskError):
-        _run_task({"project_id": pid, "document_id": doc, "actor": "user:test"})
+        _run_section_draft_task({"project_id": pid, "document_id": doc, "actor": "user:test"})
     assert _suggestions(pid) == []
     [failed] = _audit(pid, "ai.failed")
     assert failed["code"] == "empty_outline"
@@ -115,13 +113,13 @@ def test_the_handler_refuses_loudly_when_the_section_has_no_claims(fake_llm):
 
 
 def test_the_handler_stores_one_suggestion_built_from_the_claim_outline(fake_llm):
-    client, pid = _project("sd-handler@example.com")
+    client, pid = _project_with_ai_mode("sd-handler@example.com")
     doc = _document(client, pid)
     _claim(client, pid, doc, text="Trust predicts collaboration.")
     _claim(client, pid, doc, text="The effect held across three samples.")
     _reply(fake_llm, {"draft": "Trust predicts collaboration, and this effect held across three samples."})
 
-    _run_task({"project_id": pid, "document_id": doc, "actor": "user:test"})
+    _run_section_draft_task({"project_id": pid, "document_id": doc, "actor": "user:test"})
 
     [row] = _suggestions(pid)
     assert row.content == "Trust predicts collaboration, and this effect held across three samples."
@@ -137,7 +135,7 @@ def test_the_handler_stores_one_suggestion_built_from_the_claim_outline(fake_llm
 
 
 def test_a_reply_that_repeats_the_prompt_is_refused_and_nothing_is_stored(fake_llm):
-    client, pid = _project("sd-leak@example.com")
+    client, pid = _project_with_ai_mode("sd-leak@example.com")
     doc = _document(client, pid)
     _claim(client, pid, doc)
     from app.answer_guard import _SENTENCE_SPLIT
@@ -150,18 +148,18 @@ def test_a_reply_that_repeats_the_prompt_is_refused_and_nothing_is_stored(fake_l
     _reply(fake_llm, {"draft": leaked_sentence})
 
     with pytest.raises(PermanentTaskError):
-        _run_task({"project_id": pid, "document_id": doc, "actor": "user:test"})
+        _run_section_draft_task({"project_id": pid, "document_id": doc, "actor": "user:test"})
     assert _suggestions(pid) == []
     [failed] = _audit(pid, "ai.failed")
     assert failed["code"] == "leaked_prompt"
 
 
 def test_a_stored_draft_is_decided_through_the_shared_suggestion_endpoints(fake_llm):
-    client, pid = _project("sd-accept@example.com")
+    client, pid = _project_with_ai_mode("sd-accept@example.com")
     doc = _document(client, pid)
     _claim(client, pid, doc)
     _reply(fake_llm, {"draft": "A drafted paragraph from the outline."})
-    _run_task({"project_id": pid, "document_id": doc, "actor": "user:test"})
+    _run_section_draft_task({"project_id": pid, "document_id": doc, "actor": "user:test"})
     [row] = _suggestions(pid)
 
     listed = client.get(f"/api/projects/{pid}/suggestions?target_kind=document&target_id={doc}").json()
@@ -189,7 +187,7 @@ def test_a_stored_draft_is_decided_through_the_shared_suggestion_endpoints(fake_
 def _accepted_draft(client, pid, doc, fake_llm, text="A drafted paragraph from the outline."):
     _claim(client, pid, doc)
     _reply(fake_llm, {"draft": text})
-    _run_task({"project_id": pid, "document_id": doc, "actor": "user:test"})
+    _run_section_draft_task({"project_id": pid, "document_id": doc, "actor": "user:test"})
     [row] = _suggestions(pid)
     assert client.post(f"/api/projects/{pid}/suggestions/{row.id}/accept").status_code == 200
     return str(row.id)
@@ -206,7 +204,7 @@ def _save(client, pid, doc, runs, base_number):
 
 
 def test_at_suggestions_only_an_accepted_draft_cannot_be_saved_into_the_section(fake_llm):
-    client, pid = _project("sd-q27-refused@example.com")
+    client, pid = _project_with_ai_mode("sd-q27-refused@example.com")
     doc = _document(client, pid)
     sug = _accepted_draft(client, pid, doc, fake_llm)
 
@@ -219,7 +217,7 @@ def test_at_suggestions_only_an_accepted_draft_cannot_be_saved_into_the_section(
 
 
 def test_at_full_an_accepted_draft_is_saved_and_stays_saveable_after_the_level_is_lowered(fake_llm):
-    client, pid = _project("sd-q27-full@example.com", ai="full")
+    client, pid = _project_with_ai_mode("sd-q27-full@example.com", ai="full")
     doc = _document(client, pid)
     sug = _accepted_draft(client, pid, doc, fake_llm)
     draft = ("A drafted paragraph from the outline.", "d" * 8, "ai_suggested", sug)

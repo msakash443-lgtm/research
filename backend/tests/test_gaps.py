@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
 
@@ -94,3 +95,38 @@ def test_gap_rejects_cross_project_papers_and_unknown_matrix_cells():
         "type": "empirical", "statement": "Unknown cell", "matrix_cell_ids": ["method=missing|population=missing"],
     })
     assert response.status_code == 422
+
+
+def _verified_source(client, project_id, title, statement):
+    source_id = client.post(f"/api/projects/{project_id}/sources", json={"title": title}).json()["id"]
+    extraction_id = uuid.uuid4()
+    with SessionLocal() as db:
+        db.add(Extraction(
+            id=extraction_id, project_id=uuid.UUID(project_id), source_id=uuid.UUID(source_id), schema_version="default@2",
+            fields_json={"method": {"design": "Survey"}, "sample": {"population": "Teachers", "country": "UK"},
+                         "future_research": [statement]},
+            evidence_spans={"future_research": {"quote": statement, "page": 1}}, extracted_by="human", extractor="test",
+            verified_by_human=True, verified_by="reviewer", verified_at=datetime.now(timezone.utc),
+        ))
+        db.commit()
+    return source_id, str(extraction_id)
+
+
+def test_gap_candidates_route_is_empty_for_a_project_without_evidence():
+    client, project_id = world()
+    assert client.get(f"/api/projects/{project_id}/gaps/candidates").json() == []
+
+
+def test_returned_theme_candidate_can_be_posted_unchanged_to_create_a_gap():
+    client, project_id = world()
+    _verified_source(client, project_id, "First", "Longitudinal designs are missing.")
+    _verified_source(client, project_id, "Second", "longitudinal designs are missing")
+    found = client.get(f"/api/projects/{project_id}/gaps/candidates").json()
+    theme = [c for c in found if c["kind"] == "theme"]
+    assert len(theme) == 1 and len(theme[0]["paper_ids"]) == 2
+    response = client.post(f"/api/projects/{project_id}/gaps", json={
+        "type": theme[0]["type"], "statement": "Longitudinal designs are missing",
+        "supporting_paper_ids": theme[0]["paper_ids"], "future_research": theme[0]["future_research"],
+    })
+    assert response.status_code == 201, response.text
+    assert len(response.json()["future_research"]) == 2

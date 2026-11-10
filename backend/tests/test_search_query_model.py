@@ -9,7 +9,7 @@ from app.database import SessionLocal
 from app.models import Project, SearchQuery, User
 
 
-def _project(db) -> Project:
+def _pending_project(db) -> Project:
     user = User(email=f"{uuid.uuid4()}@example.org", display_name="Owner")
     db.add(user)
     db.flush()
@@ -21,7 +21,7 @@ def _project(db) -> Project:
 
 def test_search_query_round_trips_with_defaults():
     with SessionLocal() as db:
-        project = _project(db)
+        project = _pending_project(db)
         run_at = datetime(2026, 10, 5, 12, 0, tzinfo=timezone.utc)
         db.add(
             SearchQuery(
@@ -45,7 +45,7 @@ def test_search_query_round_trips_with_defaults():
 
 def test_a_search_that_has_not_run_has_no_run_time_or_count():
     with SessionLocal() as db:
-        project = _project(db)
+        project = _pending_project(db)
         db.add(SearchQuery(project_id=project.id, database="crossref", query_string='"x"'))
         db.commit()
         row = db.scalar(select(SearchQuery).where(SearchQuery.project_id == project.id))
@@ -56,7 +56,7 @@ def test_a_search_that_has_not_run_has_no_run_time_or_count():
 
 def test_versions_of_one_search_are_unique_and_positive():
     with SessionLocal() as db:
-        project = _project(db)
+        project = _pending_project(db)
         search_id = uuid.uuid4()
         db.add(SearchQuery(project_id=project.id, search_id=search_id, database="openalex", query_string='"a"', version=1))
         db.add(SearchQuery(project_id=project.id, search_id=search_id, database="openalex", query_string='"a"', version=2))
@@ -74,7 +74,7 @@ def test_versions_of_one_search_are_unique_and_positive():
 
 def test_negative_result_count_is_refused():
     with SessionLocal() as db:
-        project = _project(db)
+        project = _pending_project(db)
         db.add(SearchQuery(project_id=project.id, database="openalex", query_string='"a"', n_results=-1))
         with pytest.raises(IntegrityError):
             db.commit()

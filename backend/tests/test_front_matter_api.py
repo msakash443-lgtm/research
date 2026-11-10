@@ -6,11 +6,12 @@ from sqlalchemy import select
 from app.database import SessionLocal
 from app.main import app
 from app.models import Project
-from tests.test_manuscript_export import _login, _new_document, _save
+from tests.api_helpers import sign_in_user
+from tests.test_manuscript_export import _new_document, _save
 
 
 def test_front_matter_request_requires_ai_and_a_saved_document():
-    client, user_id = _login(f"front-matter-{uuid.uuid4().hex}@example.org")
+    client, user_id = sign_in_user(f"front-matter-{uuid.uuid4().hex}@example.org")
     pid = client.post("/api/projects", json={"title": "Front matter"}).json()["id"]
     document_id = _new_document(pid, user_id, "Introduction", 1)
     response = client.post(f"/api/projects/{pid}/documents/{document_id}/front-matter", json={"kind": "abstract"})
@@ -19,7 +20,7 @@ def test_front_matter_request_requires_ai_and_a_saved_document():
 
 
 def test_front_matter_ai_off_is_refused_before_queueing():
-    client, user_id = _login(f"front-matter-off-{uuid.uuid4().hex}@example.org")
+    client, user_id = sign_in_user(f"front-matter-off-{uuid.uuid4().hex}@example.org")
     pid = client.post("/api/projects", json={"title": "Front matter"}).json()["id"]
     document_id = _new_document(pid, user_id, "Introduction", 1)
     _save(client, pid, document_id, {"type": "doc", "content": []})
@@ -32,7 +33,7 @@ def test_front_matter_ai_off_is_refused_before_queueing():
 
 
 def test_front_matter_route_is_project_scoped():
-    client, user_id = _login(f"front-matter-isolation-{uuid.uuid4().hex}@example.org")
+    client, user_id = sign_in_user(f"front-matter-isolation-{uuid.uuid4().hex}@example.org")
     pid = client.post("/api/projects", json={"title": "Front matter"}).json()["id"]
     other = client.post("/api/projects", json={"title": "Other"}).json()["id"]
     document_id = _new_document(other, user_id, "Other", 1)

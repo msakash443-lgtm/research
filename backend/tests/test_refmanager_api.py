@@ -1,11 +1,11 @@
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests.api_helpers import sign_in
 
 
-def _project():
-    client = TestClient(app)
-    client.post("/api/auth/development/login", json={"email": "refs@example.com", "display_name": "R"})
+def _client_and_sources_url():
+    client = sign_in("refs@example.com")
     project = client.post("/api/projects", json={"title": "Refs", "research_question": "Does import work?"}).json()
     return client, f"/api/projects/{project['id']}/sources"
 
@@ -14,7 +14,7 @@ BIB = "@article{a, title={First}, author={Lee, Ann}, year={2020}, doi={10.1234/a
 
 
 def test_import_creates_unverified_sources_and_reports_the_entry_it_could_not_use():
-    client, base = _project()
+    client, base = _client_and_sources_url()
     result = client.post(f"{base}/import", json={"format": "bibtex", "text": BIB}).json()
     assert result["created"] == 1 and result["skipped"] == ["b: no title"]
     source = client.get(base).json()[0]
@@ -22,7 +22,7 @@ def test_import_creates_unverified_sources_and_reports_the_entry_it_could_not_us
 
 
 def test_importing_the_same_doi_twice_does_not_duplicate_it():
-    client, base = _project()
+    client, base = _client_and_sources_url()
     client.post(f"{base}/import", json={"format": "bibtex", "text": BIB})
     again = client.post(f"{base}/import", json={"format": "bibtex", "text": BIB}).json()
     assert again["created"] == 0 and any("DOI already" in s for s in again["skipped"])
@@ -30,7 +30,7 @@ def test_importing_the_same_doi_twice_does_not_duplicate_it():
 
 
 def test_export_contains_only_verified_sources_and_counts_the_rest():
-    client, base = _project()
+    client, base = _client_and_sources_url()
     client.post(f"{base}/import", json={"format": "ris", "text": "TY  - JOUR\nTI  - Unchecked\nER  - \n"})
     verified = client.post(base, json={"title": "Checked paper"}).json()
     client.post(f"{base}/{verified['id']}/verify")
@@ -41,7 +41,7 @@ def test_export_contains_only_verified_sources_and_counts_the_rest():
 
 
 def test_import_and_export_are_audited():
-    client, base = _project()
+    client, base = _client_and_sources_url()
     client.post(f"{base}/import", json={"format": "bibtex", "text": BIB})
     client.get(f"{base}/export")
     actions = [e["action"] for e in client.get(base.replace("/sources", "/audit")).json()]

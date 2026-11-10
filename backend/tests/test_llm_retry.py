@@ -64,6 +64,25 @@ def test_an_exhausted_api_credit_balance_fails_once_with_an_actionable_message(f
     assert fake_llm.sleeps == []
 
 
+def test_an_exhausted_api_quota_fails_once_with_an_actionable_message(fake_llm):
+    fake_llm.handler = lambda request: httpx.Response(429, json={"error": {"code": "insufficient_quota"}})
+
+    with pytest.raises(LLMResponseError, match="run out of quota"):
+        _complete()
+    assert len(fake_llm.requests) == 1
+    assert fake_llm.sleeps == []
+
+
+@pytest.mark.parametrize("status", [400, 404, 422])
+def test_a_rejected_request_or_unknown_model_says_so_instead_of_claiming_unreachable(fake_llm, status):
+    fake_llm.handler = lambda request: httpx.Response(status, json={})
+
+    with pytest.raises(LLMResponseError, match="rejected the request") as info:
+        _complete()
+    assert "could not be reached" not in str(info.value)
+    assert len(fake_llm.requests) == 1
+
+
 @pytest.mark.parametrize("status", [400, 401, 403, 404, 422])
 def test_a_request_the_service_refuses_is_not_retried(fake_llm, status):
     fake_llm.handler = lambda request: httpx.Response(status, json={})

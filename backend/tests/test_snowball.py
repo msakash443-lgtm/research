@@ -4,7 +4,6 @@ import uuid
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app import task_handlers, task_runner
@@ -13,10 +12,10 @@ from app.connectors.http import ConnectorHttpClient, HttpPolicy
 from app.connectors.openalex import OpenAlexConnector
 from app.config import get_settings
 from app.database import SessionLocal
-from app.main import app
 from app.models import Gate, GateCode, GateStatus, SnowballRun, Source
 from app.snowball import KnownWorks, SnowballError, Start, walk
 from gate_helpers import approve_earlier_gates
+from tests.api_helpers import create_project, sign_in
 
 
 def rec(n, with_doi=True, **over):
@@ -158,17 +157,11 @@ def test_openalex_looks_up_a_start_paper_by_doi():
 # --- through the API and the task queue -------------------------------------------
 
 
-def _login(email):
-    client = TestClient(app)
-    client.post("/api/auth/development/login", json={"email": email, "display_name": "S"})
-    return client
-
-
 @pytest.fixture
 def project():
     tag = uuid.uuid4().hex[:8]
-    owner = _login(f"snow-{tag}@example.com")
-    pid = owner.post("/api/projects", json={"title": "Snowball"}).json()["id"]
+    owner = sign_in(f"snow-{tag}@example.com")
+    pid = create_project(owner, "Snowball")
     owner.post(f"/api/projects/{pid}/seeds", json={"title": "The seed paper we start from", "doi": "10.1000/p1"})
     approve_earlier_gates(pid, "G2")
     return owner, pid

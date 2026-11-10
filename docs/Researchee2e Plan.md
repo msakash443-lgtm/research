@@ -9,7 +9,7 @@ See the full analysis delivered in chat: folder structure, layer breakdown (fron
 Key facts (all verified by reading the files this session):
 - Real app root: `research-main/research/backend/app/`. The outer `research-main/` and inner `research/` levels contain duplicate `docker-compose.yml`/`Dockerfile`/`*.db` artifacts — likely redundant nesting, not functional.
 - Single FastAPI service (`app/main.py`) serves both the API (`/api/*`) and the static vanilla-JS frontend (`/`, `/assets`) from `app/web/`.
-- Data layer: SQLAlchemy ORM (`app/models.py`), SQLite in dev / Postgres in prod (`docker-compose.yml`), Alembic migrations in `backend/migrations/`.
+- Data layer: SQLAlchemy ORM (`app/models.py`), PostgreSQL everywhere (`docker-compose.yml`; tests via `TEST_DATABASE_URL`), Alembic migrations in `backend/migrations/`.
 - Core domain logic: `app/agent/executor.py` builds evidence-bounded LLM prompts from saved project context/sources and persists an auditable `input_snapshot` with each `ResearchRun`.
 - Background processing: `app/worker.py` polls `research_runs` for `queued` rows (`SKIP LOCKED`) in production; `run_research_inline` setting runs synchronously in dev.
 - Auth: Google OAuth (`app/routers/auth.py`) plus a dev-only login bypass, both gated by `environment` setting.

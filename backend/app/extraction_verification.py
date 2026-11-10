@@ -8,12 +8,12 @@ from sqlalchemy.orm import Session
 from app import project_schemas
 from app.extraction_schema import SchemaError, schema_version
 from app.models import Extraction, Project
-from app.thematic_clusters import clusterable_sources
+from app.screening import included_sources
 
 
 def current_rows(db: Session, project: Project) -> list[tuple[object, Extraction | None]]:
-    """One newest extraction per active paper; a later edit supersedes an earlier review."""
-    sources = clusterable_sources(db, project)
+    """One newest extraction per final-included paper; later edits supersede earlier reviews."""
+    sources = included_sources(db, project)
     chosen = {}
     for row in db.scalars(select(Extraction).where(Extraction.project_id == project.id)):
         current = chosen.get(row.source_id)

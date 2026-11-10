@@ -13,7 +13,10 @@ from sqlalchemy.orm import Session
 from app import audit
 from app.database import get_db
 from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_access
-from app.gap_miner import validate_gap_evidence, validate_gap_type, validate_project_evidence
+from app.gap_miner import candidates as gap_candidates, validate_gap_evidence, validate_gap_type, validate_project_evidence
+from app.coverage_matrix import papers_for_project
+from app.evidence_matrix import build as build_evidence_matrix
+from app.extraction_schema import SchemaError
 from app.models import Extraction, Gap, Project, Source, User
 
 router = APIRouter(prefix="/projects/{project_id}/gaps", tags=["gaps"])
@@ -41,6 +44,16 @@ class FutureResearchRead(BaseModel):
     extraction_id: uuid.UUID
 
 
+class CandidateRead(BaseModel):
+    kind: str
+    type: str
+    reason: str
+    paper_ids: list[uuid.UUID]
+    cell_ids: list[str]
+    extraction_ids: list[uuid.UUID]
+    future_research: list[FutureResearchRead]
+
+
 class GapRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID
@@ -66,6 +79,16 @@ def _gap(db: Session, project: Project, gap_id: uuid.UUID) -> Gap:
 @router.get("", response_model=list[GapRead])
 def list_gaps(project: Project = Depends(project_access(READ_ROLES)), db: Session = Depends(get_db)):
     return db.scalars(select(Gap).where(Gap.project_id == project.id).order_by(Gap.priority.desc(), Gap.created_at)).all()
+
+
+@router.get("/candidates", response_model=list[CandidateRead])
+def list_gap_candidates(project: Project = Depends(project_access(READ_ROLES)), db: Session = Depends(get_db)):
+    """Deterministic suggestions only (X.190): nothing is stored until a person posts one to `POST …/gaps`."""
+    try:
+        matrix_data = build_evidence_matrix(db, project)
+    except SchemaError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+    return gap_candidates(papers=papers_for_project(db, project), matrix=matrix_data)
 
 
 @router.post("", response_model=GapRead, status_code=status.HTTP_201_CREATED)

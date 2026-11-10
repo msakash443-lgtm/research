@@ -1,6 +1,5 @@
 import uuid
 
-from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.agent import executor
@@ -9,16 +8,11 @@ from app.config import get_settings
 from app.database import SessionLocal
 from app.main import app
 from app.models import Source, SourceExcerpt
-
-
-def _login(email):
-    client = TestClient(app)
-    user_id = client.post("/api/auth/development/login", json={"email": email, "display_name": "C"}).json()["id"]
-    return client, user_id
+from tests.api_helpers import sign_in_user
 
 
 def test_user_created_rows_record_the_creator_and_expose_it():
-    client, user_id = _login("by-user@example.com")
+    client, user_id = sign_in_user("by-user@example.com")
     project_id = client.post("/api/projects", json={"title": "By"}).json()["id"]
 
     context = client.post(f"/api/projects/{project_id}/context", json={"kind": "question", "content": "Why?"}).json()
@@ -31,8 +25,8 @@ def test_user_created_rows_record_the_creator_and_expose_it():
 
 
 def test_a_collaborator_is_recorded_as_the_creator_not_the_owner():
-    owner, _ = _login("by-owner@example.com")
-    co, co_id = _login("by-co@example.com")
+    owner, _ = sign_in_user("by-owner@example.com")
+    co, co_id = sign_in_user("by-co@example.com")
     project_id = owner.post("/api/projects", json={"title": "Shared"}).json()["id"]
     owner.post(f"/api/projects/{project_id}/members", json={"email": "by-co@example.com", "role": "co_author"})
 
@@ -47,7 +41,7 @@ def test_arc_sources_are_attributed_to_the_agent_not_a_person(monkeypatch, fake_
     monkeypatch.setattr(settings, "arc_retrieval_base_url", "http://arc.test")
     item = ArcRetrievedSource("Found", "https://x.example/1", None, 2020, "scholar", "abstract", "loc")
     monkeypatch.setattr(executor.ArcRetrievalClient, "retrieve", lambda self, topic: [item])
-    client, user_id = _login("by-arc@example.com")
+    client, user_id = sign_in_user("by-arc@example.com")
     project_id = client.post("/api/projects", json={"title": "Arc"}).json()["id"]
 
     client.post(f"/api/projects/{project_id}/research-runs", json={"question": "A long enough question?", "use_web_retrieval": True})
@@ -61,7 +55,7 @@ def test_arc_sources_are_attributed_to_the_agent_not_a_person(monkeypatch, fake_
 
 
 def test_legacy_rows_without_a_creator_still_read_back():
-    client, _ = _login("by-legacy@example.com")
+    client, _ = sign_in_user("by-legacy@example.com")
     project_id = client.post("/api/projects", json={"title": "Legacy"}).json()["id"]
     source_id = client.post(f"/api/projects/{project_id}/sources", json={"title": "Old"}).json()["id"]
     with SessionLocal() as db:

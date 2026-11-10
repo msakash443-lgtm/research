@@ -51,7 +51,7 @@ def _entry(record: PaperRecord) -> ScanEntry:
     )
 
 
-def _best_of_each_work(records: list[PaperRecord]) -> list[PaperRecord]:
+def dedupe_records(records: list[PaperRecord]) -> list[PaperRecord]:
     """One record per work (same DOI, or same title/year/first author); the most cited copy wins, ties go to the first."""
     kept = []
     for group in group_duplicates(records):
@@ -62,7 +62,7 @@ def _best_of_each_work(records: list[PaperRecord]) -> list[PaperRecord]:
 def summarise(records: tuple[PaperRecord, ...] | list[PaperRecord], *, reviews_since: int, top_n: int = 10) -> LandscapeScan:
     """Top-cited, recent reviews, and a count per publication year. Ties sort by external id so output is stable."""
     given = len(records)
-    records = _best_of_each_work(list(records))
+    records = dedupe_records(list(records))
     counted = [r for r in records if r.cited_by_count is not None]
     top = sorted(counted, key=lambda r: (-r.cited_by_count, r.external_id))[:top_n]
     reviews = sorted(

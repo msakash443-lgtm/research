@@ -39,11 +39,6 @@ def test_the_current_plan_has_no_guarded_task_closed_without_g3_approval():
     assert closed_without_g3(PLAN.read_text(encoding="utf-8")) == []
 
 
-def test_a_closed_guarded_task_without_a_decisions_row_is_flagged():
-    text = "## 3. Decisions log\n| 2026-10-11 | user | other decision |\n## 4. Blockers\n- [x] **M2.8.1** done\n"
-    assert closed_without_g3(text) == ["M2.8.1"]
-
-
 def test_a_decisions_row_recording_g3_approval_clears_the_flag():
     text = (
         "## 3. Decisions log\n"
@@ -53,22 +48,33 @@ def test_a_decisions_row_recording_g3_approval_clears_the_flag():
     assert closed_without_g3(text) == []
 
 
-def test_a_work_log_row_cannot_stand_in_for_the_owner_approval():
-    text = (
-        "## 3. Decisions log\n"
-        "## 4. Blockers\n- [x] **M2.10** done\n"
-        "## 5. Work log\n| 2026-10-14 | claude | M2.10 | G3 approved, closing |\n"
-    )
-    assert closed_without_g3(text) == ["M2.10"]
-
-
-def test_m2_8_is_not_satisfied_by_an_approval_row_for_m2_8_1():
-    text = (
-        "## 3. Decisions log\n"
-        "| 2026-10-14 | owner | G3 approved for M2.8.1 | owner |\n"
-        "## 4. Blockers\n- [x] **M2.8** done\n"
-    )
-    assert closed_without_g3(text) == ["M2.8"]
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        pytest.param(
+            "## 3. Decisions log\n| 2026-10-11 | user | other decision |\n"
+            "## 4. Blockers\n- [x] **M2.8.1** done\n",
+            ["M2.8.1"],
+            id="no-decisions-row-names-the-task",
+        ),
+        pytest.param(
+            "## 3. Decisions log\n"
+            "## 4. Blockers\n- [x] **M2.10** done\n"
+            "## 5. Work log\n| 2026-10-14 | claude | M2.10 | G3 approved, closing |\n",
+            ["M2.10"],
+            id="a-work-log-row-cannot-stand-in-for-the-owner-approval",
+        ),
+        pytest.param(
+            "## 3. Decisions log\n"
+            "| 2026-10-14 | owner | G3 approved for M2.8.1 | owner |\n"
+            "## 4. Blockers\n- [x] **M2.8** done\n",
+            ["M2.8"],
+            id="m2_8-is-not-satisfied-by-an-approval-row-for-m2_8_1",
+        ),
+    ],
+)
+def test_a_closed_guarded_task_without_a_matching_g3_approval_row_is_flagged(text, expected):
+    assert closed_without_g3(text) == expected
 
 
 @pytest.mark.parametrize("status", ["[ ]", "[?]", "[~]", "[!]"])

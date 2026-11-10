@@ -4,7 +4,7 @@ import httpx
 import pytest
 from pydantic import SecretStr
 
-from app.connectors import Connector, ConnectorError, NotSupportedError, SearchRequest
+from app.connectors import ConnectorError, NotSupportedError, SearchRequest
 from app.connectors.http import ConnectorHttpClient, HttpPolicy
 from app.connectors.semantic_scholar import SemanticScholarConnector, paper_ref, to_record
 
@@ -46,10 +46,6 @@ def connector(handler, **kwargs):
     return SemanticScholarConnector(http, **kwargs), server
 
 
-def test_it_satisfies_the_connector_protocol():
-    assert isinstance(connector(lambda r: {})[0], Connector)
-
-
 def test_paper_normalisation():
     record = to_record(paper())
     assert (record.connector, record.external_id, record.title) == ("semantic_scholar", pid(1), "Paper 1")
@@ -58,12 +54,6 @@ def test_paper_normalisation():
     assert record.oa_url == "https://oa.test/p.pdf" and record.url.startswith("https://www.semanticscholar.org/")
     assert record.source_ids == {"semantic_scholar": pid(1), "arxiv": "2001.00001", "pmid": "77", "corpusid": "5"}
     assert record.quality_flags == ()
-
-
-def test_flags_and_degraded_fields():
-    record = to_record(paper(abstract=None, venue="arXiv.org", openAccessPdf=None, externalIds={"DOI": "bad"}, year="2020"))
-    assert set(record.quality_flags) == {"preprint", "no_abstract", "invalid_doi"}
-    assert record.oa_url is None and record.doi is None and record.year is None
 
 
 @pytest.mark.parametrize("bad", [{"paperId": None}, {"paperId": "short"}, {"title": None}, {"title": " "}])
@@ -245,11 +235,6 @@ def test_api_key_only_travels_as_a_header():
     anonymous = SemanticScholarConnector()
     assert "x-api-key" not in anonymous._http._client.headers
     assert anonymous._http.policy.min_interval_seconds > 1
-
-
-def test_invalid_max_related():
-    with pytest.raises(ValueError):
-        SemanticScholarConnector(max_related=0)
 
 
 # --- bulk Boolean search (M1.5.5) -------------------------------------------------

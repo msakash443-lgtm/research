@@ -44,7 +44,7 @@ def _write(directory, stages, name="demo", extra=""):
 # ---- the shipped types -------------------------------------------------------------------------
 
 def test_the_shipped_types_are_the_three_approved_ones_and_all_load():
-    assert rt.available_research_types() == ["full_journey", "literature_review", "qualitative"]
+    assert rt.available_research_types() == ["experimental", "full_journey", "literature_review", "mixed_methods", "qualitative", "quantitative_survey"]
     for name in rt.available_research_types():
         loaded = rt.load_research_type(name)
         assert loaded.name == name and loaded.version >= 1
@@ -58,7 +58,7 @@ def test_full_journey_is_todays_exact_chain_so_existing_projects_do_not_change()
     assert full.human_participants is True
 
 
-@pytest.mark.parametrize("name", ["full_journey", "literature_review", "qualitative"])
+@pytest.mark.parametrize("name", ["experimental", "full_journey", "literature_review", "mixed_methods", "qualitative", "quantitative_survey"])
 def test_every_shipped_type_keeps_the_five_mandatory_gates(name):
     assert set(rt.MANDATORY_GATES) <= set(rt.load_research_type(name).gates)
 
@@ -98,21 +98,17 @@ def test_dropping_a_mandatory_gate_stage_fails_loudly(type_dir, dropped):
         rt.load_research_type("demo")
 
 
-def test_a_kept_stage_cannot_lose_its_gate(type_dir):
-    _write(type_dir, [(s, None if s == "scoped" else g) for s, g in LIT_REVIEW])
-    with pytest.raises(rt.ResearchTypeError, match="G1.*scoped"):
-        rt.load_research_type("demo")
-
-
-def test_a_gate_cannot_move_to_another_stage(type_dir):
-    _write(type_dir, [(s, "G6" if s == "scoped" else g) for s, g in LIT_REVIEW])
-    with pytest.raises(rt.ResearchTypeError, match="scoped"):
-        rt.load_research_type("demo")
-
-
-def test_a_gate_cannot_be_put_on_an_ungated_stage(type_dir):
-    _write(type_dir, [(s, "G9" if s == "retrieved" else g) for s, g in LIT_REVIEW])
-    with pytest.raises(rt.ResearchTypeError, match="retrieved"):
+@pytest.mark.parametrize(
+    "target_stage,new_gate,match",
+    [
+        pytest.param("scoped", None, "G1.*scoped", id="a-kept-stage-cannot-lose-its-gate"),
+        pytest.param("scoped", "G6", "scoped", id="a-gate-cannot-move-to-another-stage"),
+        pytest.param("retrieved", "G9", "retrieved", id="a-gate-cannot-be-put-on-an-ungated-stage"),
+    ],
+)
+def test_a_stage_gate_cannot_be_changed_from_its_declared_shape(type_dir, target_stage, new_gate, match):
+    _write(type_dir, [(s, new_gate if s == target_stage else g) for s, g in LIT_REVIEW])
+    with pytest.raises(rt.ResearchTypeError, match=match):
         rt.load_research_type("demo")
 
 

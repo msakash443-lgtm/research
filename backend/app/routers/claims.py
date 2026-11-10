@@ -67,6 +67,11 @@ def _claim_or_404(db: Session, project: Project, claim_id: uuid.UUID) -> Claim:
     return claim
 
 
+def _refuse_retracted_source(source: Source | None) -> None:
+    if source is not None and "retracted" in (source.quality_flags or []):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Retracted sources cannot support a claim")
+
+
 @router.get("", response_model=list[ClaimRead])
 def list_claims(run_id: uuid.UUID | None = None,
                 project: Project = Depends(project_access(READ_ROLES)), db: Session = Depends(get_db)):
@@ -89,12 +94,15 @@ def create_claim(payload: ClaimIn, project: Project = Depends(project_access(WRI
     if len({item.source_id for item in payload.evidence}) != len(payload.evidence):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Use one evidence link per source")
     for item in payload.evidence:
-        row = db.scalar(select(SourceExcerpt).join(Source).where(
-            SourceExcerpt.id == item.excerpt_id, SourceExcerpt.source_id == item.source_id,
-            Source.project_id == project.id, Source.merged_into.is_(None)))
-        if row is None or item.quote not in row.content:
+        source = db.scalar(select(Source).where(
+            Source.id == item.source_id, Source.project_id == project.id, Source.merged_into.is_(None)
+        ).with_for_update())
+        row = db.scalar(select(SourceExcerpt).where(
+            SourceExcerpt.id == item.excerpt_id, SourceExcerpt.source_id == item.source_id))
+        if row is None or source is None or item.quote not in row.content:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                                 "Evidence must quote an excerpt from an active project source")
+        _refuse_retracted_source(source)
     claim = Claim(project_id=project.id, extraction_id=payload.extraction_id, section_id=payload.section_id,
                   text=payload.text.strip(), strength=payload.strength, verified=False,
                   created_by=str(user.id))
@@ -123,6 +131,7 @@ def verify_claim(claim_id: uuid.UUID, project: Project = Depends(project_access(
                                                         SourceExcerpt.source_id == link.source_id))
         if source is None or not source.metadata_verified or excerpt is None or link.quote not in excerpt.content:
             raise HTTPException(status.HTTP_409_CONFLICT, "Claim evidence is not a verified project source excerpt")
+        _refuse_retracted_source(source)
     claim.verified = True
     audit.record(db, actor=str(user.id), action="claim.verified", project_id=project.id,
                  payload={"claim_id": str(claim.id), "evidence_count": len(claim.evidence)})
@@ -138,17 +147,26 @@ def confirm_citation_support(claim_id: uuid.UUID, evidence_id: uuid.UUID,
     claim = _claim_or_404(db, project, claim_id)
     if claim.run_id is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Only research-run citations use support confirmation")
+    link_source_id = db.scalar(select(ClaimEvidence.source_id).where(
+        ClaimEvidence.id == evidence_id, ClaimEvidence.claim_id == claim.id))
+    if link_source_id is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Citation evidence not found")
+    source = db.scalar(select(Source).where(Source.id == link_source_id,
+                                           Source.project_id == project.id, Source.merged_into.is_(None)).with_for_update())
+    if source is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Citation source is no longer verified evidence")
     link = db.scalar(select(ClaimEvidence).where(ClaimEvidence.id == evidence_id,
                                                   ClaimEvidence.claim_id == claim.id).with_for_update())
     if link is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Citation evidence not found")
+    if link.source_id != source.id:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Citation source changed during confirmation")
+    _refuse_retracted_source(source)
     if link.support_confirmed_by is not None:
         return claim
-    source = db.scalar(select(Source).where(Source.id == link.source_id,
-                                           Source.project_id == project.id, Source.merged_into.is_(None)).with_for_update())
     excerpt = db.scalar(select(SourceExcerpt).where(SourceExcerpt.id == link.excerpt_id,
                                                     SourceExcerpt.source_id == link.source_id))
-    if source is None or not source.metadata_verified or excerpt is None or link.quote not in excerpt.content:
+    if not source.metadata_verified or excerpt is None or link.quote not in excerpt.content:
         raise HTTPException(status.HTTP_409_CONFLICT, "Citation source is no longer verified evidence")
     link.support_confirmed_by = audit.user_actor(user)
     link.support_confirmed_at = utcnow()

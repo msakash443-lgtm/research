@@ -9,7 +9,6 @@ import uuid
 from datetime import timedelta
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app import exit_conditions
@@ -29,16 +28,7 @@ from app.models import (
     utcnow,
 )
 from gate_helpers import approve_earlier_gates
-
-
-def _login(email):
-    client = TestClient(app)
-    user_id = client.post("/api/auth/development/login", json={"email": email, "display_name": "A"}).json()["id"]
-    return client, user_id
-
-
-def _project(client, title="Interpretation project"):
-    return client.post("/api/projects", json={"title": title}).json()["id"]
+from tests.api_helpers import create_project, sign_in_user
 
 
 def _prep(project_id: str, *, actor="test-setup", output_json=None, field_value=0.6, literature_value=0.3, run_before_g8=False):
@@ -92,8 +82,8 @@ def _prep(project_id: str, *, actor="test-setup", output_json=None, field_value=
 @pytest.fixture
 def world():
     tag = uuid.uuid4().hex[:8]
-    client, user_id = _login(f"interp-{tag}@example.com")
-    project_id = _project(client)
+    client, user_id = sign_in_user(f"interp-{tag}@example.com")
+    project_id = create_project(client, "Interpretation project")
     return client, project_id, user_id
 
 
@@ -113,9 +103,16 @@ def test_generate_classifies_a_matching_finding_as_agree(world):
     assert findings[0]["confirmed"] is False
 
 
-def test_generate_with_no_analysis_run_is_refused(world):
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        pytest.param("generate", id="generate-with-no-analysis-run"),
+        pytest.param("draft", id="draft-with-no-map-generated"),
+    ],
+)
+def test_a_step_without_its_prerequisite_is_refused(world, endpoint):
     client, project_id, _ = world
-    response = client.post(f"/api/projects/{project_id}/interpretation/generate")
+    response = client.post(f"/api/projects/{project_id}/interpretation/{endpoint}")
     assert response.status_code == 409
 
 
@@ -217,12 +214,6 @@ def test_draft_builds_a_suggestion_with_stat_and_cite_nodes_never_auto_accepted(
     suggestion = next(s for s in suggestions if s["id"] == body["suggestion_id"])
     assert suggestion["model_id"] == "deterministic"
     assert suggestion["state"] == "pending"
-
-
-def test_draft_with_no_map_generated_is_refused(world):
-    client, project_id, _ = world
-    response = client.post(f"/api/projects/{project_id}/interpretation/draft")
-    assert response.status_code == 409
 
 
 def test_draft_before_g9_approval_is_refused_even_with_every_finding_confirmed(world):
@@ -353,8 +344,8 @@ def test_ec_12_2_is_unmet_when_the_only_run_predates_g8s_approval(world):
 
 def test_ec_12_2_is_unmet_before_g8_is_approved():
     tag = uuid.uuid4().hex[:8]
-    client, user_id = _login(f"interp-g8-{tag}@example.com")
-    project_id = _project(client)
+    client, user_id = sign_in_user(f"interp-g8-{tag}@example.com")
+    project_id = create_project(client, "Interpretation project")
     with SessionLocal() as db:
         project = db.get(Project, uuid.UUID(project_id))
         condition = exit_conditions.ec_12_2(db, project)
@@ -369,7 +360,7 @@ def test_a_reviewer_cannot_generate_or_review_findings(world):
     client, project_id, user_id = world
     _prep(project_id)
     reviewer_email = f"interp-reviewer-{uuid.uuid4().hex[:8]}@example.com"
-    reviewer, reviewer_id = _login(reviewer_email)
+    reviewer, reviewer_id = sign_in_user(reviewer_email)
     client.post(f"/api/projects/{project_id}/members", json={"email": reviewer_email, "role": "reviewer"})
     assert reviewer.post(f"/api/projects/{project_id}/interpretation/generate").status_code == 403
     findings = client.post(f"/api/projects/{project_id}/interpretation/generate").json()
@@ -383,6 +374,6 @@ def test_a_reviewer_can_read_findings(world):
     _prep(project_id)
     client.post(f"/api/projects/{project_id}/interpretation/generate")
     reviewer_email = f"interp-reader-{uuid.uuid4().hex[:8]}@example.com"
-    reviewer, reviewer_id = _login(reviewer_email)
+    reviewer, reviewer_id = sign_in_user(reviewer_email)
     client.post(f"/api/projects/{project_id}/members", json={"email": reviewer_email, "role": "reviewer"})
     assert reviewer.get(f"/api/projects/{project_id}/interpretation/findings").status_code == 200

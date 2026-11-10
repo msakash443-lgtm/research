@@ -1,26 +1,20 @@
 import uuid
 
-from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.database import SessionLocal
 from app.main import app
 from app import research_types
 from app.models import AuditEvent, Gate, GateCode, GateStatus, Project, ProjectMember, ProjectRole, ProjectStage
+from tests.api_helpers import create_project, sign_in_user
 
 
-def _login(email: str):
-    client = TestClient(app)
-    response = client.post("/api/auth/development/login", json={"email": email, "display_name": email})
-    return client, response.json()["id"]
-
-
-def _project():
+def _team_project():
     tag = uuid.uuid4().hex[:8]
-    owner, _ = _login(f"research-type-owner-{tag}@example.com")
-    project_id = owner.post("/api/projects", json={"title": "Research type API"}).json()["id"]
-    supervisor, supervisor_id = _login(f"research-type-supervisor-{tag}@example.com")
-    coauthor, coauthor_id = _login(f"research-type-coauthor-{tag}@example.com")
+    owner, _ = sign_in_user(f"research-type-owner-{tag}@example.com")
+    project_id = create_project(owner, "Research type API")
+    supervisor, supervisor_id = sign_in_user(f"research-type-supervisor-{tag}@example.com")
+    coauthor, coauthor_id = sign_in_user(f"research-type-coauthor-{tag}@example.com")
     with SessionLocal() as db:
         project = db.get(Project, uuid.UUID(project_id))
         project.members.append(ProjectMember(user_id=uuid.UUID(supervisor_id), role=ProjectRole.supervisor))
@@ -30,7 +24,7 @@ def _project():
 
 
 def test_research_type_catalogue_lists_valid_shipped_types():
-    client, _ = _login(f"research-type-catalogue-{uuid.uuid4().hex[:8]}@example.com")
+    client, _ = sign_in_user(f"research-type-catalogue-{uuid.uuid4().hex[:8]}@example.com")
     response = client.get("/api/research-types")
     assert response.status_code == 200
     rows = {row["name"]: row for row in response.json()}
@@ -40,7 +34,7 @@ def test_research_type_catalogue_lists_valid_shipped_types():
 
 
 def test_only_the_owner_can_change_a_project_research_type_at_idea():
-    world = _project()
+    world = _team_project()
     assert world["supervisor"].put(f"/api/projects/{world['project']}/research-type", json={"name": "literature_review"}).status_code == 403
     assert world["coauthor"].put(f"/api/projects/{world['project']}/research-type", json={"name": "literature_review"}).status_code == 403
     response = world["owner"].put(f"/api/projects/{world['project']}/research-type", json={"name": "literature_review"})
@@ -53,7 +47,7 @@ def test_only_the_owner_can_change_a_project_research_type_at_idea():
 
 
 def test_research_type_change_is_refused_after_stage_or_gate_progress():
-    world = _project()
+    world = _team_project()
     with SessionLocal() as db:
         project = db.get(Project, uuid.UUID(world["project"]))
         project.stage = ProjectStage.scoped
@@ -70,7 +64,7 @@ def test_research_type_change_is_refused_after_stage_or_gate_progress():
 
 
 def test_stage_response_exposes_the_project_snapshot_with_labels_and_gates():
-    world = _project()
+    world = _team_project()
     assert world["owner"].put(f"/api/projects/{world['project']}/research-type", json={"name": "literature_review"}).status_code == 200
     response = world["owner"].get(f"/api/projects/{world['project']}/stage")
     assert response.status_code == 200
@@ -83,7 +77,7 @@ def test_stage_response_exposes_the_project_snapshot_with_labels_and_gates():
 
 
 def test_stage_response_exposes_whether_the_project_has_human_participants():
-    world = _project()
+    world = _team_project()
     assert world["owner"].get(f"/api/projects/{world['project']}/stage").json()["human_participants"] is True
     assert world["owner"].put(f"/api/projects/{world['project']}/research-type", json={"name": "literature_review"}).status_code == 200
     assert world["owner"].get(f"/api/projects/{world['project']}/stage").json()["human_participants"] is False
@@ -106,7 +100,7 @@ def _advance_to_g7(world, research_type: str):
 
 
 def test_g7_for_a_no_participants_type_is_refused_without_the_confirmation_and_the_note_records_it():
-    world = _project()
+    world = _team_project()
     _advance_to_g7(world, "literature_review")
     refused = world["owner"].post(f"/api/projects/{world['project']}/gates/G7/approve", json={})
     assert refused.status_code == 422
@@ -126,7 +120,7 @@ def test_g7_for_a_no_participants_type_is_refused_without_the_confirmation_and_t
 
 
 def test_g7_for_a_participants_type_needs_no_confirmation():
-    world = _project()
+    world = _team_project()
     _advance_to_g7(world, "qualitative")
     approved = world["owner"].post(f"/api/projects/{world['project']}/gates/G7/approve", json={})
     assert approved.status_code == 200
@@ -137,7 +131,7 @@ def test_literature_review_requires_its_own_gate_order_not_full_journeys():
     """X.43.7: literature_review puts G7 (design/ethics) right after G1, before G2 (unlike full_journey,
     where G7 comes much later) -- a real approve call, not just the pure gate_order() function, must
     enforce that order."""
-    world = _project()
+    world = _team_project()
     assert world["owner"].put(
         f"/api/projects/{world['project']}/research-type", json={"name": "literature_review"}
     ).status_code == 200
@@ -166,7 +160,7 @@ def test_reentry_resets_only_the_qualitative_chains_own_gates_leaving_the_droppe
     """X.43.7: qualitative drops only G8 (plan_locked). Re-entering must reset the gates that are actually
     in its chain and never touch (or error on) G8's row, which still exists from project creation but is
     outside this project's chain."""
-    world = _project()
+    world = _team_project()
     owner = world["owner"]
     assert owner.put(f"/api/projects/{world['project']}/research-type", json={"name": "qualitative"}).status_code == 200
 
@@ -207,7 +201,7 @@ def test_reentry_resets_only_the_qualitative_chains_own_gates_leaving_the_droppe
 
 
 def test_stage_response_names_the_projects_research_type_so_the_picker_can_show_it():
-    world = _project()
+    world = _team_project()
     assert world["owner"].get(f"/api/projects/{world['project']}/stage").json()["research_type"] == "full_journey"
     assert world["owner"].put(f"/api/projects/{world['project']}/research-type", json={"name": "qualitative"}).status_code == 200
     assert world["owner"].get(f"/api/projects/{world['project']}/stage").json()["research_type"] == "qualitative"

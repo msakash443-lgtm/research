@@ -12,9 +12,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Batch mode recreates the table only on SQLite, where ALTER TABLE cannot add a foreign-key
-    # constraint. On PostgreSQL it emits plain ALTERs: recreating `notes` would drop notes_pkey,
-    # which note_revisions, note_attachments and research_context_items reference.
+    # batch_alter_table emits plain ALTER statements on Postgres: recreating `notes` would
+    # drop notes_pkey, which note_revisions, note_attachments and research_context_items reference.
     with op.batch_alter_table("notes", recreate="auto") as batch:
         batch.add_column(sa.Column("source_id", sa.Uuid(), nullable=True))
         batch.add_column(sa.Column("excerpt_id", sa.Uuid(), nullable=True))

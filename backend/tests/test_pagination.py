@@ -3,16 +3,9 @@
 import uuid
 
 import pytest
-from fastapi.testclient import TestClient
 
-from app.main import app
 from app.pagination import InvalidCursor, decode_cursor, encode_cursor
-
-
-def _login(email):
-    client = TestClient(app)
-    assert client.post("/api/auth/development/login", json={"email": email, "display_name": "P"}).status_code == 200
-    return client
+from tests.api_helpers import sign_in
 
 
 def _project_with_sources(client, count):
@@ -52,8 +45,8 @@ def test_a_cursor_round_trips_and_a_tampered_cursor_is_refused():
 
 
 def test_walking_every_page_of_sources_returns_each_source_exactly_once_in_list_order():
-    # Sources created in one second share created_at on SQLite, so the id tiebreak is exercised.
-    client = _login("pages1@example.com")
+    # Sources are created back to back; the id tiebreak keeps the order total even if created_at ties.
+    client = sign_in("pages1@example.com")
     project_id = _project_with_sources(client, 7)
     url = f"/api/projects/{project_id}/sources"
     full = [row["id"] for row in client.get(url).json()]
@@ -66,7 +59,7 @@ def test_walking_every_page_of_sources_returns_each_source_exactly_once_in_list_
 
 
 def test_without_limit_the_sources_list_is_whole_and_has_no_cursor_header():
-    client = _login("pages2@example.com")
+    client = sign_in("pages2@example.com")
     project_id = _project_with_sources(client, 4)
     response = client.get(f"/api/projects/{project_id}/sources")
     assert len(response.json()) == 4
@@ -74,7 +67,7 @@ def test_without_limit_the_sources_list_is_whole_and_has_no_cursor_header():
 
 
 def test_an_exact_last_page_has_no_cursor():
-    client = _login("pages3@example.com")
+    client = sign_in("pages3@example.com")
     project_id = _project_with_sources(client, 3)
     response = client.get(f"/api/projects/{project_id}/sources", params={"limit": 3})
     assert len(response.json()) == 3
@@ -82,7 +75,7 @@ def test_an_exact_last_page_has_no_cursor():
 
 
 def test_bad_cursors_are_refused_with_400():
-    client = _login("pages4@example.com")
+    client = sign_in("pages4@example.com")
     project_id = _project_with_sources(client, 2)
     other_project = _project_with_sources(client, 2)
     url = f"/api/projects/{project_id}/sources"
@@ -96,7 +89,7 @@ def test_bad_cursors_are_refused_with_400():
 
 
 def test_limit_is_bounded():
-    client = _login("pages5@example.com")
+    client = sign_in("pages5@example.com")
     project_id = _project_with_sources(client, 1)
     url = f"/api/projects/{project_id}/sources"
     assert client.get(url, params={"limit": 0}).status_code == 422
@@ -104,7 +97,7 @@ def test_limit_is_bounded():
 
 
 def test_walking_every_page_of_notes_returns_each_note_exactly_once_even_with_equal_capture_times():
-    client = _login("pages6@example.com")
+    client = sign_in("pages6@example.com")
     same_time = "2026-10-01T09:00:00+00:00"
     for i in range(5):
         captured = same_time if i < 3 else f"2026-10-0{i}T09:00:00+00:00"

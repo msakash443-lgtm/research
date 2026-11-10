@@ -3,7 +3,6 @@ import uuid
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import event, select, update
 
 from app import task_queue as q, research_types
@@ -15,12 +14,7 @@ from app.main import app
 from app.database import SessionLocal, engine
 from app.models import AuditEvent, Gate, GateCode, GateStatus, Project, ProjectMember, ProjectRole, Task, TaskStatus
 from app.stage_order import StageNotInChain
-
-
-def _login(email):
-    client = TestClient(app)
-    user_id = client.post("/api/auth/development/login", json={"email": email, "display_name": "G"}).json()["id"]
-    return client, user_id
+from tests.api_helpers import sign_in_user
 
 
 @pytest.fixture
@@ -36,10 +30,10 @@ def gated_type():
 @pytest.fixture
 def team():
     tag = uuid.uuid4().hex[:8]
-    owner, owner_id = _login(f"gt-owner-{tag}@example.com")
+    owner, owner_id = sign_in_user(f"gt-owner-{tag}@example.com")
     project_id = owner.post("/api/projects", json={"title": "Gated tasks"}).json()["id"]
-    sup, sup_id = _login(f"gt-sup-{tag}@example.com")
-    co, co_id = _login(f"gt-co-{tag}@example.com")
+    sup, sup_id = sign_in_user(f"gt-sup-{tag}@example.com")
+    co, co_id = sign_in_user(f"gt-co-{tag}@example.com")
     with SessionLocal() as db:
         db.add(ProjectMember(project_id=uuid.UUID(project_id), user_id=uuid.UUID(sup_id), role=ProjectRole.supervisor))
         db.add(ProjectMember(project_id=uuid.UUID(project_id), user_id=uuid.UUID(co_id), role=ProjectRole.co_author))
@@ -131,7 +125,7 @@ def test_rejecting_the_gate_keeps_the_task_blocked(gated_type, team):
 
 
 def test_only_the_matching_gate_in_the_same_project_releases_a_task(gated_type, team):
-    other_owner, _ = _login(f"gt-other-{uuid.uuid4().hex[:6]}@example.com")
+    other_owner, _ = sign_in_user(f"gt-other-{uuid.uuid4().hex[:6]}@example.com")
     other_project = other_owner.post("/api/projects", json={"title": "Other"}).json()["id"]
     mine = _enqueue(team["project"])
     theirs = _enqueue(other_project)

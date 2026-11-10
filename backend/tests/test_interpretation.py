@@ -1,3 +1,4 @@
+import pytest
 from app.interpretation import (
     Agreement,
     AnalysisFinding,
@@ -51,13 +52,15 @@ def test_a_missing_finding_value_is_unclear_even_with_matching_literature():
     assert "no numeric value" in item.rationale
 
 
-def test_zero_valued_finding_is_unclear():
-    item = classify(_finding(value=0.0), [_lit("s1", "e1", "pearson_r", 0.3)])
-    assert item.classification is Agreement.unclear
-
-
-def test_zero_valued_literature_is_unclear():
-    item = classify(_finding(value=0.4), [_lit("s1", "e1", "pearson_r", 0.0)])
+@pytest.mark.parametrize(
+    "finding_value,literature_value",
+    [
+        pytest.param(0.0, 0.3, id="zero-valued-finding"),
+        pytest.param(0.4, 0.0, id="zero-valued-literature"),
+    ],
+)
+def test_a_zero_valued_effect_size_is_unclear(finding_value, literature_value):
+    item = classify(_finding(value=finding_value), [_lit("s1", "e1", "pearson_r", literature_value)])
     assert item.classification is Agreement.unclear
 
 

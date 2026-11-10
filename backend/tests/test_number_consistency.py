@@ -1,3 +1,5 @@
+import pytest
+
 from app.number_consistency import find_mismatches
 
 
@@ -31,9 +33,12 @@ def test_a_half_way_value_is_rounded_half_up_as_apa_prints_it():
     assert find_mismatches("r = 0.12", {"r": 0.125})["mismatches"] != []
 
 
-def test_a_negative_half_way_value_rounds_away_from_zero():
-    assert find_mismatches("d = -0.13", {"d": -0.125})["mismatches"] == []
-
-
-def test_a_tiny_negative_value_is_not_printed_with_a_minus_sign():
-    assert find_mismatches("b = 0.00", {"b": -0.001})["mismatches"] == []
+@pytest.mark.parametrize(
+    "text,values",
+    [
+        pytest.param("d = -0.13", {"d": -0.125}, id="a-negative-half-way-value-rounds-away-from-zero"),
+        pytest.param("b = 0.00", {"b": -0.001}, id="a-tiny-negative-value-is-not-printed-with-a-minus-sign"),
+    ],
+)
+def test_negative_value_rounding_edge_cases_are_not_mismatches(text, values):
+    assert find_mismatches(text, values)["mismatches"] == []

@@ -12,7 +12,8 @@ const expected = [
   ["screen", "sources"],
   ["evidence", "screen"],
   ["verification", "evidence"],
-  ["ask", "verification"],
+  ["gaps", "verification"],
+  ["ask", "gaps"],
   ["write", "ask"],
 ];
 

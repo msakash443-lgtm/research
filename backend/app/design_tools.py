@@ -340,9 +340,9 @@ def recommend_method(
         "goal_description": GOALS[goal],
         "approach": approach,
         "candidate_designs": designs,
-        "advantages": rule["pros"],
-        "disadvantages": rule["cons"],
-        "threats_to_validity": rule["threats"],
+        "advantages": list(rule["pros"]),
+        "disadvantages": list(rule["cons"]),
+        "threats_to_validity": list(rule["threats"]),
         "cautions": cautions,
         "note": "Rule-based suggestion from the research goal only. The scholar chooses the design (gate G7 still applies).",
     }

@@ -18,6 +18,7 @@ from app.extraction_schema import ExtractionSchema, SchemaError, ValueSpec, chec
 from app.extraction_spans import check_evidence_spans
 from app.fulltext import FullTextError, extract_pdf_text
 from app.models import Extraction, Gate, GateCode, GateStatus, Project, Source
+from app.screening import included_sources
 from app.object_storage import ObjectStore, fulltext_key
 from app.prompt_registry import Prompt, load_prompt
 from app.untrusted_text import clean_untrusted
@@ -217,6 +218,8 @@ def run_ai_extraction(
     if existing is not None:
         return AiExtractionResult(str(existing.id), existing.schema_version, tuple(k for k, v in existing.fields_json.items() if v is not None),
                                   tuple(k for k, v in existing.fields_json.items() if v is None), ())
+    if source.id not in {included.id for included in included_sources(db, project)}:
+        raise AiExtractionError("Only sources included at full text can be extracted.")
     if source.merged_into is not None or not source.fulltext_path:
         raise AiExtractionError("This source has no stored full-text PDF available for extraction.")
     if source.fulltext_path != fulltext_key(project.id, source.id, "pdf"):

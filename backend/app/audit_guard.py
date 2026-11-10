@@ -14,23 +14,6 @@ from app.models import AuditEvent
 
 APPEND_ONLY_MESSAGE = "audit_events is append-only: rows cannot be updated or deleted"
 
-SQLITE_TRIGGERS = [
-    f"""
-CREATE TRIGGER IF NOT EXISTS audit_events_no_update
-BEFORE UPDATE ON audit_events
-BEGIN
-    SELECT RAISE(ABORT, '{APPEND_ONLY_MESSAGE}');
-END;
-""",
-    f"""
-CREATE TRIGGER IF NOT EXISTS audit_events_no_delete
-BEFORE DELETE ON audit_events
-BEGIN
-    SELECT RAISE(ABORT, '{APPEND_ONLY_MESSAGE}');
-END;
-""",
-]
-
 POSTGRES_FUNCTION = f"""
 CREATE OR REPLACE FUNCTION audit_events_append_only() RETURNS trigger AS $$
 BEGIN
@@ -53,11 +36,9 @@ def _reject_audit_change(mapper, connection, target: AuditEvent) -> None:
     raise ValueError(APPEND_ONLY_MESSAGE)
 
 
-# Tables built by create_all (tests, local SQLite) get the triggers too; Alembic installs
-# the same SQL for PostgreSQL.
+# Tables built by create_all (tests) get the triggers too; Alembic installs the same SQL
+# for existing databases.
 _table = AuditEvent.__table__
-for _sql in SQLITE_TRIGGERS:
-    event.listen(_table, "after_create", DDL(_sql).execute_if(dialect="sqlite"))
 event.listen(_table, "after_create", DDL(POSTGRES_FUNCTION).execute_if(dialect="postgresql"))
 for _sql in POSTGRES_TRIGGERS:
     event.listen(_table, "after_create", DDL(_sql).execute_if(dialect="postgresql"))

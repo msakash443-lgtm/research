@@ -1,3 +1,5 @@
+import pytest
+
 from app.construct_consistency import find_spelling_variants
 
 
@@ -20,16 +22,25 @@ def test_hyphenated_and_spaced_spellings_of_one_construct_are_flagged_with_their
     ]
 
 
-def test_the_same_spelling_in_every_section_is_not_flagged():
-    assert find_spelling_variants({"a": "self-efficacy here.", "b": "self-efficacy there."}) == []
-
-
-def test_a_capital_at_the_start_of_a_sentence_is_not_a_variant():
-    assert find_spelling_variants({"a": "Self-efficacy was high.", "b": "self-efficacy was low."}) == []
-
-
-def test_a_sentence_break_between_two_words_does_not_make_a_construct():
-    assert find_spelling_variants({"a": "We measured self. Efficacy later.", "b": "self efficacy"}) == []
+@pytest.mark.parametrize(
+    "sections",
+    [
+        pytest.param(
+            {"a": "self-efficacy here.", "b": "self-efficacy there."},
+            id="the-same-spelling-in-every-section",
+        ),
+        pytest.param(
+            {"a": "Self-efficacy was high.", "b": "self-efficacy was low."},
+            id="a-capital-at-the-start-of-a-sentence",
+        ),
+        pytest.param(
+            {"a": "We measured self. Efficacy later.", "b": "self efficacy"},
+            id="a-sentence-break-between-the-two-words",
+        ),
+    ],
+)
+def test_sections_that_only_look_like_a_variant_are_not_flagged(sections):
+    assert find_spelling_variants(sections) == []
 
 
 def test_a_three_word_construct_with_a_hyphen_variant_is_flagged():

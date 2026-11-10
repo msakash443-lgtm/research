@@ -6,9 +6,8 @@ from fastapi.testclient import TestClient
 
 from app.connectors import crossref, openalex
 from app.connectors.base import language_code
-from app.database import SessionLocal
 from app.main import app
-from app.models import Source
+from tests.api_helpers import insert_source
 
 
 def test_language_code_keeps_only_a_two_letter_code():
@@ -35,19 +34,13 @@ def world():
     return {"owner": owner, "pid": uuid.UUID(pid)}
 
 
-def _source(world, title, language):
-    with SessionLocal() as db:
-        db.add(Source(project_id=world["pid"], title=title, language=language))
-        db.commit()
-
-
 def _language_warning(world):
     body = world["owner"].get(f"/api/projects/{world['pid']}/bias-warnings").json()
     return {w["code"]: w for w in body["warnings"]}["language_bias"]
 
 
 def test_with_no_known_language_the_check_stays_not_assessable(world):
-    _source(world, "a", None)
+    insert_source(str(world["pid"]), title="a", language=None)
 
     warning = _language_warning(world)
 
@@ -55,9 +48,9 @@ def test_with_no_known_language_the_check_stays_not_assessable(world):
 
 
 def test_only_one_known_language_is_a_warning_with_counts(world):
-    _source(world, "a", "en")
-    _source(world, "b", "en")
-    _source(world, "c", None)
+    insert_source(str(world["pid"]), title="a", language="en")
+    insert_source(str(world["pid"]), title="b", language="en")
+    insert_source(str(world["pid"]), title="c", language=None)
 
     warning = _language_warning(world)
 
@@ -66,8 +59,8 @@ def test_only_one_known_language_is_a_warning_with_counts(world):
 
 
 def test_several_languages_are_reported_without_a_warning(world):
-    _source(world, "a", "en")
-    _source(world, "b", "de")
+    insert_source(str(world["pid"]), title="a", language="en")
+    insert_source(str(world["pid"]), title="b", language="de")
 
     warning = _language_warning(world)
 
@@ -75,7 +68,7 @@ def test_several_languages_are_reported_without_a_warning(world):
 
 
 def test_the_source_api_shows_the_language(world):
-    _source(world, "a", "pt")
+    insert_source(str(world["pid"]), title="a", language="pt")
 
     listed = world["owner"].get(f"/api/projects/{world['pid']}/sources").json()
 

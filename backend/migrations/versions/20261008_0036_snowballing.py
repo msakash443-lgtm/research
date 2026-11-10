@@ -4,8 +4,7 @@ Revision ID: 20261008_0036
 Revises: 20261008_0035
 Create Date: 2026-10-08
 
-Additive: a new table and a nullable JSON column (plain ADD/DROP COLUMN, so SQLite keeps the
-triggers on other tables). Existing sources keep `found_via` NULL.
+Additive: a new table and a nullable JSON column. Existing sources keep `found_via` NULL.
 """
 
 from typing import Sequence, Union

@@ -11,6 +11,7 @@ from app import discipline as d
 from app.database import SessionLocal
 from app.main import app
 from app.models import AuditEvent, Project, ProjectMember, ProjectRole
+from tests.api_helpers import sign_in_user
 
 
 @pytest.fixture
@@ -173,21 +174,15 @@ def test_an_unknown_profile_or_corrupt_stored_overrides_raise_instead_of_guessin
 
 # ---- the API ---------------------------------------------------------------------------------------
 
-def _login(email):
-    client = TestClient(app)
-    user_id = client.post("/api/auth/development/login", json={"email": email, "display_name": "D"}).json()["id"]
-    return client, user_id
-
-
-def _project(email, **extra):
-    client, user_id = _login(email)
+def _create_profiled_project(email, **extra):
+    client, user_id = sign_in_user(email)
     response = client.post("/api/projects", json={"title": "Profiled", **extra})
     return client, user_id, response
 
 
 def test_the_catalogue_lists_the_profiles_but_only_to_a_signed_in_user():
     assert TestClient(app).get("/api/discipline-profiles").status_code == 401
-    client, _ = _login("disc-catalogue@example.com")
+    client, _ = sign_in_user("disc-catalogue@example.com")
 
     body = client.get("/api/discipline-profiles").json()
 
@@ -197,9 +192,9 @@ def test_the_catalogue_lists_the_profiles_but_only_to_a_signed_in_user():
 
 
 def test_a_project_can_start_with_a_discipline_and_an_unknown_one_is_refused():
-    _c, _u, ok = _project("disc-create-ok@example.com", discipline="psychology")
-    _c, _u, bad = _project("disc-create-bad@example.com", discipline="astrology")
-    _c, _u, none = _project("disc-create-none@example.com")
+    _c, _u, ok = _create_profiled_project("disc-create-ok@example.com", discipline="psychology")
+    _c, _u, bad = _create_profiled_project("disc-create-bad@example.com", discipline="astrology")
+    _c, _u, none = _create_profiled_project("disc-create-none@example.com")
 
     assert ok.status_code == 201 and ok.json()["discipline"] == "psychology"
     assert bad.status_code == 422 and "astrology" in bad.text and "economics" in bad.text  # the message lists the options
@@ -207,7 +202,7 @@ def test_a_project_can_start_with_a_discipline_and_an_unknown_one_is_refused():
 
 
 def test_a_project_without_a_profile_has_empty_effective_settings():
-    client, _u, created = _project("disc-none@example.com")
+    client, _u, created = _create_profiled_project("disc-none@example.com")
 
     body = client.get(f"/api/projects/{created.json()['id']}/profile").json()
 
@@ -216,7 +211,7 @@ def test_a_project_without_a_profile_has_empty_effective_settings():
 
 
 def test_the_owner_sets_a_profile_with_overrides_and_the_effective_settings_combine_them():
-    client, owner_id, created = _project("disc-set@example.com")
+    client, owner_id, created = _create_profiled_project("disc-set@example.com")
     pid = created.json()["id"]
 
     response = client.put(
@@ -235,7 +230,7 @@ def test_the_owner_sets_a_profile_with_overrides_and_the_effective_settings_comb
 
 
 def test_putting_a_profile_replaces_the_previous_choice_and_overrides_and_null_clears_it():
-    client, _u, created = _project("disc-replace@example.com", discipline="economics")
+    client, _u, created = _create_profiled_project("disc-replace@example.com", discipline="economics")
     pid = created.json()["id"]
     client.put(f"/api/projects/{pid}/profile", json={"discipline": "economics", "overrides": {"methods": ["panel_fixed_effects"]}})
 
@@ -258,7 +253,7 @@ def test_putting_a_profile_replaces_the_previous_choice_and_overrides_and_null_c
     ],
 )
 def test_an_invalid_profile_is_rejected_and_the_project_is_unchanged(bad):
-    client, _u, created = _project("disc-invalid@example.com", discipline="psychology")
+    client, _u, created = _create_profiled_project("disc-invalid@example.com", discipline="psychology")
     pid = created.json()["id"]
     before = client.get(f"/api/projects/{pid}/profile").json()
 
@@ -268,11 +263,11 @@ def test_an_invalid_profile_is_rejected_and_the_project_is_unchanged(bad):
 
 
 def test_only_the_owner_may_change_the_profile_and_everyone_on_the_project_can_read_it():
-    owner, _o, created = _project("disc-roles-owner@example.com", discipline="economics")
+    owner, _o, created = _create_profiled_project("disc-roles-owner@example.com", discipline="economics")
     pid = created.json()["id"]
     clients = {}
     for role in ("supervisor", "co_author", "reviewer"):
-        client, uid = _login(f"disc-roles-{role}@example.com")
+        client, uid = sign_in_user(f"disc-roles-{role}@example.com")
         with SessionLocal() as db:
             db.add(ProjectMember(project_id=uuid.UUID(pid), user_id=uuid.UUID(uid), role=ProjectRole(role)))
             db.commit()
@@ -284,7 +279,7 @@ def test_only_the_owner_may_change_the_profile_and_everyone_on_the_project_can_r
 
 
 def test_a_profile_change_is_audited_with_the_before_and_after():
-    client, owner_id, created = _project("disc-audit@example.com", discipline="economics")
+    client, owner_id, created = _create_profiled_project("disc-audit@example.com", discipline="economics")
     pid = created.json()["id"]
 
     client.put(f"/api/projects/{pid}/profile", json={"discipline": "psychology", "overrides": {"methods": ["meta_analysis"]}})
@@ -299,7 +294,7 @@ def test_a_profile_change_is_audited_with_the_before_and_after():
 
 
 def test_a_stored_profile_that_no_longer_exists_does_not_make_the_project_unreadable(tmp_path, monkeypatch):
-    client, _u, created = _project("disc-removed@example.com", discipline="economics")  # created while it exists...
+    client, _u, created = _create_profiled_project("disc-removed@example.com", discipline="economics")  # created while it exists...
     pid = created.json()["id"]
     monkeypatch.setattr(d, "PROFILE_DIR", tmp_path)  # ...then the shipped set changes underneath it
     d._load.cache_clear()

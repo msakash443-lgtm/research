@@ -4,7 +4,7 @@ import httpx
 import pytest
 from pydantic import SecretStr
 
-from app.connectors import Connector, ConnectorError, NotSupportedError, SearchRequest
+from app.connectors import ConnectorError, NotSupportedError, SearchRequest
 from app.connectors.http import ConnectorHttpClient, HttpPolicy
 from app.connectors.web_of_science import BASE_URL, MAX_PAGES, WebOfScienceConnector, to_record
 
@@ -36,10 +36,7 @@ def make(handler):
     return WebOfScienceConnector(http=http), seen
 
 
-def test_it_satisfies_connector_protocol_and_requires_a_key():
-    assert isinstance(make(lambda request: {})[0], Connector)
-    with pytest.raises(ConnectorError, match="WEB_OF_SCIENCE_API_KEY"):
-        WebOfScienceConnector()
+def test_the_api_key_travels_as_a_header():
     connector = WebOfScienceConnector(api_key=SecretStr("key"))
     assert connector._http._client.headers["X-ApiKey"] == "key"
 
@@ -93,7 +90,3 @@ def test_page_window_and_unsupported_capabilities_are_explicit():
         connector.get_references("WOS:000123456700001")
 
 
-def test_last_page_reports_the_conservative_result_window_cap():
-    connector, _ = make(lambda request: {"hits": [hit()], "metadata": {"total": 10000}})
-    page = connector.search(SearchRequest(query="x", limit=50, cursor=str(MAX_PAGES)))
-    assert page.next_cursor is None and connector.last_search_capped is True

@@ -3,8 +3,8 @@
 A cursor is the opaque, URL-safe encoding of the id of the last row on the previous page. The
 next page is every row that sorts after that row, compared column to column inside the database
 (`created_at < (SELECT created_at FROM ... WHERE id = :cursor)` and so on), never against a
-timestamp sent back by the client: SQLite stores `server_default=now()` values with a different
-text format from bound parameters, so a timestamp cursor would skip or repeat rows there.
+timestamp sent back by the client: a round trip through JSON can change a timestamp's precision, so a
+timestamp cursor would skip or repeat rows.
 
 Every order column sorts descending and the last one must be the primary key, so the order is
 total and no two rows tie. Without a `limit` a route behaves exactly as before.

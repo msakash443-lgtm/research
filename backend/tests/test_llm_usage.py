@@ -4,7 +4,6 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
 
 from app.agent.llm import LLMResponseError, OpenAICompatibleLLM
 from app.config import get_settings
@@ -12,6 +11,7 @@ from app.database import SessionLocal
 from app.llm_usage import LLMBudgetExceeded, ProjectMeter, parse_usage
 from app.models import LlmUsage
 from app.main import app
+from tests.api_helpers import create_source, sign_in_user, start_research_run
 from tests.llm_replies import chat_reply
 
 
@@ -22,24 +22,17 @@ def _with_usage(answer, prompt=100, completion=50):
 
 
 def _setup(email="usage@example.com"):
-    client = TestClient(app)
-    client.post("/api/auth/development/login", json={"email": email, "display_name": "U"})
+    client, _ = sign_in_user(email)
     pid = client.post("/api/projects", json={"title": "Usage"}).json()["id"]
-    sid = client.post(f"/api/projects/{pid}/sources", json={"title": "Release", "evidence_excerpt": "Output rose.", "locator": "p1"}).json()["id"]
+    sid = create_source(client, pid, "Release", evidence_excerpt="Output rose.", locator="p1")
     client.post(f"/api/projects/{pid}/sources/{sid}/verify")
     return client, pid
-
-
-def _run(client, pid):
-    response = client.post(f"/api/projects/{pid}/research-runs", json={"question": "Did output rise at all?"})
-    assert response.status_code == 202
-    return response.json()  # inline mode: the run has already finished
 
 
 def test_a_run_records_the_tokens_the_provider_reported(fake_llm):
     fake_llm.handler = lambda r: _with_usage("Output rose [S1].")
     client, pid = _setup()
-    _run(client, pid)
+    start_research_run(client, pid)
     usage = client.get(f"/api/projects/{pid}/usage").json()
     assert usage["tokens_used"] == 150 and usage["calls"] == 1 and usage["token_budget"] is None
     assert usage["by_purpose"] == [{"purpose": "research_run", "calls": 1, "tokens": 150}]
@@ -47,7 +40,7 @@ def test_a_run_records_the_tokens_the_provider_reported(fake_llm):
 
 def test_a_provider_that_reports_no_usage_is_recorded_as_unknown_not_zero(fake_llm):
     client, pid = _setup("usage-none@example.com")
-    _run(client, pid)
+    start_research_run(client, pid)
     usage = client.get(f"/api/projects/{pid}/usage").json()
     assert usage["calls"] == 1 and usage["calls_without_token_counts"] == 1 and usage["tokens_used"] == 0
 
@@ -56,7 +49,7 @@ def test_every_retry_of_a_malformed_reply_is_counted(fake_llm):
     body = {"choices": [{"message": {"content": "prose"}}], "usage": {"total_tokens": 10}}
     fake_llm.handler = lambda r: body
     client, pid = _setup("usage-retry@example.com")
-    assert _run(client, pid)["status"] == "failed"
+    assert start_research_run(client, pid)["status"] == "failed"
     assert client.get(f"/api/projects/{pid}/usage").json()["calls"] == get_settings().llm_schema_max_attempts
 
 
@@ -64,9 +57,9 @@ def test_a_project_over_its_budget_gets_no_further_model_call(fake_llm, monkeypa
     monkeypatch.setattr(get_settings(), "project_token_budget", 120)
     fake_llm.handler = lambda r: _with_usage("Output rose [S1].")
     client, pid = _setup("usage-budget@example.com")
-    assert _run(client, pid)["status"] == "completed"  # 150 used; the check happens before a call, so it may overshoot
+    assert start_research_run(client, pid)["status"] == "completed"  # 150 used; the check happens before a call, so it may overshoot
     calls = len(fake_llm.requests)
-    run = _run(client, pid)
+    run = start_research_run(client, pid)
     assert run["status"] == "needs_configuration" and "token budget" in run["error_message"] and run["answer"] is None
     assert len(fake_llm.requests) == calls  # the second run never reached the model
     assert client.get(f"/api/projects/{pid}/usage").json()["token_budget"] == 120
@@ -77,8 +70,8 @@ def test_the_budget_is_per_project(fake_llm, monkeypatch):
     fake_llm.handler = lambda r: _with_usage("Output rose [S1].")
     a, pa = _setup("usage-a@example.com")
     b, pb = _setup("usage-b@example.com")
-    _run(a, pa)
-    assert _run(b, pb)["status"] == "completed"
+    start_research_run(a, pa)
+    assert start_research_run(b, pb)["status"] == "completed"
 
 
 def test_usage_parsing_ignores_bad_values():
@@ -107,11 +100,11 @@ def test_the_usage_api_reports_status_remaining_and_percent_and_the_status_match
     client, pid = _setup("usage-status@example.com")
     assert client.put(f"/api/projects/{pid}/usage/budget", json={"override": 180}).json()["budget_status"] == "ok"
 
-    _run(client, pid)
+    start_research_run(client, pid)
     near = client.get(f"/api/projects/{pid}/usage").json()
     assert (near["budget_status"], near["tokens_remaining"], near["percent_used"]) == ("near", 30, 83.3)
 
-    _run(client, pid)  # still under the budget when it started, so it ran and overshot
+    start_research_run(client, pid)  # still under the budget when it started, so it ran and overshot
     over = client.get(f"/api/projects/{pid}/usage").json()
     assert (over["budget_status"], over["tokens_remaining"]) == ("over", 0)
     refused = client.post(f"/api/projects/{pid}/research-runs", json={"question": "Did output rise at all?"}).json()

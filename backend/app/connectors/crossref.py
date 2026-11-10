@@ -101,6 +101,18 @@ def _author(entry: Any) -> str | None:
     return " ".join(part for part in (given, family) if part) or None
 
 
+def _has_retraction_update(item: dict[str, Any]) -> bool:
+    """Crossref update metadata marks a retraction notice with type='retraction'."""
+    for key in ("update-to", "updated-by"):
+        relations = item.get(key)
+        if isinstance(relations, list) and any(
+            isinstance(relation, dict) and str(relation.get("type", "")).casefold() == "retraction"
+            for relation in relations
+        ):
+            return True
+    return False
+
+
 def to_record(item: dict[str, Any]) -> PaperRecord | None:
     """Normalise one Crossref work; None when it has no usable DOI or title."""
     try:
@@ -114,6 +126,8 @@ def to_record(item: dict[str, Any]) -> PaperRecord | None:
     flags = []
     if item.get("type") == "posted-content" or item.get("subtype") == "preprint":
         flags.append("preprint")
+    if _has_retraction_update(item):
+        flags.append("retracted")
     if not abstract:
         flags.append("no_abstract")
     return PaperRecord(

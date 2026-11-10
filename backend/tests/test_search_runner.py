@@ -272,3 +272,15 @@ def test_a_semantic_scholar_search_saved_before_bulk_search_is_not_rerun(monkeyp
         assert rerun_refusal(current) is None
         again = rerun_search(db, project=project, actor="u", connector=conn, search_id=current.search_id)
         assert again.version == 2 and again.query_string == current.query_string
+
+
+def test_the_same_doi_found_by_two_saved_searches_is_stored_as_one_source_in_the_project():
+    db, project = setup()
+    with db:
+        run_search(db, project=project, actor="u", connector=FakeConnector([rec(1, doi="10.1000/shared"), rec(2)]), query=QUERY)
+        db.commit()
+        run_search(db, project=project, actor="u", connector=FakeConnector([rec(3, doi="10.1000/shared")]), query=QUERY)
+        db.commit()
+        sources = db.scalars(select(Source).where(Source.project_id == project.id)).all()
+        assert len(sources) == 2
+        assert sorted(source.doi for source in sources if source.doi) == ["10.1000/shared"]

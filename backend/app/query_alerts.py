@@ -39,8 +39,7 @@ NEW_RESULTS_CAP = 50
 
 
 def _aware(value: datetime | None) -> datetime | None:
-    """SQLite hands back naive datetimes (Postgres keeps the offset): normalise before comparing
-    against an aware `utcnow()`."""
+    """Normalise a possibly naive datetime to an aware one before comparing against an aware `utcnow()`."""
     if value is None:
         return None
     return value if value.tzinfo else value.replace(tzinfo=timezone.utc)

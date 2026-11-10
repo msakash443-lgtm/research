@@ -7,22 +7,17 @@ from sqlalchemy import func, select, text
 from app.database import SessionLocal
 from app.main import app
 from app.models import AuditEvent, AutoExcludeAudit, Gate, GateCode, GateStatus, ProjectMember, ProjectRole, ScreeningDecision, Source, Task
-
-
-def _login(email):
-    client = TestClient(app)
-    user_id = client.post("/api/auth/development/login", json={"email": email, "display_name": "S"}).json()["id"]
-    return client, user_id
+from tests.api_helpers import sign_in_user
 
 
 @pytest.fixture
 def world():
     tag = uuid.uuid4().hex[:8]
-    owner, owner_id = _login(f"screen-owner-{tag}@example.com")
+    owner, owner_id = sign_in_user(f"screen-owner-{tag}@example.com")
     pid = owner.post("/api/projects", json={"title": "Screening"}).json()["id"]
     others = {}
     for role in ("co_author", "supervisor", "reviewer"):
-        client, uid = _login(f"screen-{role}-{tag}@example.com")
+        client, uid = sign_in_user(f"screen-{role}-{tag}@example.com")
         with SessionLocal() as db:
             db.add(ProjectMember(project_id=uuid.UUID(pid), user_id=uuid.UUID(uid), role=ProjectRole(role)))
             db.commit()
@@ -235,7 +230,7 @@ def test_only_owner_and_co_author_decide_everyone_reads(world):
 
 
 def test_a_source_from_another_project_or_a_merged_one_is_not_found(world):
-    other, _ = _login(f"screen-other-{uuid.uuid4().hex[:6]}@example.com")
+    other, _ = sign_in_user(f"screen-other-{uuid.uuid4().hex[:6]}@example.com")
     other_pid = other.post("/api/projects", json={"title": "Other"}).json()["id"]
     foreign = other.post(f"/api/projects/{other_pid}/sources", json={"title": "Elsewhere"}).json()["id"]
     assert decide(world["owner"], world["pid"], foreign).status_code == 404

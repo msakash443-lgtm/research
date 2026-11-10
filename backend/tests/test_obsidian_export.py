@@ -11,14 +11,13 @@ import zipfile
 from datetime import datetime, timezone
 
 import pytest
-from fastapi.testclient import TestClient
 
 from adversarial_fixtures import FIXTURES
 from app.config import get_settings
 from app.database import SessionLocal
-from app.main import app
 from app.models import Source
 from app.obsidian_export import fenced_text, safe_markdown, safe_name
+from tests.api_helpers import sign_in
 from tests.llm_replies import abstention, chat_reply
 
 
@@ -27,15 +26,9 @@ def enabled(monkeypatch):
     monkeypatch.setattr(get_settings(), "obsidian_export_enabled", True)
 
 
-def _login(email):
-    client = TestClient(app)
-    client.post("/api/auth/development/login", json={"email": email, "display_name": "O"})
-    return client
-
-
 @pytest.fixture
 def world():
-    c = _login(f"obs-{uuid.uuid4().hex[:8]}@example.com")
+    c = sign_in(f"obs-{uuid.uuid4().hex[:8]}@example.com")
     pid = c.post("/api/projects", json={"title": "Remote work: a review"}).json()["id"]
     return c, pid
 
@@ -174,7 +167,7 @@ def test_export_is_audited_with_counts(world, enabled):
 
 
 def test_download_name_is_ascii(enabled):
-    c = _login("obs-ascii@example.com")
+    c = sign_in("obs-ascii@example.com")
     pid = c.post("/api/projects", json={"title": "Étude: «travail» à distance"}).json()["id"]
     response = c.get(f"/api/projects/{pid}/export/obsidian")
     assert response.status_code == 200

@@ -2,7 +2,7 @@
 `docs/research-automation-spec.md` §13 (criteria 1-6), run as part of the normal `pytest -q` suite
 (`testpaths = backend/tests` in pytest.ini already covers this file).
 
-Each test exercises the real FastAPI `TestClient` + the real SQLite test DB, the same way every other
+Each test exercises the real FastAPI `TestClient` + the real PostgreSQL test DB, the same way every other
 API test in this package does. Where a focused test already proves the claim in detail, this file calls
 that test directly (or reuses its fixtures) and adds only the acceptance-level assertion, instead of
 re-testing internals a second time:

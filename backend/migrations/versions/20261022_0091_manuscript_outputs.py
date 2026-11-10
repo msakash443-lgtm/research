@@ -46,10 +46,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     bind = op.get_bind()
-    if bind.dialect.name == "sqlite":
-        count = bind.execute(sa.text("SELECT COUNT(*) FROM manuscript_outputs")).scalar_one()
-    else:
-        count = bind.execute(sa.text("SELECT COUNT(*) FROM manuscript_outputs")).scalar_one()
+    count = bind.execute(sa.text("SELECT COUNT(*) FROM manuscript_outputs")).scalar_one()
     if count:
         raise RuntimeError("Refusing to drop manuscript_outputs while generated outputs exist")
     op.drop_index("ix_manuscript_outputs_kind", table_name="manuscript_outputs")

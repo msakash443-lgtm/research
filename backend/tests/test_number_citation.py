@@ -1,3 +1,5 @@
+import pytest
+
 from app.number_citation import RunFacts, check_section, flatten_numbers, resolve_number, stat_refs_in_order
 
 
@@ -36,16 +38,23 @@ def test_a_section_whose_inserted_numbers_all_resolve_has_no_findings():
     assert report.refs == [("r1", "descriptives.age.mean")]
 
 
-def test_a_number_naming_an_unknown_run_is_flagged():
-    report = check_section(_doc(_para(_stat("nope", "seed"))), RUNS)
-    assert _kinds(report) == ["unknown_run"]
-    assert report.findings[0].subject == "nope"
-
-
-def test_a_path_that_does_not_resolve_in_a_known_run_is_flagged():
-    report = check_section(_doc(_para(_stat("r1", "descriptives.age.missing"))), RUNS)
-    assert _kinds(report) == ["unresolved_number"]
-    assert report.findings[0].subject == "r1:descriptives.age.missing"
+@pytest.mark.parametrize(
+    "run,path,kind,subject",
+    [
+        pytest.param("nope", "seed", "unknown_run", "nope", id="a-number-naming-an-unknown-run"),
+        pytest.param(
+            "r1",
+            "descriptives.age.missing",
+            "unresolved_number",
+            "r1:descriptives.age.missing",
+            id="a-path-that-does-not-resolve-in-a-known-run",
+        ),
+    ],
+)
+def test_an_invalid_stat_reference_is_flagged(run, path, kind, subject):
+    report = check_section(_doc(_para(_stat(run, path))), RUNS)
+    assert _kinds(report) == [kind]
+    assert report.findings[0].subject == subject
 
 
 def test_a_path_into_a_list_resolves_by_index():

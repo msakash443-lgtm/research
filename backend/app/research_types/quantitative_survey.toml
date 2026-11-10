@@ -1,0 +1,81 @@
+# Research type: quantitative survey (X.172 decision, docs/step-by-step-journey-audit.md §3). Keeps the full journey's 19 stages,
+# order and gates (G8 stays: survey hypotheses are tested against an analysis plan that is locked before analysis) and
+# relabels five stages for a survey audience. Human participants: G7 needs the full ethics approval, no confirmation shortcut.
+name = "quantitative_survey"
+version = 1
+label = "Quantitative survey"
+description = "A questionnaire study of a sample, analysed statistically against a pre-specified analysis plan."
+human_participants = true
+
+[[stages]]
+stage = "idea"
+
+[[stages]]
+stage = "scoped"
+gate = "G1"
+
+[[stages]]
+stage = "search_planned"
+gate = "G2"
+
+[[stages]]
+stage = "retrieved"
+
+[[stages]]
+stage = "screened"
+gate = "G3"
+
+[[stages]]
+stage = "extracted"
+gate = "G4"
+
+[[stages]]
+stage = "synthesized"
+
+[[stages]]
+stage = "gaps_selected"
+gate = "G5"
+
+[[stages]]
+stage = "framework"
+gate = "G6"
+label = "Hypotheses & constructs"
+
+[[stages]]
+stage = "design_approved"
+gate = "G7"
+label = "Instrument, sampling & ethics"
+
+[[stages]]
+stage = "data_collected"
+label = "Survey fielded"
+
+[[stages]]
+stage = "plan_locked"
+gate = "G8"
+label = "Analysis plan locked"
+
+[[stages]]
+stage = "analyzed"
+gate = "G9"
+label = "Statistical analysis & results"
+
+[[stages]]
+stage = "drafted"
+gate = "G10"
+
+[[stages]]
+stage = "revised"
+
+[[stages]]
+stage = "submission_ready"
+gate = "G11"
+
+[[stages]]
+stage = "submitted"
+
+[[stages]]
+stage = "revision_loop"
+
+[[stages]]
+stage = "accepted"

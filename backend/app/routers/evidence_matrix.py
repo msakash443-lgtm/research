@@ -43,7 +43,7 @@ def contradictions(
     project: Project = Depends(project_access(READ_ROLES)), db: Session = Depends(get_db),
 ) -> dict:
     matrix_data = _matrix(db, project, schema_name)
-    return {"schema_version": matrix_data["schema_version"], "flags": detect(matrix_data)}
+    return {"schema_version": matrix_data["schema_version"], **detect(matrix_data)}
 
 
 @router.get("/export.csv")

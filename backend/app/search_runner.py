@@ -13,8 +13,9 @@ Rules this module keeps:
 * Hitting the result cap is recorded (`counts["truncated"]`); a capped search is never presented as
   complete.
 * A connector is used only if it is enabled in settings (default off, plan rule 18).
-* Records are not saved as `Source` rows here: they are unverified third-party data. Storing them
-  is M1.6.4 (X.167). The row keeps ids, DOI, title, year, a dedup title key and the connector's citation count (M2.13).
+* Records are saved as unverified `Source` rows (`_store_results_as_sources`): they are third-party data,
+  never verified by retrieval. A record with a DOI is stored once per project, whichever saved search finds it first;
+  a record without one is kept per search and left to the dedup step. The row keeps ids, DOI, title, year, a dedup title key and the connector's citation count (M2.13).
 * Only the `search_run` task handler calls it, and that task type needs gate G2 (M1.8.1): nothing
   runs a bulk search until a person has approved the search strategy and criteria.
 
@@ -150,7 +151,15 @@ def _summarise(records: list[PaperRecord]) -> tuple[list[dict[str, Any]], dict[s
 
 
 def _ingest_key(search_id: uuid.UUID, result: dict[str, Any]) -> str:
-    """Stable, bounded idempotency key for one stored result in one saved search."""
+    """Stable, bounded idempotency key for one stored result, unique per project.
+
+    A record with a DOI is keyed on the DOI, so the same paper found by two saved searches is one
+    `Source`; the first search that finds it owns the row. A record without a DOI is keyed on its
+    search and result id, so a retried task still stores nothing twice.
+    """
+    doi = doi_key(result.get("doi"))
+    if doi is not None:
+        return "doi:" + hashlib.sha256(doi.encode("utf-8")).hexdigest()[:40]
     digest = hashlib.sha256(f"{search_id}:{result['id']}".encode("utf-8")).hexdigest()[:24]
     return f"search:{search_id}:{digest}"
 

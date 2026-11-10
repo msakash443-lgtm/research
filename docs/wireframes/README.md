@@ -12,6 +12,7 @@ See also [`step-template-checklist.md`](step-template-checklist.md): a one-page 
 | `claim-evidence-panel.html` | Sentence → evidence panel, verified-only citation picker, section checks, export block, per-section G10 with AI-involvement level | M6.2 (also M6.4, M6.11) | §5.11.3, §5.11 gate/QC, §8 G10 |
 | `workspace-writing.html` | Researcher workspace: editor, Sources/AI/Record panel, paste resolver, similarity check, AI level, writing-record report (design doc S4–S6) | Walkthrough X.31.6 (screens S4–S6 are already built; S1–S3, S7 walkthrough was waived 2026-10-14) | design doc A5 |
 | `research-type-picker.html` | Scope screen: choose the research type (owner, at Idea, before any gate), see the stage list and mandatory gates | X.43.9 (unlocked state walked through by the owner 2026-10-22); locked state answered 2026-10-22 (Q3: other types greyed out with the reason, X.43.10) | §3 Q22, X.43 decision 4b |
+| `strategy.html` | Scope idea brief, landscape scan, objectives; Synthesize gaps, questions, hypotheses and research-plan view | X.188 | §5.1, §5.5, §5.6, §10 |
 | `observability-dashboard.html` | Observability dashboard: step counts and timings, model calls with tokens and lower-bound cost, failure counts (no error text), pinned Q1–Q5. Drafted 2026-10-22, not yet walked through | X.7.3 (built only after the walkthrough, rule 32) | X.7.0–X.7.2 |
 | `account-privacy.html` | Account-level privacy notice and processor list, personal-data export, sign out everywhere, and account erasure confirmation | X.85 (wireframe only; screen/routes not built) | X.4.3, X.4.7.1, X.4.8, X.4.9 |
 | `index.html` | Start page, walkthrough tasks | — | — |
@@ -22,12 +23,15 @@ What the wireframes assume, taken from what exists today (so the scholar can dis
 - Screening: decisions are append-only and Undo adds a row (M2.1.3); the AI suggestion is never a decision and low confidence becomes "maybe" (M2.2.2–M2.2.3); exclusions need an `E` code from the project's criteria (M2.1.2); G3 locks screening (M2.1.3). Approvers are owner or supervisor (`APPROVE_ROLES`).
 - Evidence table: fields and the three critical (★) fields come from `backend/app/extraction_schemas/default.json` (M3.1.1). A value needs a quote found word for word in the paper (M3.4); "not reported" is the AI abstaining (M3.3.2).
 - Claim–evidence: citations only to verified sources; unverified ones block export rather than warn (spec principle 2, N1, M6.4).
+- Strategy workflow (X.187): idea brief, scan results and objectives are drafts; a scan shows each service and failures; gap candidates are deterministic prompts linked to verified extraction evidence, not findings; a person curates them; question checks are advisory and never establish novelty or answerability by themselves.
 
 Not decided by these wireframes (each is a pinned question on its screen): whether the AI suggestion shows before or after the person decides; whether bulk exclude exists; matrix orientation; export columns; whether the claim–evidence panel is the same panel as the X.31 workspace "Sources" tab (design doc S4); whether "This is my argument, not a factual claim" is an acceptable way past the orphan-claim check.
 
 Also a choice the wireframe made that the scholar should confirm: a critical (★) cell marked "Not reported" does **not** hold up G4 (there is nothing to check). The alternative is that a person must confirm every "Not reported" on a critical field too.
 
 ## Findings (fill in during the walkthrough, then copy into the milestone report)
+
+Strategy wireframe approval recorded 2026-11-09 from the owner's chat response: approved as is. No Q1–Q7 answers or additional findings were supplied; the wireframe's stated assumptions stand.
 
 Walkthrough date (evidence table): 2026-10-15 · Scholar: the owner (also the developer) · Note-taker: Claude
 
@@ -37,6 +41,7 @@ Walkthrough date (evidence table): 2026-10-15 · Scholar: the owner (also the de
 | Evidence table | Yes, found "Ask for G4 approval" without help | Quote on its page is not enough alone: also wants a link to the original source | Back to table, Esc and browser Back all work; place kept | Q1: supervisor can check cells as well as approve. Q2: add a link to the original source. Q3: works. Q4: states are clear. Q5: toggle rows/columns. Q6: exports include quotes, page numbers and a status column per field. Q7: not too strict. Critical (★) "Not reported": a person must confirm it before G4 opens. | See plan.md X.63 (supervisor cell check, source link, orientation toggle, richer export, critical Not-reported confirmation). Outcome: **approved with changes** |
 | Claim–evidence panel | Not recorded separately | Not recorded separately | Not recorded separately | Q1–Q6: not answered one by one; the owner approved the screen as is, so the wireframe's stated assumptions stand. | None. Outcome: **approved as is** (2026-10-15) |
 | Workspace writing (S4–S6) | | | | W1: the UI can be changed later (owner, 2026-10-15; taken to mean the status amount stands for now). W2: keep as is (Sources tab default; one panel with Sources/AI/Record, which also settles claim-evidence Q6). W3: origin colours ON by default. W4: acceptable (highlight stays until answered, nothing blocks saving). W5: "suggestions only" (the level stays as designed; hint wording not commented on). W6: the report includes only the sections the researcher chooses (owner, 2026-10-15). | W3 → plan.md X.31.23; W6 → plan.md X.31.24. Outcome: **approved with changes** (2026-10-15) |
+| Scope + Gaps & questions (X.187) | Approved as is; details not separately reported | Not separately reported | Not separately reported | Q1–Q7 unanswered | No changes requested. Outcome: **approved as is** (owner, 2026-11-09; chat) |
 
 Walkthrough, research-type picker (X.43.9): done 2026-10-22 by the owner (the scholar; Note-taker: Claude). Before it, a mechanical check ran (not a walkthrough): the three types list with 19 / 15 / 18 stages, choosing Qualitative shows 18 stages, Save works, and the supervisor view is read-only. The wireframe cannot show the locked state (a gate approved), so the scholar cannot see that screen yet.
 

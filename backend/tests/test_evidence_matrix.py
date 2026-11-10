@@ -27,7 +27,7 @@ def _world():
     return client, project, source
 
 
-def _row(project, source, value, *, verified=False, hours=0, version="default@1"):
+def _row(project, source, value, *, verified=False, hours=0, version="default@2"):
     when = datetime(2026, 10, 1, tzinfo=timezone.utc) + timedelta(hours=hours)
     row_id = uuid.uuid4()
     with SessionLocal() as db:
@@ -45,11 +45,11 @@ def test_matrix_chooses_verified_record_and_keeps_schema_versions_separate():
     client, project, source = _world()
     selected = _row(project, source, "Verified", verified=True)
     _row(project, source, "Newer", hours=1)
-    _row(project, source, "Old schema", hours=2, version="default@2")
+    _row(project, source, "Old schema", hours=2, version="default@1")
     result = client.get(f"/api/projects/{project}/evidence-matrix")
     assert result.status_code == 200
     data = result.json()
-    assert data["schema_version"] == "default@1"
+    assert data["schema_version"] == "default@2"
     assert len(data["papers"]) == 1
     assert data["papers"][0]["extraction_id"] == selected
     cell = data["papers"][0]["cells"]["research_question"]

@@ -6,37 +6,30 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app import stage_machine as sm
 from app.artifacts import StageError
 from app.database import SessionLocal
 from app.extraction_schema import load_schema, schema_version
-from app.main import app
 from app.models import (
     AnalysisPlan, AnalysisRun, Artifact, ArtifactStatus, AuditEvent, Extraction, Gap, Gate, GateCode, GateStatus, Project, ProjectMember,
     ProjectRole, SearchQuery, Source,
     ProjectStage as S,
 )
+from tests.api_helpers import create_project, sign_in_user
 
 ORDER = [s.value for s in S]
-
-
-def _login(email):
-    client = TestClient(app)
-    user_id = client.post("/api/auth/development/login", json={"email": email, "display_name": "A"}).json()["id"]
-    return client, user_id
 
 
 @pytest.fixture
 def world():
     tag = uuid.uuid4().hex[:8]
-    owner, owner_id = _login(f"adv-owner-{tag}@example.com")
-    project_id = owner.post("/api/projects", json={"title": "Advance"}).json()["id"]
+    owner, owner_id = sign_in_user(f"adv-owner-{tag}@example.com")
+    project_id = create_project(owner, "Advance")
     clients = {"owner": owner}
     for role in (ProjectRole.supervisor, ProjectRole.co_author, ProjectRole.reviewer):
-        client, uid = _login(f"adv-{role.value}-{tag}@example.com")
+        client, uid = sign_in_user(f"adv-{role.value}-{tag}@example.com")
         with SessionLocal() as db:
             db.add(ProjectMember(project_id=uuid.UUID(project_id), user_id=uuid.UUID(uid), role=role))
             db.commit()

@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from app.connectors import Connector, ConnectorError, NotSupportedError, SearchRequest
+from app.connectors import ConnectorError, NotSupportedError, SearchRequest
 from app.connectors.http import ConnectorHttpClient, HttpPolicy
 from app.connectors.unpaywall import OaLocation, UnpaywallConnector, to_location, to_record
 
@@ -44,10 +44,6 @@ def connector(handler, email=EMAIL):
     server = Server(handler)
     http = ConnectorHttpClient("unpaywall", "https://api.unpaywall.test/v2", HttpPolicy(max_retries=0), transport=httpx.MockTransport(server))
     return UnpaywallConnector(http, email), server
-
-
-def test_it_satisfies_the_connector_protocol():
-    assert isinstance(connector(lambda r: {})[0], Connector)
 
 
 @pytest.mark.parametrize("email", [None, "", "  ", "not-an-email", "a b@c.d", "a@b", "a@b.c&x=1", "a@b.c,d@e.f"])

@@ -81,7 +81,7 @@ For a host-installed PostgreSQL server, copy `.env.example` to `.env`, set `DATA
 uvicorn app.main:app --reload --app-dir backend
 ```
 
-The application has no SQLite runtime fallback. See [the local PostgreSQL migration guide](docs/LOCAL_POSTGRES_MIGRATION.md).
+SQLite is not supported anywhere, including the tests. See [the local PostgreSQL guide](docs/LOCAL_POSTGRES_MIGRATION.md) for the database setup and for the `TEST_DATABASE_URL` that `pytest` requires.
 
 
 `requirements.txt` is the web app's runtime (the only file the Docker image installs); `requirements-arc.txt` is the vendored ARC retrieval service (`backend/arc_retrieval/`) and `requirements-dev.txt` the test tools.

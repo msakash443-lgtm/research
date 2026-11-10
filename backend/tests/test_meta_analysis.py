@@ -8,6 +8,7 @@ from app.database import SessionLocal
 from app.main import app
 from app.meta_analysis import MetaAnalysisError, pool
 from app.models import Extraction, Gate, GateCode, GateStatus
+from tests.api_helpers import include_at_full_text
 
 
 def test_pool_calculates_fixed_random_heterogeneity_and_forest_from_code():
@@ -34,11 +35,12 @@ def test_plan_requires_verified_comparable_studies_and_g8_before_results():
     client.post("/api/auth/development/login", json={"email": f"meta-{uuid.uuid4().hex}@example.com", "display_name": "Meta"})
     pid = client.post("/api/projects", json={"title": "Pooling"}).json()["id"]
     source_ids = [client.post(f"/api/projects/{pid}/sources", json={"title": f"Study {i}"}).json()["id"] for i in range(2)]
+    include_at_full_text(pid, *source_ids)
     extraction_ids = []
     with SessionLocal() as db:
         for i, sid in enumerate(source_ids):
-            row = Extraction(project_id=uuid.UUID(pid), source_id=uuid.UUID(sid), schema_version="default@1",
-                             fields_json={"sample": {"n": 103}, "key_findings": [{"effect_size": f"r={.2 + .2*i}"}]},
+            row = Extraction(project_id=uuid.UUID(pid), source_id=uuid.UUID(sid), schema_version="default@2",
+                             fields_json={"sample": {"n": 103}, "key_findings": [{"effect_size": f"r={.2 + .2*i}", "exposure": "training", "outcome": "retention", "population": "", "direction": "positive"}]},
                              evidence_spans={}, extracted_by="human", extractor="test",
                              verified_by_human=i == 0, verified_by="test" if i == 0 else None,
                              verified_at=None)
@@ -73,7 +75,7 @@ def test_plan_requires_verified_comparable_studies_and_g8_before_results():
     assert client.post(base, json=body).status_code == 409
     with SessionLocal() as db:
         db.get(Extraction, uuid.UUID(extraction_ids[1])).fields_json = {
-            "sample": {"n": 103}, "key_findings": [{"effect_size": "r=0.5"}]}
+            "sample": {"n": 103}, "key_findings": [{"effect_size": "r=0.5", "exposure": "training", "outcome": "retention", "population": "", "direction": "positive"}]}
         db.commit()
     assert client.post(f"{base}/{plan_id}/run").status_code == 409
 
@@ -84,12 +86,13 @@ def test_g8_can_be_approved_once_a_meta_analysis_plan_exists():
     client.post("/api/auth/development/login", json={"email": f"meta-g8-{uuid.uuid4().hex}@example.com", "display_name": "Meta"})
     pid = client.post("/api/projects", json={"title": "Pooling G8"}).json()["id"]
     source_ids = [client.post(f"/api/projects/{pid}/sources", json={"title": f"Study {i}"}).json()["id"] for i in range(2)]
+    include_at_full_text(pid, *source_ids)
     from app.models import utcnow
     with SessionLocal() as db:
         extraction_ids = []
         for i, sid in enumerate(source_ids):
-            row = Extraction(project_id=uuid.UUID(pid), source_id=uuid.UUID(sid), schema_version="default@1",
-                             fields_json={"sample": {"n": 103}, "key_findings": [{"effect_size": f"r={.2 + .2*i}"}]},
+            row = Extraction(project_id=uuid.UUID(pid), source_id=uuid.UUID(sid), schema_version="default@2",
+                             fields_json={"sample": {"n": 103}, "key_findings": [{"effect_size": f"r={.2 + .2*i}", "exposure": "training", "outcome": "retention", "population": "", "direction": "positive"}]},
                              evidence_spans={}, extracted_by="human", extractor="test",
                              verified_by_human=True, verified_by="test", verified_at=utcnow())
             db.add(row)

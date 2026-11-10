@@ -13,6 +13,7 @@ from app.config import get_settings
 from app.database import SessionLocal
 from app.main import app
 from app.models import AuditEvent, Project, ResearchRun, Task, TaskStatus, User
+from tests.api_helpers import start_research_run
 
 
 def _client_and_project(email):
@@ -25,17 +26,10 @@ def _client_and_project(email):
     return client, project_id
 
 
-def _run(client, project_id):
-    return client.post(f"/api/projects/{project_id}/research-runs", json={"question": "A long enough question?"})
-
-
 def test_an_inline_run_finishes_in_the_request_through_a_completed_task(fake_llm):
     client, project_id = _client_and_project("inline-ok@example.com")
 
-    response = _run(client, project_id)
-
-    assert response.status_code == 202
-    body = response.json()
+    body = start_research_run(client, project_id, question="A long enough question?")
     assert body["status"] == "completed" and body["answer"] == "Fake answer [S1]." and body["provider_model"] == "fake-model"
     with SessionLocal() as db:
         task = db.scalars(select(Task)).one()
@@ -46,7 +40,7 @@ def test_an_inline_run_finishes_in_the_request_through_a_completed_task(fake_llm
 def test_an_inline_run_that_cannot_proceed_still_returns_normally():
     client, project_id = _client_and_project("inline-config@example.com")  # no LLM configured
 
-    body = _run(client, project_id).json()
+    body = start_research_run(client, project_id, question="A long enough question?")
 
     assert body["status"] == "needs_configuration" and "LLM_API_KEY" in body["error_message"]
 
@@ -58,10 +52,7 @@ def test_an_unexpected_executor_error_fails_the_run_at_once_in_inline_mode(fake_
     monkeypatch.setattr(executor, "build_plan", explode)
     client, project_id = _client_and_project("inline-crash@example.com")
 
-    response = _run(client, project_id)
-
-    assert response.status_code == 202
-    body = response.json()
+    body = start_research_run(client, project_id, question="A long enough question?")
     # Inline mode has no worker to pick up a retry, so the run fails now instead of waiting as queued for ever.
     assert body["status"] == "failed" and "unexpectedly" in body["error_message"] and body["answer"] is None
     with SessionLocal() as db:
@@ -85,7 +76,7 @@ def test_an_inline_request_runs_only_its_own_task_not_someone_elses(fake_llm):
         waiting_id = waiting.id
     client, project_id = _client_and_project("inline-own@example.com")
 
-    body = _run(client, project_id).json()
+    body = start_research_run(client, project_id, question="A long enough question?")
 
     assert body["status"] == "completed"
     with SessionLocal() as db:

@@ -15,6 +15,7 @@ from app.connectors.base import ConnectorBase, ConnectorError, PaperRecord, Sear
 from app.database import SessionLocal
 from app.main import app
 from app.models import AuditEvent, ProjectMember, ProjectRole, SearchQuery, Task, TaskStatus
+from tests.api_helpers import sign_in_user
 
 BODY = {"database": "openalex", "blocks": [{"label": "a", "terms": ["remote work", "telework"]}, {"label": "b", "terms": ["productivity"]}]}
 
@@ -43,20 +44,14 @@ def setup(monkeypatch):
     FakeConnector.calls = 0
 
 
-def _login(email):
-    client = TestClient(app)
-    uid = client.post("/api/auth/development/login", json={"email": email, "display_name": "S"}).json()["id"]
-    return client, uid
-
-
 @pytest.fixture
 def team():
     tag = uuid.uuid4().hex[:8]
-    owner, owner_id = _login(f"sg-owner-{tag}@example.com")
+    owner, owner_id = sign_in_user(f"sg-owner-{tag}@example.com")
     pid = owner.post("/api/projects", json={"title": "Search gate"}).json()["id"]
-    co, co_id = _login(f"sg-co-{tag}@example.com")
-    sup, sup_id = _login(f"sg-sup-{tag}@example.com")
-    rev, rev_id = _login(f"sg-rev-{tag}@example.com")
+    co, co_id = sign_in_user(f"sg-co-{tag}@example.com")
+    sup, sup_id = sign_in_user(f"sg-sup-{tag}@example.com")
+    rev, rev_id = sign_in_user(f"sg-rev-{tag}@example.com")
     with SessionLocal() as db:
         for uid, role in ((co_id, ProjectRole.co_author), (sup_id, ProjectRole.supervisor), (rev_id, ProjectRole.reviewer)):
             db.add(ProjectMember(project_id=uuid.UUID(pid), user_id=uuid.UUID(uid), role=role))
@@ -209,7 +204,7 @@ def test_roles(team):
     assert queue(team, "rev").status_code == 403
     assert queue(team, "co").status_code == 202
     assert team["rev"].get(f"/api/projects/{team['pid']}/searches").status_code == 200
-    stranger, _ = _login(f"sg-x-{uuid.uuid4().hex[:6]}@example.com")
+    stranger, _ = sign_in_user(f"sg-x-{uuid.uuid4().hex[:6]}@example.com")
     assert stranger.get(f"/api/projects/{team['pid']}/searches").status_code == 404
     assert TestClient(app).post(f"/api/projects/{team['pid']}/searches", json=BODY).status_code == 401
 

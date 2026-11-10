@@ -25,6 +25,11 @@ def _setup(monkeypatch):
     with SessionLocal() as db:
         db.get(Source, uuid.UUID(source)).fulltext_path = "stored-pdf"
         db.commit()
+    for stage in ("title_abstract", "full_text"):
+        decision = owner.post(f"/api/projects/{project}/screening/decisions", json={
+            "source_id": source, "stage": stage, "decision": "include",
+        })
+        assert decision.status_code == 201, decision.text
     return owner, project, source, pdf
 
 
@@ -32,7 +37,7 @@ def _extraction(project, source):
     extraction_id = uuid.uuid4()
     with SessionLocal() as db:
         db.add(Extraction(id=extraction_id, project_id=uuid.UUID(project), source_id=uuid.UUID(source),
-                          schema_version="default@1", fields_json={"sample": {"n": 42, "population": "People", "country": "UK"}},
+                          schema_version="default@2", fields_json={"sample": {"n": 42, "population": "People", "country": "UK"}},
                           evidence_spans={"sample": {"quote": "We studied 42 people", "page": 1}},
                           extracted_by="ai", extractor="agent:test", model_id="test-model", prompt_version="test@1"))
         db.commit()
@@ -58,6 +63,19 @@ def test_human_verification_rechecks_pdf_and_g4_waits_for_it(monkeypatch):
     assert result.status_code == 200, result.text
     assert result.json()["verified_by_human"] is True and result.json()["verified_by"]
     assert owner.post(base + "/gates/G4/approve").status_code == 200
+
+
+def test_the_verification_queue_drops_a_paper_whose_full_text_inclusion_is_revoked_and_restores_it_on_reinclusion(monkeypatch):
+    owner, project, source, _ = _setup(monkeypatch)
+    _extraction(project, source)
+    base = f"/api/projects/{project}"
+    decide = lambda decision: owner.post(base + "/screening/decisions", json={"source_id": source, "stage": "full_text", "decision": decision})
+
+    assert [row["source_id"] for row in owner.get(base + "/extractions/verification-queue").json()] == [source]
+    assert decide("maybe").status_code == 201
+    assert owner.get(base + "/extractions/verification-queue").json() == []
+    assert decide("include").status_code == 201
+    assert [row["source_id"] for row in owner.get(base + "/extractions/verification-queue").json()] == [source]
 
 
 def test_a_critical_field_not_reported_needs_its_own_confirmation(monkeypatch):

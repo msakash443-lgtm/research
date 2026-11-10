@@ -264,7 +264,7 @@ def test_a_different_file_never_replaces_a_stored_one(world, oa):
     assert source["fulltext_path"] is None
 
 
-def test_requests_are_validated(world, oa, monkeypatch):
+def test_a_fulltext_fetch_request_is_validated(world, oa, monkeypatch):
     c, pid, sid = world
     no_doi = c.post(f"/api/projects/{pid}/sources", json={"title": "No DOI"}).json()["id"]
     assert c.post(f"/api/projects/{pid}/sources/{no_doi}/fulltext/fetch").status_code == 400

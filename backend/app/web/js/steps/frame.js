@@ -1,5 +1,5 @@
 import { el, label } from "../dom.js";
-import { STEPS } from "../workflow.js";
+import { STEPS, screenInChain } from "../workflow.js";
 import { advanceCard } from "./common.js";
 
 // The step template (docs/wireframes/step-template-checklist.md): every step screen has the same six parts.
@@ -41,9 +41,10 @@ export function staleWorkBanner(ctx, stepId) {
 // The journey is the screens in reading order; Research path and the Project group are not part of it.
 const JOURNEY = STEPS.filter((step) => step.id !== "guide" && step.group !== "Project");
 
-export function previousStep(stepId) {
-  const index = JOURNEY.findIndex((step) => step.id === stepId);
-  return index > 0 ? JOURNEY[index - 1] : null;
+export function previousStep(stepId, chain = null) {
+  let index = JOURNEY.findIndex((step) => step.id === stepId) - 1;
+  while (index >= 0 && !screenInChain(JOURNEY[index].id, chain)) index -= 1;
+  return index >= 0 ? JOURNEY[index] : null;
 }
 
 // Look up a journey screen by id, for a step-to-step "Next: <screen>" link (X.41.4) where the next
@@ -149,7 +150,7 @@ export function renderFrame(root, ctx, { stepId, work, ai = null, next = [], ste
   if (ai) nodes.push(ai);
 
   const footer = el("div", { className: "step-footer" });
-  const previous = previousStep(stepId);
+  const previous = previousStep(stepId, ctx.summary.stage?.chain);
   if (previous) {
     footer.append(el("a", { className: "back-link", href: `#/p/${ctx.project.id}/${previous.id}`, text: `Previous step: ${previous.title}` }));
   }

@@ -11,10 +11,10 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from app import audit
+from app import audit, rq_critique
 from app.database import get_db
 from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_access
-from app.models import Gap, Hypothesis, Project, ResearchQuestion, ResearchQuestionGap, User
+from app.models import Construct, Gap, Hypothesis, Project, ResearchQuestion, ResearchQuestionGap, ScreeningCriterion, Source, User
 
 router = APIRouter(prefix="/projects/{project_id}", tags=["research questions"])
 
@@ -117,10 +117,17 @@ class FinerItem(BaseModel):
     guidance: str
 
 
+class RqCheckItem(BaseModel):
+    check: str
+    status: str
+    reason: str
+
+
 class FinerCritique(BaseModel):
     research_question_id: uuid.UUID
     linked_gap_count: int
     items: list[FinerItem]
+    rq_checks: list[RqCheckItem]
     disclaimer: str
 
 
@@ -215,6 +222,20 @@ def update_question(question_id: uuid.UUID, payload: ResearchQuestionPatch, proj
 def critique_question(question_id: uuid.UUID, project: Project = Depends(project_access(READ_ROLES)), db: Session = Depends(get_db)):
     item = _question(db, project, question_id)
     linked = len(item.gap_links)
+    criteria_terms: dict[str, list[str]] = {}
+    for row in db.scalars(select(ScreeningCriterion).where(ScreeningCriterion.project_id == project.id, ScreeningCriterion.element.is_not(None))):
+        criteria_terms.setdefault(row.element, []).append(row.text)
+    construct_names = list(db.scalars(select(Construct.name).where(Construct.project_id == project.id)))
+    has_verified_source = db.scalar(
+        select(Source.id).where(Source.project_id == project.id, Source.metadata_verified.is_(True)).limit(1)
+    ) is not None
+    rq_checks = rq_critique.run(
+        item.text,
+        research_type=project.research_type,
+        criteria_terms=criteria_terms,
+        construct_names=construct_names,
+        has_linked_selected_gap_or_verified_source=linked > 0 or has_verified_source,
+    )
     return FinerCritique(
         research_question_id=item.id,
         linked_gap_count=linked,
@@ -225,6 +246,7 @@ def critique_question(question_id: uuid.UUID, project: Project = Depends(project
             FinerItem(criterion="ethical", status="needs_human_review", guidance="Assess participant, data, and institutional ethics before design work."),
             FinerItem(criterion="relevant", status="linked_to_selected_gaps" if linked else "missing_gap_link", guidance="Confirm the selected gaps make the question relevant to the project aim."),
         ],
+        rq_checks=[RqCheckItem(**check) for check in rq_checks],
         disclaimer="This checklist is advisory only. It does not validate scholarship, approve a gate, or replace human judgment.",
     )
 

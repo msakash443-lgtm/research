@@ -18,12 +18,14 @@
 ### §5.1 Idea capture and scoping
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
 |---|---|---|---|---|---|
-| 5.1.1 | Cluster/de-dup ideas; extract constructs & contexts | M4.7.c | `GET /api/projects/{id}/idea-brief` (`clusters`, `constructs`, `duplicate_ideas`) | `test_idea_clustering.py`, `test_idea_brief.py` | `[?]` (lexical only; contexts not extracted) |
-| 5.1.2 | Rapid landscape scan | M4.7.a, M4.7.d | `GET /api/projects/{id}/idea-brief/landscape-scan?query=&limit=` | `test_landscape_scan.py`, live OpenAlex connector check | `[?]` (249 focused tests pass; direct live OpenAlex check passed, but route-level live evidence and globally top-cited ordering remain open; output is top-cited in returned sample) |
+| 5.1.1 | Cluster/de-dup ideas; extract constructs & contexts | M4.7.c, X.189 | `GET /api/projects/{id}/idea-brief` (`clusters`, `constructs`, `duplicate_ideas`) | `test_idea_clustering.py`, `test_idea_brief.py` | `[?]` (lexical clusters; contexts extracted by `idea_clustering.extract_contexts`, X.189 built 2026-11-09, needs review) |
+| 5.1.2 | Rapid landscape scan | M4.7.a, M4.7.d, X.189 | `GET /api/projects/{id}/idea-brief/landscape-scan?query=&limit=`; `POST …/idea-brief/landscape-scan` (stores `LandscapeScanRun`, registers artifact) | `test_landscape_scan.py`, live OpenAlex connector check | `[?]` (X.189 built 2026-11-09: per-service status, stored runs; route-level live evidence and globally top-cited ordering remain open) |
 | 5.1.3 | Novelty heuristic **with visible comparators**; feasibility checklist | M4.7, M4.7.b | `GET/PUT /api/projects/{id}/idea-brief`; `GET …/idea-brief/semantic-novelty` (M4.7.b: embedding cosine, per-request, nothing stored, `model_id` recorded) | `test_idea_scoping.py`, `test_idea_brief.py`, `test_semantic_novelty.py`, `test_semantic_novelty_api.py`, `test_role_matrix.py` | `[?]` (lexical and semantic comparators built; semantic one needs EMBEDDING_MODEL and independent review) |
 | 5.1 in | Free-text idea/voice-note capture, scoping notes (design: `docs/researcher-workspace-design.md`) | X.31.1–X.31.2, X.31.17 | `POST/GET/PATCH /api/notes`, capture dialog; triage: `POST /api/notes/{id}/file`, `…/promote`, `GET …/suggestions`, `GET /api/projects/{id}/context?kind=`; inbox and decision-log screen (`#/inbox`, `web/js/inbox.js`) | `test_notes.py`, `test_note_guard.py`, `test_notes_triage.py`, `test_note_suggest.py`, `web/js/test/inboxLogic.test.mjs` | X.31.1 `[?]` (quick capture built); X.31.2.a `[?]` (triage backend); X.31.2.1 `[?]` (inbox and decision-log screen built ahead of the wireframe walkthrough, rule 32 override); X.31.17 `[ ]` |
 | 5.1 out | One-page idea brief | M4.7, M4.7.a | `GET/PUT /api/projects/{id}/idea-brief` and landscape scan | `test_idea_brief.py`, `test_landscape_scan.py` | `[?]` (brief built; landscape snapshot remains pending M4.7.a/d closure) |
 | 5.1 gate | G1 approve topic direction | M4.7, M0.5.2–M0.5.4 | `ready_for_g1` on the idea-brief GET (readiness only; approval stays in the gates list) | `test_idea_brief.py` | `[ ]` (readiness built; G1 approval unchanged) |
+| 5.1 / 5.5 / 5.6 design | Scope and Gaps & questions workflow wireframe; scholar walkthrough required before X.188 | X.187 | `docs/wireframes/strategy.html`; findings in `docs/wireframes/README.md` | No code test applies (design artifact) | `[x]` wireframe browser-checked; owner approved as is 2026-11-09; Q1–Q7 unanswered |
+| 5.1 / 5.5 / 5.6 UI | Idea brief, landscape scan, objectives; gaps, research questions, FINER critique and hypotheses | X.188 | Scope and Gaps steps in the workspace | `scope.test.mjs`, `strategyLogic.test.mjs`, `gaps.test.mjs`, workflow/navigation tests; browser workflow check | `[!]` (frontend suite 240 passed; browser workflow passed; full pytest 3792 passed, 3 skipped, 2 hygiene failures; see plan blocker) |
 
 ### §5.2 Systematic literature search
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
@@ -55,7 +57,7 @@
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
 |---|---|---|---|---|---|
 | 5.4.1 | Versioned discipline schemas with nested Appendix B value validation | M3.1.1–M3.1.2 | `extraction_schema.py`, `extraction_schemas/` | `test_extraction_schema.py`, `test_project_schemas.py`, `test_project_schema_guard.py` | M3.1 `[x]` (independent review found no defect) |
-| 5.4.2 | LLM extraction with evidence spans | M3.2.1, M3.3.1–M3.3.2, X.155, X.156 | `ai_extraction.py`, `routers/extractions.py`, Evidence-table fetch/upload actions | `test_ai_extraction.py`, `test_extractions.py`, `test_oa_fetch.py`, `test_fulltext_upload.py`, `evidenceUpload.test.mjs`, `evidenceTableLogic.test.mjs`, `test_role_matrix.py` | M3.2 `[x]`; M3.3 `[x]` (independently reviewed); X.155 `[~]` (OA fetch→local extraction orchestration focused tests pass; full-suite result pending); X.156 `[~]` |
+| 5.4.2 | LLM extraction with evidence spans, restricted to final full-text inclusions | M3.2.1, M3.3.1–M3.3.2, X.155, X.156, X.202 | `ai_extraction.py`, `routers/extractions.py`, Evidence-table fetch/upload actions | `test_ai_extraction.py`, `test_extractions.py`, `test_extraction_verification.py`, `test_oa_fetch.py`, `test_fulltext_upload.py`, `test_role_matrix.py` | M3.2 `[x]`; M3.3 `[x]` (independently reviewed); X.155 `[~]`; X.202 `[?]` (code/tests written; focused and full pytest blocked because `TEST_DATABASE_URL` is unset); X.156 `[~]` |
 | 5.4.3 | Verbatim span verification | M3.4.1–M3.4.2; groundwork M0.2.6 (immutable excerpts) | shared span checker and extraction save/verify paths | `test_extraction_verification.py`, `test_excerpt_immutability.py` | M3.4 `[x]` implementation verified; real-paper demo pending X.15/X.16 |
 | 5.4.4 | Matrix view, every cell links to source; CSV/Excel | M3.5.1–M3.5.2, X.14 | evidence matrix/export endpoints; evidence-table wireframe | `test_evidence_matrix.py`, role tests | M3.5 `[x]` implementation verified; real-paper UI/demo pending X.14.2/X.16 |
 | 5.4 gate | G4 verify critical fields, side-by-side PDF | M3.6.1–M3.6.2 | extraction verification and G4 gate enforcement | `test_extraction_verification.py`, gate/role tests | M3.6 `[x]` implementation verified; actual G4 approval remains human/data-dependent |
@@ -83,7 +85,7 @@
 ### §5.7 Design and ethics
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
 |---|---|---|---|---|---|
-| 5.7.1–2 | Method recommender; sampling/power; qualitative saturation guidance | M4.3 `[x]`, M4.3.1 `[x]`, M4.3.2 `[x]` | `GET /api/projects/{id}/design/method-recommendation`; `GET …/design/sample-size`; `GET …/design/saturation-guidance` | `test_design_tools.py`, `test_saturation_guidance.py`, `test_role_matrix.py`, `test_never_lock.py` | `[x]` (accepted; SQLite/offline; cited saturation ranges remain advisory) |
+| 5.7.1–2 | Method recommender; sampling/power; qualitative saturation guidance | M4.3 `[x]`, M4.3.1 `[x]`, M4.3.2 `[x]`, X.205 `[?]` | `GET /api/projects/{id}/design/method-recommendation`; `GET …/design/methodology-recommendation`; `GET …/design/sample-size`; `GET …/design/saturation-guidance` | `test_design_tools.py`, `test_methodology_advisor.py`, `test_saturation_guidance.py`, `test_role_matrix.py`, `test_never_lock.py` | M4.3 accepted; X.205 focused suites and full PostgreSQL suite pass, awaiting review |
 | 5.7.3 | Instrument builder; item-quality checks | M4.4, M4.4.1–M4.4.3 | instrument endpoints | `test_item_checks.py`, `test_measure_library.py`, `test_validity_plan.py`, `test_role_matrix.py` | `[x]` (focused instrument suite 328 passed; static citation-only measure library, licences remain `to check`) |
 | 5.7.4 | Ethics pack; G7 sign-off | M4.5 | `GET /api/projects/{id}/ethics-pack` | `test_ethics_pack.py`, gate/role tests | `[x]` pack owner-approved with bracketed institutional facts; actual G7 approval remains a human gate action |
 | 5.7.5 | Pre-registration draft | M4.6 | `GET /api/projects/{id}/preregistration` | `test_preregistration.py`, role tests | `[x]` (owner approved as an advisory, non-submitting draft) |
@@ -159,7 +161,7 @@
 | §6 | **ORCID/ROR author disambiguation** | X.18 *(new)* | — | — | `[ ]` |
 | §7.1 | Retrieval-grounded; untrusted-text fencing | M1.2.1–M1.2.5, M3.3.1 | `untrusted_text.py`, `ai_extraction.py`, `evidence_extraction.v1.toml` | `test_untrusted_text.py`, `test_prompt_fencing.py`, `test_arc_fencing.py`, `test_adversarial.py`, `test_ai_extraction.py` | M1.2.1–.5 `[x]`; M3.3.1 `[x]` (independently reviewed; post-fix full suite passed) |
 | §7.2 | JSON-schema outputs, reject + retry | M0.8.2, M0.8.6 | — | `test_llm_schema.py`, `test_llm_success_path.py` (fail-loudly paths), `test_structured_run.py` | M0.2.5, M0.8.2 `[x]`; M0.8.6 `[?]` |
-| §7.3 | Citation guard (hard block) | M1.10.3, M1.10.5, M1.13.1, M6.4 | research runs (`research_run.citation_rejected`); source cards: verify / check buttons | `test_citation_guard.py` | M1.10.3–.5, M1.10.6, M1.13.1 `[x]`; **human sign-off X.30 approved 2026-10-10**; claims/export wait for M3.11/M6.4 |
+| §7.3 | Citation guard (hard block) | M1.10.3, M1.10.5, M1.13.1, M6.4, **X.195** | research runs (`research_run.citation_rejected`); Sources panel retraction badge; claim routes refuse retracted evidence | `test_citation_guard.py`, `test_claims.py`, `test_crossref_retraction.py`, `test_source_verification.py`, `test_citation_support.py` | M1.10.3–.5, M1.10.6, M1.13.1 `[x]`; X.195 `[!]` (independently reviewed with no findings; focused tests 24 passed; latest full pytest 3792 passed, 3 skipped, 2 `test_test_hygiene.py` failures: duplicate test name and `_source`/`_run` helper violations in active X.199/X.191 tests); **human sign-off X.30 approved 2026-10-10**; export waits for M6.4 |
 | §7.4 | Numbers from code | M6.3 | — | — | `[ ]` |
 | §7.5 | Confidence + abstention | M0.8.3, M0.8.6, M0.8.7 | `app/output_schemas.py` | `test_output_schemas.py`, `test_structured_run.py` | M0.8.3, M0.8.6, M0.8.7 `[?]` (M0.8.7 fixes a blank-answer defect found in review 2026-10-08) |
 | §7.6 | Versioned prompts; log `prompt_version` + `model_id` | M0.8.1, M0.2.3 | `GET .../research-runs` (`provider_model`, `input_snapshot`) | `test_run_read_fields.py`, `test_prompts.py`, `test_prompt_provenance.py` | M0.2.3, M0.8.1 `[x]` |
@@ -258,6 +260,23 @@
 | X.18 | §6 ORCID/ROR author disambiguation |
 | X.19 | §10 performance targets: benchmark + regression check |
 | X.20 | §11 scholar-outcome metrics |
+| X.172–X.175 | §5.7 method recommender (quant/qual/mixed), §5.8–§5.9, Appendix C: research types beyond `full_journey`, `literature_review`, `qualitative` |
+| X.176 | §10 Usability / X.40 decision 4b: each research type's screens show its own stage list and gates |
+| X.187–X.188 | §5.1, §5.5.3, §5.6, §10: strategy wireframe and UI for idea brief, landscape scan, gaps, research questions, FINER critique, hypotheses (API-only today) |
+| X.189 | §5.1: multi-source, stored landscape scan; context extraction (5.1.1) |
+| X.190, X.192 | §5.5.3: evidence-derived and AI-suggested gap candidates (gap miner today only validates) |
+| X.191 | §5.6: research-question critique that reads the question text |
+| X.193–X.194 | §5.1, §5.6, §5.7: objectives as an entity; assembled research-plan document |
+| X.196 | §5.3, §7.3: preprint / peer-review status in eligibility |
+| X.197–X.198 | §5.5 QC: structured study comparison (conflicts, inconsistencies, agreements) and its Evidence-step panel |
+| X.199 | §5.3.2: question-match ordering before active learning can rank |
+| X.200 | §5.5, §7.3: verified-only literature-review summary |
+| X.201 | §5.13.2, §7.3: predatory-venue check on project sources |
+| X.205–X.206 | §5.7: project-aware deterministic methodology advice and AI-tailored, human-accepted suggestions |
+| X.207 | §5.11.2: genre outline checks and applying missing sections |
+| X.208–X.209 | §5.10–§5.11: deterministic writing checks and AI section outline, critique and language review |
+| X.210–X.211 | §5.12: assembled, append-only manuscript review pinned to document versions |
+| X.212–X.213 | Wireframes and later UI for methodology advice and manuscript review (rule 32) |
 
 ## 5. Work with no spec line (scope check)
 
@@ -284,3 +303,4 @@
 | X.152 migration 0098 portability | Engineering testability of an existing schema migration; no separate spec line. |
 | X.158 API-only standard-model routing | User-requested policy: standard project AI calls only the configured API model; explicit local-only routing remains the privacy control. |
 | X.159 post-save Scope/Sources refresh | Usability repair for existing workspace pages; no separate spec line. |
+| X.195 retracted sources not citable | The spec has no retraction line; closest are §7.3 citation guard and §9 no fabrication. Run citations are blocked, claim evidence is refused, Crossref retraction relations are recognized, and the Sources panel shows a retraction badge; X.195 `[~]` pending final verification and independent review. |

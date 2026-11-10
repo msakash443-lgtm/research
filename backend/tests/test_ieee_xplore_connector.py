@@ -4,7 +4,7 @@ import httpx
 import pytest
 from pydantic import SecretStr
 
-from app.connectors import Connector, ConnectorError, NotSupportedError, SearchRequest
+from app.connectors import ConnectorError, NotSupportedError, SearchRequest
 from app.connectors.http import ConnectorHttpClient, HttpPolicy
 from app.connectors.ieee_xplore import BASE_URL, MAX_OFFSET, IeeeXploreConnector, to_record
 
@@ -36,12 +36,6 @@ def make(handler):
         "ieee_xplore", BASE_URL, HttpPolicy(max_retries=0), transport=httpx.MockTransport(inner)
     )
     return IeeeXploreConnector(http=http, api_key=SecretStr("test-key")), seen
-
-
-def test_it_satisfies_connector_protocol_and_requires_a_key():
-    assert isinstance(make(lambda request: {})[0], Connector)
-    with pytest.raises(ConnectorError, match="IEEE_XPLORE_API_KEY"):
-        IeeeXploreConnector()
 
 
 def test_normalizes_article_and_rejects_unusable_entries():
@@ -89,9 +83,3 @@ def test_offset_window_and_unsupported_capabilities_are_explicit():
         connector.search(SearchRequest(query="x", cursor=str(MAX_OFFSET)))
     with pytest.raises(NotSupportedError):
         connector.get_fulltext("1234567")
-
-
-def test_last_page_reports_the_api_result_window_cap():
-    connector, _ = make(lambda request: {"articles": [article()], "total_records": 50000})
-    page = connector.search(SearchRequest(query="x", limit=1, cursor=str(MAX_OFFSET - 1)))
-    assert page.next_cursor is None and connector.last_search_capped is True

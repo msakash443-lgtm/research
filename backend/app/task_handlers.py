@@ -37,7 +37,7 @@ from app.search_query import BooleanQuery, QueryError
 from app.source_verification import verify_source
 from app.search_runner import SearchError, SearchFailed, rerun_search, run_search
 from app.schemas import SourceCreate
-from app.screening import screening_locked
+from app.screening import included_sources, screening_locked
 from app.snowball import SnowballError, SnowballFailed, run_snowball
 from app.query_alerts import QUERY_ALERT, _aware, latest_search, record_alert_run
 from app.zotero import ZoteroError, build_zotero_client, sync_pull, sync_push
@@ -312,6 +312,8 @@ def handle_fulltext_fetch(task: ClaimedTask) -> None:
         source = db.get(Source, source_id)
         if project is None or source is None or source.project_id != project_id or source.merged_into is not None:
             raise PermanentTaskError("The source for this fetch no longer exists in the project.")
+        if payload.get("auto_extract") and source.id not in {included.id for included in included_sources(db, project)}:
+            raise PermanentTaskError("Only sources included at full text may be fetched for extraction.")
         try:
             access = fetch_open_access(
                 db, project=project, source=source,
@@ -328,7 +330,7 @@ def handle_fulltext_fetch(task: ClaimedTask) -> None:
             db.rollback()
             raise PermanentTaskError(str(exc)) from exc
         task.ensure_owned(db)
-        if payload.get("auto_extract") and access.get("status") == "stored" and source.fulltext_path:
+        if payload.get("auto_extract") and source.id in {included.id for included in included_sources(db, project)} and access.get("status") == "stored" and source.fulltext_path:
             schema_name = str(payload.get("schema_name") or "default")
             extraction_task = enqueue_task(
                 db, project.id, AI_EXTRACTION,
@@ -365,6 +367,8 @@ def handle_ai_extraction(task: ClaimedTask) -> None:
         source = db.scalar(select(Source).where(Source.id == source_id, Source.project_id == project_id))
         if project is None or source is None:
             raise PermanentTaskError("The source for this extraction no longer exists in the project.")
+        if source.id not in {included.id for included in included_sources(db, project)}:
+            raise PermanentTaskError("Only sources included at full text may be extracted.")
         try:
             run_ai_extraction(
                 db, project, source, schema_name=schema_name, task_id=task.id,

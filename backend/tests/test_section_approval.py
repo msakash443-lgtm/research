@@ -9,23 +9,13 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.database import SessionLocal
 from app.main import app
 from app.models import AuditEvent, Document, DocumentVersion, Project, ProjectMember, ProjectRole, SectionApproval
 from gate_helpers import approve_earlier_gates
-
-
-def _login(email):
-    client = TestClient(app)
-    user_id = client.post("/api/auth/development/login", json={"email": email, "display_name": "A"}).json()["id"]
-    return client, user_id
-
-
-def _project(client, title="Manuscript"):
-    return client.post("/api/projects", json={"title": title}).json()["id"]
+from tests.api_helpers import create_project, sign_in_user
 
 
 def _document(project_id, owner_id, title="Introduction", position=1):
@@ -60,8 +50,8 @@ def _report(client, project_id, document_id):
 
 @pytest.fixture
 def writer():
-    client, user_id = _login(f"writer.approval.{uuid.uuid4().hex[:8]}@example.org")
-    project_id = _project(client)
+    client, user_id = sign_in_user(f"writer.approval.{uuid.uuid4().hex[:8]}@example.org")
+    project_id = create_project(client, "Manuscript")
     intro = _document(project_id, user_id, "Introduction", 1)
     assert _save(client, project_id, intro, _doc(_typed("Remote work changed wages.", "s1", user_id)), 0).status_code == 201
     return SimpleNamespace(client=client, project_id=project_id, intro=intro, user_id=user_id)
@@ -140,7 +130,7 @@ def test_approving_an_unsaved_section_is_refused(writer):
 def test_a_reviewer_or_co_author_may_not_approve_a_section(writer):
     _report(writer.client, writer.project_id, writer.intro)
     for role in (ProjectRole.co_author, ProjectRole.reviewer):
-        client, user_id = _login(f"section-approve-{role.value}-{uuid.uuid4().hex[:8]}@example.com")
+        client, user_id = sign_in_user(f"section-approve-{role.value}-{uuid.uuid4().hex[:8]}@example.com")
         with SessionLocal() as db:
             db.add(ProjectMember(project_id=uuid.UUID(writer.project_id), user_id=uuid.UUID(user_id), role=role))
             db.commit()
@@ -150,7 +140,7 @@ def test_a_reviewer_or_co_author_may_not_approve_a_section(writer):
 
 def test_a_supervisor_may_approve_a_section(writer):
     _report(writer.client, writer.project_id, writer.intro)
-    client, user_id = _login(f"section-approve-supervisor-{uuid.uuid4().hex[:8]}@example.com")
+    client, user_id = sign_in_user(f"section-approve-supervisor-{uuid.uuid4().hex[:8]}@example.com")
     with SessionLocal() as db:
         db.add(ProjectMember(project_id=uuid.UUID(writer.project_id), user_id=uuid.UUID(user_id), role=ProjectRole.supervisor))
         db.commit()
@@ -180,8 +170,8 @@ def test_approval_rows_cannot_be_edited(writer):
 
 
 def test_g10_is_refused_while_the_manuscript_has_no_sections():
-    client, user_id = _login(f"g10-empty-{uuid.uuid4().hex[:8]}@example.com")
-    project_id = _project(client, "Empty manuscript")
+    client, user_id = sign_in_user(f"g10-empty-{uuid.uuid4().hex[:8]}@example.com")
+    project_id = create_project(client, "Empty manuscript")
     approve_earlier_gates(project_id, "G10")
     response = client.post(f"/api/projects/{project_id}/gates/G10/approve")
     assert response.status_code == 409
@@ -189,8 +179,8 @@ def test_g10_is_refused_while_the_manuscript_has_no_sections():
 
 
 def test_g10_is_refused_while_a_section_is_unapproved():
-    client, user_id = _login(f"g10-unapproved-{uuid.uuid4().hex[:8]}@example.com")
-    project_id = _project(client, "Unapproved section")
+    client, user_id = sign_in_user(f"g10-unapproved-{uuid.uuid4().hex[:8]}@example.com")
+    project_id = create_project(client, "Unapproved section")
     intro = _document(project_id, user_id, "Introduction", 1)
     _save(client, project_id, intro, _doc(_typed("Not yet approved.", "s1", user_id)), 0)
     approve_earlier_gates(project_id, "G10")
@@ -200,12 +190,12 @@ def test_g10_is_refused_while_a_section_is_unapproved():
 
 
 def test_g10_approves_once_every_section_is_approved():
-    client, user_id = _login(f"g10-approved-{uuid.uuid4().hex[:8]}@example.com")
-    project_id = _project(client, "Fully approved")
+    client, user_id = sign_in_user(f"g10-approved-{uuid.uuid4().hex[:8]}@example.com")
+    project_id = create_project(client, "Fully approved")
     intro = _document(project_id, user_id, "Introduction", 1)
     methods = _document(project_id, user_id, "Methods", 2)
     for document_id, text in ((intro, "Intro text."), (methods, "Methods text.")):
-        _save(client, project_id, document_id, _doc(_typed(text, f"s-{document_id}", user_id)), 0)
+        _save(client, project_id, document_id, _doc(_typed(text, f"s-{str(document_id)[:30]}", user_id)), 0)
         _report(client, project_id, document_id)
         assert client.post(f"/api/projects/{project_id}/documents/{document_id}/approve").status_code == 201
     approve_earlier_gates(project_id, "G10")
@@ -214,8 +204,8 @@ def test_g10_approves_once_every_section_is_approved():
 
 
 def test_g10_is_refused_again_once_an_approved_section_is_resaved():
-    client, user_id = _login(f"g10-stale-{uuid.uuid4().hex[:8]}@example.com")
-    project_id = _project(client, "Resaved after approval")
+    client, user_id = sign_in_user(f"g10-stale-{uuid.uuid4().hex[:8]}@example.com")
+    project_id = create_project(client, "Resaved after approval")
     intro = _document(project_id, user_id, "Introduction", 1)
     _save(client, project_id, intro, _doc(_typed("Intro text.", "s1", user_id)), 0)
     _report(client, project_id, intro)

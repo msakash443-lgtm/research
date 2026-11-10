@@ -2,7 +2,7 @@ import uuid
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import ProgrammingError
 
 from app.database import SessionLocal
 from app.main import app
@@ -61,7 +61,7 @@ def test_theory_construct_database_links_reject_cross_project_references(world):
         db.add_all([construct, theory])
         db.flush()
         db.add(TheoryConstruct(project_id=uuid.UUID(pid), theory_id=theory.id, construct_id=construct.id))
-        with pytest.raises(IntegrityError):
+        with pytest.raises(ProgrammingError, match="must belong to one project"):
             db.commit()
         db.rollback()
 
@@ -78,6 +78,6 @@ def test_theory_construct_database_links_reject_cross_project_updates(world):
         db.add(link)
         db.commit()
         link.project_id = uuid.UUID(other)
-        with pytest.raises(IntegrityError):
+        with pytest.raises(ProgrammingError, match="must belong to one project"):
             db.commit()
         db.rollback()

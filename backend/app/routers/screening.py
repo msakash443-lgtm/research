@@ -9,7 +9,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import active_learning, ai_quality, audit, fulltext_coverage, suggestion_store, suggestions
+from app import active_learning, ai_quality, audit, fulltext_coverage, question_match, suggestion_store, suggestions
 from app.ai_controls import require_ai_on
 from app.artifacts import register_artifact
 from app.config import get_settings
@@ -17,7 +17,7 @@ from app.database import get_db
 from app.lookups import live_source_or_404
 from app.dependencies import APPROVE_ROLES, MANAGE_ROLES, READ_ROLES, WRITE_ROLES, current_user, project_access, project_role
 from app.prescreen import confidence_level
-from app.models import AiSuggestion, AutoExcludeAudit, Project, ProjectRole, ProjectStage, ScreeningDecision, SeedCheckRun, Source, Task, TaskStatus, User
+from app.models import AiSuggestion, AutoExcludeAudit, Project, ProjectRole, ProjectStage, ResearchQuestion, ScreeningCriterion, ScreeningDecision, SeedCheckRun, Source, Task, TaskStatus, User
 from app.task_handlers import FULLTEXT_FETCH, SCREENING_PRESCREEN, SEED_FALSE_EXCLUSION_CHECK
 from app.arxiv_fulltext import ARXIV_FULLTEXT_FETCH
 from app.connectors.access import is_enabled
@@ -161,6 +161,7 @@ class QueueItem(BaseModel):
     found_via: dict | None = None  # e.g. snowballing: which paper, direction and round (M1.9.2)
     coverage: dict | None = None  # full text / abstract only / not accessible (X.76)
     ai_suggestion: SuggestionRead | None  # a suggestion only; it never counts as a decision
+    matched_terms: list[str] = []  # question-match terms matched in title+abstract (X.199); empty unless sort=question_match
 
 
 class QueueRead(BaseModel):
@@ -168,7 +169,8 @@ class QueueRead(BaseModel):
     locked: bool
     dual_screen_enabled: bool
     ai_autoexclude_enabled: bool
-    sort: str  # "oldest" or "relevance" — the order actually applied (falls back to "oldest" if relevance can't be learned yet)
+    sort: str  # "oldest", "relevance" or "question_match" — the order actually applied (falls back to "oldest" if the requested sort can't be applied)
+    sort_note: str | None = None  # explains a fallback away from the requested sort, e.g. no research questions or criteria yet
     counts: dict[str, int]  # include / exclude / maybe / unscreened [/ conflict in dual-screen; / ai_auto_excluded if auto-exclude is on]
     pending: int  # every record waiting for this person, across all pages (not just `items`, which is one page)
     items: list[QueueItem]
@@ -318,17 +320,25 @@ def get_queue(
     reviewer is biased by the other's (or the AI's) answer. Two reviewers who agree count as decided;
     disagreement is a `conflict` (M2.4.2b resolves it), not a decision.
 
-    `sort`: `"oldest"` (default) or `"relevance"` (M2.6, spec 5.3.2) — ranks by a classifier trained
-    fresh from this project's current human decisions, highest predicted relevance first. Only applies
-    when `active_learning_enabled` is on, dual-screen is off (ranking would leak the other reviewer's
-    decisions through order) and both decision classes exist yet; otherwise falls back to
-    oldest-first (the response's `sort` field says which was actually used, never silently different
-    from what was asked without saying so).
+    `sort`: `"oldest"` (default), `"relevance"` (M2.6, spec 5.3.2) or `"question_match"` (X.199).
+    `"relevance"` ranks by a classifier trained fresh from this project's current human decisions,
+    highest predicted relevance first. Only applies when `active_learning_enabled` is on, dual-screen
+    is off (ranking would leak the other reviewer's decisions through order) and both decision classes
+    exist yet; otherwise falls back to oldest-first.
+
+    `"question_match"` ranks by a lexical (BM25) match of title+abstract against the project's
+    research-question text and inclusion-criteria terms, before any human decision exists to learn
+    from; each item lists the terms it matched. It never excludes a record — same set and count as
+    the default — only the order and the matched terms change. With no research questions and no
+    inclusion criteria recorded, it falls back to oldest-first.
+
+    The response's `sort` field says which order was actually used, and `sort_note` explains a
+    fallback, never silently different from what was asked without saying so.
     """
     if stage not in STAGES:
         raise HTTPException(status_code=422, detail=STAGE_MESSAGE)
-    if sort not in ("oldest", "relevance"):
-        raise HTTPException(status_code=422, detail="sort must be one of: oldest, relevance")
+    if sort not in ("oldest", "relevance", "question_match"):
+        raise HTTPException(status_code=422, detail="sort must be one of: oldest, relevance, question_match")
     grouped = rows_for_stage(db, project, stage)
     counts = {"include": 0, "exclude": 0, "maybe": 0, "unscreened": 0}
     if project.dual_screen_enabled:
@@ -363,11 +373,27 @@ def get_queue(
             counts["unscreened"] += 1
             waiting.append(source)
     applied_sort = "oldest"
+    sort_note: str | None = None
+    matched_terms_by_source: dict[uuid.UUID, tuple[str, ...]] = {}
     if sort == "relevance" and project.active_learning_enabled and not project.dual_screen_enabled:
         classifier = active_learning_classifier(db, project, stage)
         if classifier is not None:
             waiting = active_learning.rank_by_relevance(classifier, waiting, lambda s: f"{s.title or ''} {s.abstract or ''}")
             applied_sort = "relevance"
+    elif sort == "question_match":
+        query_terms = list(db.scalars(select(ResearchQuestion.text).where(ResearchQuestion.project_id == project.id)).all())
+        query_terms += list(
+            db.scalars(
+                select(ScreeningCriterion.text).where(ScreeningCriterion.project_id == project.id, ScreeningCriterion.kind == "include")
+            ).all()
+        )
+        if query_terms:
+            ranked = question_match.rank(waiting, query_terms, lambda s: f"{s.title or ''} {s.abstract or ''}")
+            waiting = [source for source, _ in ranked]
+            matched_terms_by_source = {source.id: matched for source, matched in ranked}
+            applied_sort = "question_match"
+        else:
+            sort_note = "No research questions or inclusion criteria are recorded for this project yet, so the queue falls back to oldest first."
     suggestion_rows = {
         row.target_id: row
         for row in db.scalars(
@@ -388,6 +414,7 @@ def get_queue(
                 source_id=source.id, title=source.title, authors=source.authors, year=source.year, doi=source.doi,
                 abstract=source.abstract, fulltext_access=source.fulltext_access if stage == "full_text" else None,
                 found_via=source.found_via, coverage=fulltext_coverage.coverage(source),
+                matched_terms=list(matched_terms_by_source.get(source.id, ())),
                 ai_suggestion=SuggestionRead(
                     id=shared.id if shared else None,
                     state=suggestions.state_of(event.kind for event in shared.events) if shared else None,
@@ -401,7 +428,8 @@ def get_queue(
         )
     return QueueRead(
         stage=stage, locked=screening_locked(db, project), dual_screen_enabled=project.dual_screen_enabled,
-        ai_autoexclude_enabled=project.ai_autoexclude_enabled, sort=applied_sort, counts=counts, pending=len(waiting), items=items,
+        ai_autoexclude_enabled=project.ai_autoexclude_enabled, sort=applied_sort, sort_note=sort_note,
+        counts=counts, pending=len(waiting), items=items,
     )
 
 

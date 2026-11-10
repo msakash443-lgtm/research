@@ -17,21 +17,16 @@ from pypdf import PdfWriter
 from app.object_storage import ObjectNotFound, get_object_store
 from app.config import get_settings
 from app.main import app
+from tests.api_helpers import create_project, create_source, sign_in
 from tests.test_fulltext import make_pdf
 
 PDF = make_pdf([["Hello world, this is the body text of the paper."]])
 
 
-def _login(email):
-    client = TestClient(app)
-    assert client.post("/api/auth/development/login", json={"email": email, "display_name": "U"}).status_code == 200
-    return client
-
-
-def _source(client, title="Paper"):
-    project_id = client.post("/api/projects", json={"title": "Upload"}).json()["id"]
-    source = client.post(f"/api/projects/{project_id}/sources", json={"title": title, "evidence_excerpt": "x"}).json()
-    return project_id, source["id"]
+def _project_and_source(client, title="Paper"):
+    project_id = create_project(client, "Upload")
+    source_id = create_source(client, project_id, title, evidence_excerpt="x")
+    return project_id, source_id
 
 
 def _upload(client, project_id, source_id, data, content_type="application/pdf"):
@@ -47,8 +42,8 @@ def _scratch_object_store(tmp_path, monkeypatch):
 
 
 def test_a_valid_pdf_is_stored_and_flagged_as_a_manual_upload():
-    client = _login("upload1@example.com")
-    project_id, source_id = _source(client)
+    client = sign_in("upload1@example.com")
+    project_id, source_id = _project_and_source(client)
 
     response = _upload(client, project_id, source_id, PDF)
 
@@ -64,8 +59,8 @@ def test_a_valid_pdf_is_stored_and_flagged_as_a_manual_upload():
     assert stored["fulltext_path"] == body["fulltext_path"]
 
 def test_withdrawing_full_text_deletes_the_object_and_records_licence_withdrawal():
-    client = _login("withdraw@example.com")
-    project_id, source_id = _source(client, "Withdrawn paper")
+    client = sign_in("withdraw@example.com")
+    project_id, source_id = _project_and_source(client, "Withdrawn paper")
     uploaded = _upload(client, project_id, source_id, PDF)
     key = uploaded.json()["fulltext_path"]
 
@@ -81,8 +76,8 @@ def test_withdrawing_full_text_deletes_the_object_and_records_licence_withdrawal
 
 
 def test_the_wrong_content_type_is_refused_before_anything_is_read():
-    client = _login("upload2@example.com")
-    project_id, source_id = _source(client)
+    client = sign_in("upload2@example.com")
+    project_id, source_id = _project_and_source(client)
 
     response = _upload(client, project_id, source_id, PDF, content_type="application/octet-stream")
 
@@ -91,8 +86,8 @@ def test_the_wrong_content_type_is_refused_before_anything_is_read():
 
 
 def test_a_file_without_the_pdf_signature_is_refused():
-    client = _login("upload3@example.com")
-    project_id, source_id = _source(client)
+    client = sign_in("upload3@example.com")
+    project_id, source_id = _project_and_source(client)
 
     response = _upload(client, project_id, source_id, b"this is not a pdf at all")
 
@@ -101,8 +96,8 @@ def test_a_file_without_the_pdf_signature_is_refused():
 
 
 def test_a_password_protected_pdf_is_refused_not_stored():
-    client = _login("upload4@example.com")
-    project_id, source_id = _source(client)
+    client = sign_in("upload4@example.com")
+    project_id, source_id = _project_and_source(client)
     writer = PdfWriter()
     writer.add_blank_page(width=10, height=10)
     writer.encrypt(user_password="secret")
@@ -117,8 +112,8 @@ def test_a_password_protected_pdf_is_refused_not_stored():
 
 
 def test_a_scanned_pdf_with_no_text_layer_is_refused():
-    client = _login("upload5@example.com")
-    project_id, source_id = _source(client)
+    client = sign_in("upload5@example.com")
+    project_id, source_id = _project_and_source(client)
     writer = PdfWriter()
     writer.add_blank_page(width=200, height=200)  # no text operators: nothing to extract
     buf = io.BytesIO()
@@ -130,8 +125,8 @@ def test_a_scanned_pdf_with_no_text_layer_is_refused():
 
 
 def test_a_source_that_already_has_stored_full_text_refuses_a_second_upload():
-    client = _login("upload6@example.com")
-    project_id, source_id = _source(client)
+    client = sign_in("upload6@example.com")
+    project_id, source_id = _project_and_source(client)
     assert _upload(client, project_id, source_id, PDF).status_code == 201
 
     response = _upload(client, project_id, source_id, PDF)
@@ -141,8 +136,8 @@ def test_a_source_that_already_has_stored_full_text_refuses_a_second_upload():
 
 def test_an_oversized_declared_length_is_refused_by_the_middleware(monkeypatch):
     monkeypatch.setattr(get_settings(), "object_storage_max_bytes", 100)
-    client = _login("upload7@example.com")
-    project_id, source_id = _source(client)
+    client = sign_in("upload7@example.com")
+    project_id, source_id = _project_and_source(client)
     oversize = b"%PDF-1.4\n" + b"x" * 500
 
     response = _upload(client, project_id, source_id, oversize)
@@ -154,8 +149,8 @@ def test_an_undeclared_oversized_stream_is_cut_off_by_the_handler(monkeypatch):
     """No Content-Length (chunked body): the middleware can't check it, so the handler's own
     streaming cap must still refuse it rather than buffer it unbounded."""
     monkeypatch.setattr(get_settings(), "object_storage_max_bytes", 100)
-    client = _login("upload8@example.com")
-    project_id, source_id = _source(client)
+    client = sign_in("upload8@example.com")
+    project_id, source_id = _project_and_source(client)
 
     def chunks():
         yield b"%PDF-1.4\n"
@@ -170,8 +165,8 @@ def test_an_undeclared_oversized_stream_is_cut_off_by_the_handler(monkeypatch):
 
 
 def test_upload_requires_authentication():
-    client = _login("upload9@example.com")
-    project_id, source_id = _source(client)
+    client = sign_in("upload9@example.com")
+    project_id, source_id = _project_and_source(client)
     anonymous = TestClient(app)
 
     response = _upload(anonymous, project_id, source_id, PDF)
@@ -182,17 +177,17 @@ def test_upload_requires_authentication():
 def test_other_users_cannot_upload_and_unknown_source_404s():
     import uuid
 
-    owner = _login("upload10@example.com")
-    project_id, source_id = _source(owner)
-    intruder = _login("upload11@example.com")
+    owner = sign_in("upload10@example.com")
+    project_id, source_id = _project_and_source(owner)
+    intruder = sign_in("upload11@example.com")
 
     assert _upload(intruder, project_id, source_id, PDF).status_code == 404
     assert _upload(owner, project_id, uuid.uuid4(), PDF).status_code == 404
 
 
 def test_reading_full_text_before_anything_is_stored_404s():
-    client = _login("read1@example.com")
-    project_id, source_id = _source(client)
+    client = sign_in("read1@example.com")
+    project_id, source_id = _project_and_source(client)
 
     response = client.get(f"/api/projects/{project_id}/sources/{source_id}/fulltext")
 
@@ -200,8 +195,8 @@ def test_reading_full_text_before_anything_is_stored_404s():
 
 
 def test_reading_the_stored_full_text_gives_text_pages_and_sha256():
-    client = _login("read2@example.com")
-    project_id, source_id = _source(client)
+    client = sign_in("read2@example.com")
+    project_id, source_id = _project_and_source(client)
     assert _upload(client, project_id, source_id, PDF).status_code == 201
 
     response = client.get(f"/api/projects/{project_id}/sources/{source_id}/fulltext")
@@ -214,10 +209,10 @@ def test_reading_the_stored_full_text_gives_text_pages_and_sha256():
 
 
 def test_reading_full_text_is_restricted_to_project_members():
-    owner = _login("read3@example.com")
-    project_id, source_id = _source(owner)
+    owner = sign_in("read3@example.com")
+    project_id, source_id = _project_and_source(owner)
     assert _upload(owner, project_id, source_id, PDF).status_code == 201
-    outsider = _login("read4@example.com")
+    outsider = sign_in("read4@example.com")
 
     assert outsider.get(f"/api/projects/{project_id}/sources/{source_id}/fulltext").status_code == 404
     anonymous = TestClient(app)
@@ -227,8 +222,8 @@ def test_reading_full_text_is_restricted_to_project_members():
 def test_reading_full_text_for_an_unknown_source_404s():
     import uuid
 
-    client = _login("read5@example.com")
-    project_id, _ = _source(client)
+    client = sign_in("read5@example.com")
+    project_id, _ = _project_and_source(client)
 
     response = client.get(f"/api/projects/{project_id}/sources/{uuid.uuid4()}/fulltext")
 

@@ -32,7 +32,6 @@ print(json.dumps(out))
 def preflight_status(tmp_path_factory):
     env = {
         **os.environ,
-        "DATABASE_URL": "sqlite+pysqlite://",
         "ENVIRONMENT": "development",
         "AUTO_CREATE_SCHEMA": "true",
         "RUN_RESEARCH_INLINE": "true",
@@ -52,11 +51,7 @@ def preflight_status(tmp_path_factory):
     return json.loads(result.stdout.strip().splitlines()[-1])
 
 
-@pytest.mark.parametrize("method", ["PUT", "PATCH"])
-def test_a_cross_origin_preflight_for_a_put_or_patch_route_is_allowed(preflight_status, method):
-    assert preflight_status[method] == 200
-
-
-@pytest.mark.parametrize("method", ["GET", "POST", "DELETE"])
-def test_the_methods_that_were_already_allowed_still_pass_preflight(preflight_status, method):
+@pytest.mark.parametrize("method", ["PUT", "PATCH", "GET", "POST", "DELETE"])
+def test_a_cross_origin_preflight_is_allowed_for_every_method(preflight_status, method):
+    # PUT/PATCH are the regression this guards; GET/POST/DELETE were already allowed and must stay allowed.
     assert preflight_status[method] == 200

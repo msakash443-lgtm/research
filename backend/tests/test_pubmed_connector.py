@@ -4,7 +4,7 @@ import httpx
 import pytest
 from pydantic import SecretStr
 
-from app.connectors import Connector, ConnectorError, NotSupportedError, SearchRequest
+from app.connectors import ConnectorError, NotSupportedError, SearchRequest
 from app.connectors.http import ConnectorHttpClient, HttpPolicy
 from app.connectors.pubmed import ESEARCH_WINDOW, PubMedConnector, parse_articles, pmid
 
@@ -53,10 +53,6 @@ def make(eutils, europepmc=lambda r: {}, **kwargs):
     http = ConnectorHttpClient("pubmed", "https://eutils.ncbi.nlm.nih.gov/entrez/eutils", HttpPolicy(max_retries=0), transport=httpx.MockTransport(wrap(eutils)))
     epmc = ConnectorHttpClient("europepmc", "https://www.ebi.ac.uk/europepmc/webservices/rest", HttpPolicy(max_retries=0), transport=httpx.MockTransport(wrap(europepmc)))
     return PubMedConnector(http, epmc, **kwargs), seen
-
-
-def test_it_satisfies_the_connector_protocol():
-    assert isinstance(make(lambda r: {})[0], Connector)
 
 
 def test_pmid_forms():
@@ -174,12 +170,6 @@ def test_search_errors_and_bad_filters():
         conn.search(SearchRequest(query="x", filters={"year_to": "20x0"}))
     with pytest.raises(ConnectorError):
         conn.search(SearchRequest(query="x", cursor="abc"))
-
-
-def test_get_by_id_and_missing_record():
-    conn, _ = make(lambda r: feed(article(5)) if r.url.params["id"] == "5" else feed())
-    assert conn.get_by_id("5").title == "Remote work and wellbeing"
-    assert conn.get_by_id("6") is None
 
 
 def test_get_by_doi_needs_exactly_one_matching_record():

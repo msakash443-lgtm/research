@@ -6,9 +6,16 @@ from app import workspace_ai
 from app.workspace_ai import SourceExcerpt, WorkspaceAIError
 
 
-def test_off_refuses_every_action():
+@pytest.mark.parametrize(
+    "level,expected",
+    [
+        pytest.param("off", False, id="off-refuses-every-action"),
+        pytest.param("full", True, id="full-allows-every-action"),
+    ],
+)
+def test_a_blanket_level_applies_to_every_action(level, expected):
     for action in workspace_ai.ACTIONS:
-        assert workspace_ai.level_allows("off", action) is False
+        assert workspace_ai.level_allows(level, action) is expected
 
 
 def test_suggestions_only_allows_comments_and_evidence_but_never_wording():
@@ -16,10 +23,6 @@ def test_suggestions_only_allows_comments_and_evidence_but_never_wording():
         assert workspace_ai.level_allows("suggestions_only", action) is True
     assert workspace_ai.level_allows("suggestions_only", "clearer_sentence") is False
 
-
-def test_full_allows_every_action():
-    for action in workspace_ai.ACTIONS:
-        assert workspace_ai.level_allows("full", action) is True
 
 
 def test_unknown_action_is_rejected():

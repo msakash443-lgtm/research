@@ -111,8 +111,8 @@ def generate_map(db: Session, project: Project, *, actor: str) -> list[Interpret
 
 def current_batch(db: Session, project_id: uuid.UUID) -> list[InterpretationFinding]:
     """Every finding in the highest-`generation` batch, oldest first. Empty if none was ever generated.
-    `generation`, not `created_at`, decides "latest": two batches generated inside the same second would
-    otherwise tie on a clock with only second resolution (SQLite's `CURRENT_TIMESTAMP`)."""
+    `generation`, not `created_at`, decides "latest": two batches generated inside one transaction would
+    otherwise tie on `now()`, which is fixed at transaction start."""
     latest = db.scalar(select(func.max(InterpretationFinding.generation)).where(InterpretationFinding.project_id == project_id))
     if latest is None:
         return []

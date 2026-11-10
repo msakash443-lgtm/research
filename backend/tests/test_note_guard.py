@@ -39,7 +39,7 @@ def test_orm_delete_of_a_revision_is_rejected():
         assert db.get(NoteRevision, revision_id) is not None
 
 
-def test_raw_sql_update_is_rejected_by_database_trigger():
+def test_raw_sql_update_of_note_revision_is_rejected_by_database_trigger():
     revision_id = _revision_id()
     with SessionLocal() as db:
         with pytest.raises(DatabaseError, match="append-only"):

@@ -8,7 +8,6 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app import task_runner
@@ -19,6 +18,7 @@ from app.database import SessionLocal
 from app.main import app
 from app.models import AuditEvent, SearchAlert, SearchQuery, Task, TaskStatus
 from app.query_alerts import new_records, sweep_due_alerts
+from tests.api_helpers import sign_in_user
 
 BODY = {
     "database": "openalex",
@@ -52,16 +52,10 @@ def setup(monkeypatch):
     FakeConnector.records = (paper(0, "10.1000/p0"), paper(1, "10.1000/p1"), paper(2, "10.1000/p2"))
 
 
-def _login(email):
-    client = TestClient(app)
-    uid = client.post("/api/auth/development/login", json={"email": email, "display_name": "A"}).json()["id"]
-    return client, uid
-
-
 @pytest.fixture
 def world():
     tag = uuid.uuid4().hex[:8]
-    client, owner_id = _login(f"qa-owner-{tag}@example.com")
+    client, owner_id = sign_in_user(f"qa-owner-{tag}@example.com")
     pid = client.post("/api/projects", json={"title": "Alerts"}).json()["id"]
     return {"client": client, "owner_id": owner_id, "pid": pid}
 
@@ -202,7 +196,7 @@ def test_sweep_enqueues_each_due_alert_once_per_slot(world):
         count = len(db.scalars(select(Task).where(Task.project_id == uuid.UUID(world["pid"])).where(Task.type == "query_alert")).all())
     assert count == 1
     # the alert advanced to its next slot
-    assert alert_row(world["pid"]).next_run_at > now.replace(tzinfo=None)  # SQLite reads back naive
+    assert alert_row(world["pid"]).next_run_at > now
 
 
 def test_sweep_skips_disabled_alerts(world):

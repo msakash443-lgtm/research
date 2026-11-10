@@ -13,16 +13,7 @@ from app.database import SessionLocal
 from app.main import app
 from app.models import Gap, Project, ProjectStage, Source
 from gate_helpers import approve_earlier_gates
-
-
-def _login(email):
-    client = TestClient(app)
-    client.post("/api/auth/development/login", json={"email": email, "display_name": "G"})
-    return client
-
-
-def _project(client, title="Framework gate project"):
-    return client.post("/api/projects", json={"title": title}).json()["id"]
+from tests.api_helpers import create_project, sign_in
 
 
 def _prep_stage(project_id: str) -> None:
@@ -85,8 +76,8 @@ def _aligned_conceptual_model(client, project_id, source_id) -> None:
 @pytest.fixture
 def world():
     tag = uuid.uuid4().hex[:8]
-    client = _login(f"g6-{tag}@example.com")
-    project_id = _project(client)
+    client = sign_in(f"g6-{tag}@example.com")
+    project_id = create_project(client, "Framework gate project")
     source_id = _project_source(project_id)
     _prep_stage(project_id)
     gap_id = _selected_gap(project_id)

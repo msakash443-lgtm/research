@@ -6,13 +6,12 @@ from sqlalchemy import select
 from app.database import SessionLocal
 from app.main import app
 from app.models import AuditEvent, ExternalIdentity, Note, NoteRevision, ProjectMember, User
+from tests.api_helpers import sign_in_user
 
 
-def _login(email):
-    client = TestClient(app)
-    response = client.post("/api/auth/development/login", json={"email": email, "display_name": "Real Name"})
-    assert response.status_code == 200
-    return client, uuid.UUID(response.json()["id"])
+def _login_uuid(email):
+    client, user_id = sign_in_user(email, "Real Name")
+    return client, uuid.UUID(user_id)
 
 
 def _erase(client, email):
@@ -20,7 +19,7 @@ def _erase(client, email):
 
 
 def test_erasure_blanks_personal_data_but_keeps_the_user_row():
-    client, user_id = _login("erase-me@example.com")
+    client, user_id = _login_uuid("erase-me@example.com")
     db = SessionLocal()
     db.add(ExternalIdentity(user_id=user_id, provider="google", subject="google-subject-1"))
     db.commit()
@@ -38,22 +37,22 @@ def test_erasure_blanks_personal_data_but_keeps_the_user_row():
 
 
 def test_erased_account_is_signed_out_and_cannot_be_reused():
-    client, _ = _login("gone@example.com")
-    other_device, _ = _login("gone@example.com")
+    client, _ = _login_uuid("gone@example.com")
+    other_device, _ = _login_uuid("gone@example.com")
 
     _erase(client, "gone@example.com")
 
     assert client.get("/api/auth/me").status_code == 401
     assert other_device.get("/api/auth/me").status_code == 401
     # Signing in again with the same email is a brand-new account, not the erased one.
-    _, new_id = _login("gone@example.com")
+    _, new_id = _login_uuid("gone@example.com")
     db = SessionLocal()
     assert db.get(User, new_id).erased_at is None
     db.close()
 
 
 def test_erasure_requires_the_account_email_as_confirmation():
-    client, user_id = _login("careful@example.com")
+    client, user_id = _login_uuid("careful@example.com")
 
     assert _erase(client, "someone-else@example.com").status_code == 400
     assert client.post("/api/auth/erase-account", json={}).status_code == 422
@@ -68,7 +67,7 @@ def test_erasure_needs_a_signed_in_user():
 
 
 def test_audit_trail_is_kept_and_records_the_erasure():
-    client, user_id = _login("audited@example.com")
+    client, user_id = _login_uuid("audited@example.com")
     project_id = client.post("/api/projects", json={"title": "Solo"}).json()["id"]
 
     assert _erase(client, "audited@example.com").status_code == 204
@@ -85,8 +84,8 @@ def test_audit_trail_is_kept_and_records_the_erasure():
 
 
 def test_sole_owner_of_a_shared_project_must_hand_over_first():
-    owner, owner_id = _login("sole-owner@example.com")
-    _login("teammate@example.com")
+    owner, owner_id = _login_uuid("sole-owner@example.com")
+    _login_uuid("teammate@example.com")
     project_id = owner.post("/api/projects", json={"title": "Team"}).json()["id"]
     owner.post(f"/api/projects/{project_id}/members", json={"email": "teammate@example.com", "role": "co_author"})
 
@@ -99,8 +98,8 @@ def test_sole_owner_of_a_shared_project_must_hand_over_first():
 
 
 def test_erasure_allowed_once_another_owner_exists_and_membership_is_kept():
-    owner, owner_id = _login("first-owner@example.com")
-    _, second_id = _login("second-owner@example.com")
+    owner, owner_id = _login_uuid("first-owner@example.com")
+    _, second_id = _login_uuid("second-owner@example.com")
     project_id = owner.post("/api/projects", json={"title": "Team"}).json()["id"]
     owner.post(f"/api/projects/{project_id}/members", json={"email": "second-owner@example.com", "role": "owner"})
 
@@ -110,20 +109,20 @@ def test_erasure_allowed_once_another_owner_exists_and_membership_is_kept():
     members = db.scalars(select(ProjectMember.user_id).where(ProjectMember.project_id == uuid.UUID(project_id))).all()
     assert owner_id in members and second_id in members
     db.close()
-    second, _ = _login("second-owner@example.com")
+    second, _ = _login_uuid("second-owner@example.com")
     listed = second.get(f"/api/projects/{project_id}/members").json()
     assert any(m["email"].endswith("@erased.invalid") for m in listed)
 
 
 def test_erased_user_cannot_act_through_the_development_header():
-    client, user_id = _login("header@example.com")
+    client, user_id = _login_uuid("header@example.com")
     _erase(client, "header@example.com")
 
     assert TestClient(app).get("/api/projects", headers={"X-User-Id": str(user_id)}).status_code == 401
 
 
 def test_erasure_scrubs_private_unfiled_notes_but_leaves_filed_notes_alone():
-    client, user_id = _login("note-taker@example.com")
+    client, user_id = _login_uuid("note-taker@example.com")
     unfiled = client.post(
         "/api/notes", json={"client_id": "n1", "body": "my private thought", "quoted_text": "clipped text"}
     )

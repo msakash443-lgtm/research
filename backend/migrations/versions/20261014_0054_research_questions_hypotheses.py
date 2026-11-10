@@ -12,40 +12,23 @@ depends_on = None
 
 
 def _create_project_guard(table: str, left_table: str, left_column: str, right_table: str | None, right_column: str | None, message: str) -> None:
-    bind = op.get_bind()
-    if bind.dialect.name == "sqlite":
-        for event in ("INSERT", "UPDATE"):
-            right_check = "" if right_table is None else f"\n                  OR NOT EXISTS (SELECT 1 FROM {right_table} WHERE id = NEW.{right_column} AND project_id = NEW.project_id)"
-            op.execute(f"""
-                CREATE TRIGGER {table}_same_project_{event.lower()}
-                BEFORE {event} ON {table}
-                WHEN NOT EXISTS (SELECT 1 FROM {left_table} WHERE id = NEW.{left_column} AND project_id = NEW.project_id)
-                  {right_check}
-                BEGIN SELECT RAISE(ABORT, '{message}'); END
-            """)
-    elif bind.dialect.name == "postgresql":
-        right_check = "" if right_table is None else f"\n                   OR NOT EXISTS (SELECT 1 FROM {right_table} WHERE id = NEW.{right_column} AND project_id = NEW.project_id)"
-        op.execute(f"""
-            CREATE FUNCTION {table}_same_project_guard() RETURNS trigger AS $$
-            BEGIN
-                IF NOT EXISTS (SELECT 1 FROM {left_table} WHERE id = NEW.{left_column} AND project_id = NEW.project_id)
-                   {right_check} THEN
-                    RAISE EXCEPTION '{message}';
-                END IF;
-                RETURN NEW;
-            END; $$ LANGUAGE plpgsql
-        """)
-        op.execute(f"CREATE TRIGGER {table}_same_project BEFORE INSERT OR UPDATE ON {table} FOR EACH ROW EXECUTE FUNCTION {table}_same_project_guard()")
+    right_check = "" if right_table is None else f"\n                   OR NOT EXISTS (SELECT 1 FROM {right_table} WHERE id = NEW.{right_column} AND project_id = NEW.project_id)"
+    op.execute(f"""
+        CREATE FUNCTION {table}_same_project_guard() RETURNS trigger AS $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM {left_table} WHERE id = NEW.{left_column} AND project_id = NEW.project_id)
+               {right_check} THEN
+                RAISE EXCEPTION '{message}';
+            END IF;
+            RETURN NEW;
+        END; $$ LANGUAGE plpgsql
+    """)
+    op.execute(f"CREATE TRIGGER {table}_same_project BEFORE INSERT OR UPDATE ON {table} FOR EACH ROW EXECUTE FUNCTION {table}_same_project_guard()")
 
 
 def _drop_project_guard(table: str) -> None:
-    bind = op.get_bind()
-    if bind.dialect.name == "sqlite":
-        op.execute(f"DROP TRIGGER IF EXISTS {table}_same_project_update")
-        op.execute(f"DROP TRIGGER IF EXISTS {table}_same_project_insert")
-    elif bind.dialect.name == "postgresql":
-        op.execute(f"DROP TRIGGER IF EXISTS {table}_same_project ON {table}")
-        op.execute(f"DROP FUNCTION IF EXISTS {table}_same_project_guard()")
+    op.execute(f"DROP TRIGGER IF EXISTS {table}_same_project ON {table}")
+    op.execute(f"DROP FUNCTION IF EXISTS {table}_same_project_guard()")
 
 
 def upgrade() -> None:
