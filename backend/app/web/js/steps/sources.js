@@ -54,14 +54,19 @@ function verificationHint(ctx) {
 
 // Only verified sources may be cited in an answer (citation guard, plan M1.10.3), so every card
 // says whether its source is verified and offers the two ways to verify it (ported from M1.13.1).
-function verificationText(source) {
-  if ((source.quality_flags || []).includes("retracted")) return "RETRACTED — do not cite";
+export function verificationText(source) {
   const when = source.verified_at ? ` · ${formatDate(source.verified_at)}` : "";
-  let text = "Not verified: the agent can't cite this source";
-  if (source.metadata_verified && source.verification_method === "human") text = `Verified by a person${when}`;
-  else if (source.metadata_verified) text = `Verified by an automatic check${when}`;
-  if (source.verification?.verdict) text += ` · Last automatic check: ${label(source.verification.verdict)}`;
-  return text;
+  const human = source.metadata_verified && source.verification_method === "human";
+  const automatic = source.metadata_verified && source.verification_method === "automatic";
+  const verdict = source.verification?.verdict;
+  const parts = [];
+  if ((source.quality_flags || []).includes("retracted")) parts.push("RETRACTED — do not cite");
+  if (human) parts.push(`Metadata verified by a person${when}`);
+  else if (automatic) parts.push(`Metadata verified by an automatic check${when}; not reviewed by a person`);
+  else parts.push("Metadata not verified; the agent can't cite this source");
+  if (verdict) parts.push(`Last automatic check: ${label(verdict)}${verdict === "mismatch" ? " — metadata conflict requires review" : ""}`);
+  else parts.push("No automatic check recorded");
+  return parts.join(" · ");
 }
 
 function verificationActions(ctx, source) {
@@ -306,7 +311,7 @@ function sourceCard(ctx, source) {
   const card = el("article", { className: "source-card" });
   const meta = [label(source.source_type), source.year].filter(Boolean).join(" · ");
   const kind = el("span", { className: "context-kind", text: meta || "Source" });
-  if (source.is_automated) kind.append(el("span", { className: "unverified-tag", text: "· Auto-retrieved, unverified" }));
+  if (source.origin === "retrieved" || source.is_automated) kind.append(el("span", { className: "unverified-tag", text: "· Auto-retrieved" }));
   card.append(kind);
   if (source.url) {
     card.append(el("a", { className: "source-title", text: source.title, href: source.url, target: "_blank", rel: "noopener noreferrer" }));
@@ -682,7 +687,7 @@ function render(root, ctx) {
   const ownPaper = ownPaperSection(ctx);
   if (ownPaper) sections.push(ownPaper);
   const hint = verificationHint(ctx);
-  renderFrame(root, ctx, { stepId: "sources", work: sections, next: [], stepNext: "ask" });
+  renderFrame(root, ctx, { stepId: "sources", work: sections, next: [], stepNext: "ask", stepNextLabel: "Optional exploration: Ask" });
 }
 
 function update(root, ctx) {

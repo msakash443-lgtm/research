@@ -97,3 +97,17 @@ test("condition fixes render with the level, exact message and accessible destin
   assert.equal(conditionFixLink(ctx, { fix: "Redo list: open each stale item on its own screen" }), null);
 });
 
+test("Sources offers Ask as optional exploration instead of the required next step", async () => {
+  const sources = (await import("../steps/sources.js")).default;
+  const root = new Node("main");
+  sources.render(root, {
+    project: { id: "project-3" },
+    summary: { stage: { stage: "retrieved", next: [] }, sources: [], staleArtifacts: [] },
+    canWrite: false,
+  });
+  const footer = root.children.find((node) => node.className === "step-footer");
+  const next = footer.children.find((node) => node.className === "step-next").children[0];
+  assert.equal(next.children[0].textContent, "Optional exploration: Ask");
+  assert.equal(next.children[1].href, "#/p/project-3/ask");
+});
+
