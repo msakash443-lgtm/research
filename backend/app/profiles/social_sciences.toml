@@ -1,0 +1,18 @@
+# Discipline profile: Social sciences (chosen by the product owner, plan Q3, 2026-10-09). Projects can override any setting.
+name = "social_sciences"
+version = 1
+label = "Social sciences"
+description = "Sociology, political science and related fields: survey, qualitative and comparative methods."
+
+[settings]
+citation_style = "apa"
+databases = ["openalex", "crossref", "semantic_scholar", "scopus", "web_of_science", "jstor", "ssrn"]
+methods = [
+  "survey_study",
+  "ethnography",
+  "qualitative_interview_study",
+  "comparative_case_study",
+  "mixed_methods",
+  "panel_fixed_effects",
+]
+reporting_guideline = "PRISMA-2020"

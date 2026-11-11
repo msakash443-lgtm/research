@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import audit
+from app.ai_controls import require_ai_on
 from app.config import get_settings
 from app.database import get_db
 from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_access
@@ -33,6 +34,7 @@ def create_research_run(
     db: Session = Depends(get_db),
 ):
     settings = get_settings()
+    require_ai_on(project)
     if payload.use_web_retrieval and not settings.arc_retrieval_enabled:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -47,6 +49,17 @@ def create_research_run(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="This project has reached its daily research-run limit. Try again later or raise the configured limit.",
         )
+    if payload.use_web_retrieval:
+        retrieval_count = db.scalar(
+            select(func.count(ResearchRun.id)).where(
+                ResearchRun.project_id == project.id, ResearchRun.created_at >= since, ResearchRun.use_web_retrieval.is_(True)
+            )
+        ) or 0
+        if retrieval_count >= settings.research_run_retrieval_limit_per_day:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="This project has reached its daily limit for runs with web retrieval. Run without web retrieval, try again later, or raise the configured limit.",
+            )
 
     run = ResearchRun(
         project_id=project.id,

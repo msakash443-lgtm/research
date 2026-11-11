@@ -20,8 +20,12 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from urllib.parse import quote
+
+from pydantic import SecretStr
 
 from app.connectors.base import (
+    language_code,
     ConnectorBase,
     ConnectorError,
     FullText,
@@ -29,8 +33,12 @@ from app.connectors.base import (
     PaperRecord,
     SearchPage,
     SearchRequest,
+    citation_count,
+    clean_link,
+    clean_text,
 )
 from app.connectors.http import ConnectorHttpClient, HttpPolicy, NotFoundError
+from app.connectors.unpaywall import OaLocation
 from app.doi import normalize_doi
 
 BASE_URL = "https://api.openalex.org"
@@ -74,22 +82,13 @@ def _short_id(url: Any) -> str | None:
     return None
 
 
-def _str(value: Any, limit: int) -> str | None:
-    return value.strip()[:limit] if isinstance(value, str) and value.strip() else None
-
-
-def _http(value: Any) -> str | None:
-    text = _str(value, 2000)
-    return text if text and text.lower().startswith(("http://", "https://")) else None
-
-
 def to_record(work: dict[str, Any]) -> PaperRecord | None:
     """Normalise one OpenAlex work; None when it cannot be represented (no usable id/title)."""
     try:
         external_id = work_id(str(work.get("id", "")))
     except ConnectorError:
         return None
-    title = _str(work.get("display_name") or work.get("title"), 500)
+    title = clean_text(work.get("display_name") or work.get("title"), 500)
     if not title:
         return None
 
@@ -104,15 +103,15 @@ def to_record(work: dict[str, Any]) -> PaperRecord | None:
     authors = tuple(
         name
         for a in (work.get("authorships") or [])[:MAX_AUTHORS]
-        if isinstance(a, dict) and (name := _str((a.get("author") or {}).get("display_name"), 200))
+        if isinstance(a, dict) and (name := clean_text((a.get("author") or {}).get("display_name"), 200))
     )
     year = work.get("publication_year")
     year = year if isinstance(year, int) and 1000 <= year <= 2200 else None
     primary = work.get("primary_location") or {}
-    venue = _str((primary.get("source") or {}).get("display_name"), 500)
+    venue = clean_text((primary.get("source") or {}).get("display_name"), 500)
     abstract = _abstract(work.get("abstract_inverted_index"))
     oa = work.get("open_access") or {}
-    oa_url = _http(oa.get("oa_url")) or _http((work.get("best_oa_location") or {}).get("landing_page_url"))
+    oa_url = clean_link(oa.get("oa_url")) or clean_link((work.get("best_oa_location") or {}).get("landing_page_url"))
 
     source_ids = {NAME: external_id}
     ids = work.get("ids") or {}
@@ -137,10 +136,31 @@ def to_record(work: dict[str, Any]) -> PaperRecord | None:
         year=year,
         venue=venue,
         abstract=abstract,
-        url=_http(primary.get("landing_page_url")),
+        url=clean_link(primary.get("landing_page_url")),
         oa_url=oa_url,
         source_ids=source_ids,
         quality_flags=tuple(flags),
+        cited_by_count=citation_count(work.get("cited_by_count")),
+        language=language_code(work.get("language")),
+    )
+
+
+def to_oa_location(work: dict[str, Any], doi: str) -> OaLocation | None:
+    """The best open-access copy OpenAlex reports for a work (`best_oa_location`); None when it has none."""
+    best = work.get("best_oa_location")
+    if not isinstance(best, dict):
+        return None
+    landing, pdf = clean_link(best.get("landing_page_url")), clean_link(best.get("pdf_url"))
+    if not (landing or pdf):
+        return None
+    source = best.get("source")
+    return OaLocation(
+        doi=doi,
+        landing_page_url=landing,
+        pdf_url=pdf,
+        license=clean_text(best.get("license"), 100),
+        version=clean_text(best.get("version"), 50),
+        host_type=clean_text(source.get("host_type"), 50) if isinstance(source, dict) else None,
     )
 
 
@@ -151,14 +171,17 @@ class OpenAlexConnector(ConnectorBase):
         self,
         http: ConnectorHttpClient | None = None,
         contact_email: str | None = None,
+        api_key: SecretStr | None = None,
         max_related: int = 200,
     ):
         if max_related < 1:
             raise ValueError("max_related must be at least 1")
         self._http = http or ConnectorHttpClient(NAME, BASE_URL, HttpPolicy(min_interval_seconds=0.15))
         self._mailto = contact_email.strip() if contact_email and contact_email.strip() else None
+        self._api_key = api_key.get_secret_value().strip() if api_key else None
         self.max_related = max_related
         self.skipped_records = 0
+        self.last_search_capped = False
         self.last_related_truncated = False
 
     # --- helpers -------------------------------------------------------------
@@ -166,6 +189,8 @@ class OpenAlexConnector(ConnectorBase):
     def _params(self, **params: Any) -> dict[str, Any]:
         if self._mailto:
             params["mailto"] = self._mailto  # OpenAlex "polite pool"
+        if self._api_key:
+            params["api_key"] = self._api_key
         return params
 
     def _records(self, results: Any) -> list[PaperRecord]:
@@ -210,6 +235,10 @@ class OpenAlexConnector(ConnectorBase):
     # --- Connector protocol ----------------------------------------------------
 
     def search(self, request: SearchRequest) -> SearchPage:
+        if request.cursor and not self._api_key:
+            raise ConnectorError("OpenAlex cursor pagination requires OPENALEX_API_KEY")
+        if request.cursor is None:
+            self.last_search_capped = False
         params = self._params(search=request.query, **{"per-page": request.limit, "cursor": request.cursor or "*"})
         filter_ = self._filter(request.filters)
         if filter_:
@@ -220,6 +249,9 @@ class OpenAlexConnector(ConnectorBase):
         meta = data.get("meta") or {}
         total = meta.get("count")
         cursor = meta.get("next_cursor")
+        if cursor and not self._api_key:
+            self.last_search_capped = True
+            cursor = None
         return SearchPage(
             records=tuple(self._records(data.get("results"))),
             total=total if isinstance(total, int) and total >= 0 else None,
@@ -238,6 +270,39 @@ class OpenAlexConnector(ConnectorBase):
         if record is None:
             raise ConnectorError("OpenAlex returned a work that cannot be represented (no title)")
         return record
+
+    def _work_by_doi(self, doi: str) -> dict[str, Any] | None:
+        try:
+            bare = normalize_doi(doi)
+        except ValueError:
+            bare = None
+        if not bare:
+            raise ConnectorError("Not a valid DOI")
+        try:
+            work = self._http.get_json(f"/works/doi:{quote(bare, safe='/()-._:;')}", self._params())
+        except NotFoundError:
+            return None
+        if not isinstance(work, dict):
+            raise ConnectorError("OpenAlex returned an unexpected reply")
+        return work
+
+    def get_by_doi(self, doi: str) -> PaperRecord | None:
+        """The work with this DOI (`/works/doi:...`), or None when OpenAlex has none. Used to find a start
+        paper for snowballing (M1.9) when only its DOI is known."""
+        work = self._work_by_doi(doi)
+        if work is None:
+            return None
+        record = to_record(work)
+        if record is None:
+            raise ConnectorError("OpenAlex returned a work that cannot be represented (no title)")
+        return record
+
+    def get_oa_location(self, doi: str) -> OaLocation | None:
+        """The best open-access copy OpenAlex reports for this DOI; None when it has none or no record."""
+        work = self._work_by_doi(doi)
+        if work is None:
+            return None
+        return to_oa_location(work, normalize_doi(doi) or "")
 
     def get_citations(self, external_id: str) -> tuple[PaperRecord, ...]:
         """Works that cite this one (`filter=cites:W...`), newest page first as OpenAlex orders them."""

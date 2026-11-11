@@ -1,21 +1,34 @@
-import { $, el, toast, saveOnce, label } from "./js/dom.js";
+import { $, $$, el, emptyCard, toast, saveOnce, label, formatDate } from "./js/dom.js";
 import { errorCard } from "./js/steps/common.js";
 import { request, projectApi } from "./js/api.js";
-import { STAGES, STEPS, GROUPS, GUIDES, STEP_IDS, stepStatus } from "./js/workflow.js";
+import { STAGES, STEPS, GROUPS, GUIDES, STEP_IDS, SCREEN_STAGE, screenInChain, stepStatus, setStageChain, stageLabel, stagesWithoutScreen } from "./js/workflow.js";
 import { renderMemory } from "./js/memory.js";
+import { aiLevel } from "./js/aiLevels.js";
+import { renderInbox, refreshInboxAfterSync } from "./js/inbox.js";
+import { parseInboxRoute } from "./js/inboxLogic.js";
+import { readMemoryCollapsed, writeMemoryCollapsed } from "./js/memoryPanelLogic.js";
+import { enqueueCapture, flushOutbox, pendingCount, registerOfflineSync } from "./js/offlineOutbox.js";
+import { renderPrivacy } from "./js/privacy.js";
+import { parsePrivacyRoute } from "./js/privacyLogic.js";
 
 import overview from "./js/steps/overview.js";
+import guide from "./js/steps/guide.js";
 import scope from "./js/steps/scope.js";
 import criteria from "./js/steps/criteria.js";
 import search from "./js/steps/search.js";
 import results from "./js/steps/results.js";
 import sources from "./js/steps/sources.js";
+import screen from "./js/steps/screen.js";
+import evidence from "./js/steps/evidence.js";
+import verification from "./js/steps/verification.js";
+import gaps from "./js/steps/gaps.js";
 import ask from "./js/steps/ask.js";
+import write from "./js/steps/write.js";
 import approvals from "./js/steps/approvals.js";
 import team from "./js/steps/team.js";
 import activity from "./js/steps/activity.js";
 
-const STEP_MODULES = { overview, scope, criteria, search, results, sources, ask, approvals, team, activity };
+const STEP_MODULES = { overview, guide, scope, criteria, search, results, sources, screen, evidence, verification, gaps, ask, write, approvals, team, activity };
 
 const state = {
   user: null,
@@ -24,9 +37,27 @@ const state = {
   role: null,
   currentStep: "overview",
   summary: {},
-  cache: { profiles: null, connectors: null },
+  cache: { profiles: null, connectors: null, guide: null },
   pollTimer: null,
 };
+
+async function sendOutbox(path, payload, method = "POST") {
+  return request(path, { method, body: JSON.stringify(payload) });
+}
+
+async function syncOfflineCaptures() {
+  const chooseConflict = () => {
+    const answer = window.prompt("Offline capture conflict. Choose mine, theirs, or both.", "mine");
+    return ["mine", "theirs", "both"].includes(answer) ? answer : "mine";
+  };
+  const result = await flushOutbox(sendOutbox, chooseConflict);
+  if (result.sent) toast(`Synced ${result.sent} offline capture${result.sent === 1 ? "" : "s"}.`);
+  // A sent or conflict-resolved edit changes the note the Inbox shows; the Inbox decides whether it can redraw (X.94).
+  await refreshInboxAfterSync(result);
+  return result;
+}
+
+registerOfflineSync(syncOfflineCaptures);
 
 function buildCtx() {
   const role = state.role;
@@ -113,6 +144,7 @@ function renderShell() {
   $("#memory-toggle").hidden = !state.activeProject;
   if (!state.activeProject) {
     $("#role-chip").hidden = true;
+    $("#ai-chip").hidden = true;
     return;
   }
   $("#crumb").textContent = state.activeProject.title;
@@ -123,35 +155,43 @@ function renderShell() {
       ? "You can view everything; supervisors approve gates. Editing is for owners and co-authors."
       : "";
   }
+  const level = aiLevel(state.activeProject.ai_involvement);
+  $("#ai-chip").hidden = false;
+  $("#ai-chip").textContent = level.label;
+  $("#ai-chip").title = level.help;
   const stageName = state.summary.stage?.stage;
   const idx = STAGES.findIndex(([name]) => name === stageName);
   $("#progress-block").hidden = false;
-  $("#stage-progress-label").textContent = `Stage ${idx + 1} of ${STAGES.length} · ${label(stageName || "")}`;
+  $("#stage-progress-label").textContent = `Stage ${idx + 1} of ${STAGES.length} · ${idx >= 0 ? stageLabel(STAGES[idx]) : label(stageName || "")}`;
   $("#stage-progress").value = idx >= 0 ? idx : 0;
 
+  const chain = state.summary.stage?.chain;
+  const navSteps = STEPS.filter((step) => step.id !== "gaps" || screenInChain(step.id, chain));
   const rail = $("#step-rail");
-  rail.replaceChildren(stepLink(STEPS.find((s) => s.id === "overview")));
+  rail.replaceChildren(...navSteps.filter((step) => !step.group).map(stepLink));
   GROUPS.forEach((group) => {
     rail.append(el("p", { className: "step-group-label", text: group.toUpperCase() }));
-    STEPS.filter((s) => s.group === group).forEach((step) => rail.append(stepLink(step)));
+    navSteps.filter((step) => step.group === group).forEach((step) => rail.append(stepLink(step)));
   });
 
   const laterList = $("#later-stages-list");
   laterList.replaceChildren();
-  const fromIndex = STAGES.findIndex(([name]) => name === "retrieved");
-  STAGES.slice(fromIndex).forEach(([name, gate]) => {
-    laterList.append(el("li", { text: gate ? `${label(name)} (${gate})` : label(name) }));
+  stagesWithoutScreen().forEach((entry) => {
+    const [, gate] = entry;
+    laterList.append(el("li", { text: gate ? `${stageLabel(entry)} (${gate})` : stageLabel(entry) }));
   });
   $("#later-stages").hidden = false;
 }
 
 const STEP_DEPENDENCIES = {
   overview: ["stage", "gates"],
+  guide: ["stage"],
   scope: ["context", "gates", "stage"],
   criteria: ["criteria", "seeds"],
   search: ["searches", "gates", "stage"],
   results: ["prisma", "knownItems", "seeds"],
   sources: ["sources"],
+  gaps: ["stage", "gates"],
   ask: ["runs"],
   approvals: ["stage", "gates", "staleArtifacts"],
   team: ["members"],
@@ -160,6 +200,10 @@ const STEP_DEPENDENCIES = {
 
 async function renderStep(stepId) {
   const step = STEPS.find((s) => s.id === stepId) || STEPS[0];
+  const screenStages = SCREEN_STAGE[step.id];
+  const stageNames = Array.isArray(screenStages) ? screenStages : [screenStages];
+  const chain = state.summary.stage?.chain || [];
+  const requiredStages = stageNames.map((name) => chain.find((item) => item.stage === name)?.label || label(name)).join(" or ");
   $("#step-group").textContent = step.group || "Project";
   $("#step-title").textContent = step.title;
   $("#step-purpose").textContent = GUIDES[stepId]?.what || "";
@@ -167,6 +211,8 @@ async function renderStep(stepId) {
   const failedKey = (STEP_DEPENDENCIES[stepId] || []).find((key) => state.summary.errors?.[key]);
   if (failedKey) {
     body.replaceChildren(errorCard(state.summary.errors[failedKey], refresh));
+  } else if (!screenInChain(step.id, state.summary.stage?.chain)) {
+    body.replaceChildren(emptyCard("Not part of this research type", `This project's research type has no "${requiredStages}" stage, so this screen has no work for it.`));
   } else {
     await STEP_MODULES[stepId].render(body, buildCtx());
   }
@@ -196,6 +242,7 @@ async function loadSummary() {
     }
   });
   state.summary = summary;
+  if (summary.stage?.chain) setStageChain(summary.stage.chain);
 }
 
 async function refresh() {
@@ -242,9 +289,64 @@ async function pollTick() {
 async function setStep(stepId, updateHash) {
   state.currentStep = STEP_IDS.has(stepId) ? stepId : "overview";
   if (updateHash) window.location.hash = `#/p/${state.activeProject.id}/${state.currentStep}`;
+  $("#inbox-view").hidden = true;
+  $("#privacy-view").hidden = true;
   renderShell();
   await renderStep(state.currentStep);
   setDrawer(null);
+}
+
+// `#/inbox`, `#/inbox/{filed|archived|decisions}` and `#/inbox/decisions/{projectId}` (X.31.2.1, X.31.2.4).
+// Not tied to a project, so the project rail is cleared.
+function parseInboxHash() {
+  return parseInboxRoute(window.location.hash);
+}
+
+async function showInbox(tab, projectId = null) {
+  window.clearTimeout(state.pollTimer);
+  state.activeProject = null;
+  state.role = null;
+  state.summary = {};
+  $("#empty-state").hidden = true;
+  $("#step-content").hidden = true;
+  $("#inbox-view").hidden = false;
+  $("#privacy-view").hidden = true;
+  $("#progress-block").hidden = true;
+  $("#step-rail").replaceChildren();
+  $("#later-stages").hidden = true;
+  $("#memory-sidebar").hidden = true;
+  $("#crumb").textContent = "Inbox";
+  $("#role-chip").hidden = true;
+  $("#ai-chip").hidden = true;
+  $("#idea-button").hidden = true;
+  $("#memory-toggle").hidden = true;
+  renderProjectList();
+  setDrawer(null);
+  await renderInbox($("#inbox-view"), tab, state.user.id, projectId);
+}
+
+// `#/privacy`: the account privacy screen (X.85). Like the Inbox it is not tied to a project, so the project rail is cleared.
+async function showPrivacy() {
+  window.clearTimeout(state.pollTimer);
+  state.activeProject = null;
+  state.role = null;
+  state.summary = {};
+  $("#empty-state").hidden = true;
+  $("#step-content").hidden = true;
+  $("#inbox-view").hidden = true;
+  $("#privacy-view").hidden = false;
+  $("#progress-block").hidden = true;
+  $("#step-rail").replaceChildren();
+  $("#later-stages").hidden = true;
+  $("#memory-sidebar").hidden = true;
+  $("#crumb").textContent = "Privacy";
+  $("#role-chip").hidden = true;
+  $("#ai-chip").hidden = true;
+  $("#idea-button").hidden = true;
+  $("#memory-toggle").hidden = true;
+  renderProjectList();
+  setDrawer(null);
+  renderPrivacy($("#privacy-view"), { user: state.user, confirmNoPendingCaptures, onAccountEnded: endSession });
 }
 
 function showEmpty() {
@@ -252,6 +354,8 @@ function showEmpty() {
   state.role = null;
   state.summary = {};
   window.clearTimeout(state.pollTimer);
+  $("#inbox-view").hidden = true;
+  $("#privacy-view").hidden = true;
   $("#empty-state").hidden = false;
   $("#step-content").hidden = true;
   $("#progress-block").hidden = true;
@@ -260,6 +364,7 @@ function showEmpty() {
   $("#memory-sidebar").hidden = true;
   $("#crumb").textContent = "";
   $("#role-chip").hidden = true;
+  $("#ai-chip").hidden = true;
   $("#idea-button").hidden = true;
   $("#memory-toggle").hidden = true;
   renderProjectList();
@@ -288,6 +393,15 @@ async function selectProject(id, stepId = "overview") {
 async function loadProjects() {
   state.projects = await request("/api/projects");
   renderProjectList();
+  const inbox = parseInboxHash();
+  if (inbox) {
+    await showInbox(inbox.tab, inbox.projectId);
+    return;
+  }
+  if (parsePrivacyRoute(window.location.hash)) {
+    await showPrivacy();
+    return;
+  }
   const parsed = parseHash();
   if (parsed && state.projects.some((p) => p.id === parsed.projectId)) {
     await selectProject(parsed.projectId, parsed.stepId);
@@ -299,6 +413,15 @@ async function loadProjects() {
 }
 
 window.addEventListener("hashchange", () => {
+  if (parsePrivacyRoute(window.location.hash) && state.user) {
+    showPrivacy();
+    return;
+  }
+  const inbox = parseInboxHash();
+  if (inbox && state.user) {
+    showInbox(inbox.tab, inbox.projectId);
+    return;
+  }
   const parsed = parseHash();
   if (!parsed || !state.user) return;
   if (!state.activeProject || state.activeProject.id !== parsed.projectId) {
@@ -308,13 +431,13 @@ window.addEventListener("hashchange", () => {
   if (parsed.stepId !== state.currentStep) setStep(parsed.stepId, false);
 });
 
-if (localStorage.getItem("ra.memoryCollapsed") === "1") document.body.classList.add("memory-collapsed");
+if (readMemoryCollapsed()) document.body.classList.add("memory-collapsed");
 
 $("#nav-toggle").addEventListener("click", () => setDrawer(document.body.classList.contains("nav-open") ? null : "nav"));
 $("#memory-toggle").addEventListener("click", () => {
   if (window.matchMedia("(min-width: 1280px)").matches) {
     document.body.classList.toggle("memory-collapsed");
-    localStorage.setItem("ra.memoryCollapsed", document.body.classList.contains("memory-collapsed") ? "1" : "0");
+    writeMemoryCollapsed(document.body.classList.contains("memory-collapsed"));
   } else {
     setDrawer(document.body.classList.contains("memory-open") ? null : "memory");
   }
@@ -343,6 +466,25 @@ $("#guide-popover").addEventListener("beforetoggle", (event) => {
   $("#guide-why").textContent = guide.why || "";
   $("#guide-approval").textContent = guide.approval || "";
 });
+
+function prepareDialogsForAssistiveTech() {
+  document.querySelectorAll("dialog").forEach((dialog, index) => {
+    if (!dialog.getAttribute("aria-labelledby")) {
+      const heading = dialog.querySelector("h2, h3");
+      if (heading) {
+        if (!heading.id) heading.id = `dialog-title-${index}`;
+        dialog.setAttribute("aria-labelledby", heading.id);
+      }
+    }
+    dialog.querySelectorAll(".close").forEach((button) => {
+      if (!button.getAttribute("aria-label")) {
+        button.setAttribute("aria-label", "Close dialog");
+      }
+    });
+  });
+}
+
+prepareDialogsForAssistiveTech();
 
 $("#new-project").addEventListener("click", () => {
   setDrawer(null);
@@ -425,6 +567,124 @@ $("#idea-form").addEventListener("submit", (event) => {
   });
 });
 
+// Quick capture (X.31.1): always available once signed in, no project required. The capture
+// dialog assigns one client-generated id per open, so retrying a failed Save after a network
+// blip can't create a second note.
+function openCaptureDialog() {
+  const form = $("#capture-form");
+  form.reset();
+  form.elements.kind.value = "typed";
+  form.dataset.clientId = crypto.randomUUID();
+  $$(".tab-button[data-capture-kind]", form).forEach((button) => button.classList.toggle("active", button.dataset.captureKind === "typed"));
+  $("#capture-link-field").hidden = true;
+  $("#capture-quote-field").hidden = true;
+  $("#capture-dialog").showModal();
+  form.elements.body.focus();
+}
+
+$("#capture-button").addEventListener("click", openCaptureDialog);
+
+document.querySelectorAll("#capture-form .tab-button[data-capture-kind]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const form = $("#capture-form");
+    const kind = button.dataset.captureKind;
+    form.elements.kind.value = kind;
+    $$(".tab-button[data-capture-kind]", form).forEach((other) => {
+      const active = other === button;
+      other.classList.toggle("active", active);
+      other.setAttribute("aria-pressed", String(active));
+    });
+    $("#capture-link-field").hidden = kind !== "clip";
+    $("#capture-quote-field").hidden = kind !== "clip";
+  });
+});
+
+$("#capture-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  saveOnce(form, async () => {
+    const data = Object.fromEntries(new FormData(form));
+    data.ai_locked = form.elements.ai_locked.checked;
+    data.client_id = form.dataset.clientId;
+    data.captured_at = new Date().toISOString();
+    // The link/quote inputs are only hidden on the Note tab, so drop anything left in them from the Web link tab.
+    if (data.kind !== "clip") {
+      delete data.source_url;
+      delete data.quoted_text;
+    }
+    if (!data.body) delete data.body;
+    if (!data.source_url) delete data.source_url;
+    if (!data.quoted_text) delete data.quoted_text;
+    try {
+      await request("/api/notes", { method: "POST", body: JSON.stringify(data) });
+      $("#capture-dialog").close();
+      form.reset();
+      toast("Saved to your Inbox.");
+    } catch (error) {
+      if (!error.status) {
+        const queued = await enqueueCapture(data);
+        toast(queued ? "No connection. Capture queued on this device." : error.message);
+      } else {
+        toast(error.message);
+      }
+    }
+  });
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.altKey && event.shiftKey && event.code === "KeyN" && state.user && !document.querySelector("dialog[open]")) {
+    event.preventDefault();
+    openCaptureDialog();
+  }
+});
+
+function noteRow(note) {
+  const badge = el("span", { className: "note-kind-badge", text: note.kind === "clip" ? "Web link" : "Note" });
+  const statusBadge = el("span", { className: "note-status-badge", text: note.status });
+  const text = note.kind === "clip" ? note.quoted_text || note.source_url || "" : note.body;
+  const archiveButton = el("button", { className: "quiet-button small", type: "button", text: "Archive" });
+  archiveButton.hidden = note.status === "archived";
+  archiveButton.addEventListener("click", async () => {
+    try {
+      await request(`/api/notes/${note.id}/archive`, { method: "POST" });
+      await renderNotesList();
+    } catch (error) {
+      toast(error.message);
+    }
+  });
+  const meta = el("p", { className: "muted small", text: `${note.kind === "clip" ? "clipped" : "typed"} · ${formatDate(note.captured_at)}` });
+  const row = el("div", { className: "note-row" });
+  row.append(
+    el("div", { className: "note-row-head", children: [badge, statusBadge] }),
+    el("p", { className: "note-row-body", text: text || "(no text)" }),
+    note.source_url ? el("a", { href: note.source_url, target: "_blank", rel: "noopener", text: note.source_url }) : el("span"),
+    meta,
+    archiveButton
+  );
+  return row;
+}
+
+async function renderNotesList() {
+  const list = $("#notes-list");
+  list.replaceChildren();
+  try {
+    const notes = await request("/api/notes");
+    if (notes.length === 0) {
+      list.append(el("p", { className: "muted", text: "No notes yet. Press Capture (or Alt+Shift+N) to save one." }));
+      return;
+    }
+    list.append(...notes.map(noteRow));
+  } catch (error) {
+    list.append(errorCard(error.message));
+  }
+}
+
+$("#notes-button").addEventListener("click", () => {
+  $("#notes-dialog").showModal();
+  renderNotesList();
+});
+
+
 $("#reject-form").addEventListener("submit", (event) => {
   event.preventDefault();
   const form = event.currentTarget;
@@ -437,6 +697,25 @@ $("#reject-form").addEventListener("submit", (event) => {
       form.reset();
       dialog.close();
       toast(`${code} rejected.`);
+      await refresh();
+    } catch (error) {
+      toast(error.message);
+    }
+  });
+});
+
+$("#reopen-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const dialog = $("#reopen-dialog");
+  const code = dialog.dataset.gateCode;
+  saveOnce(form, async () => {
+    const reason = form.elements.reason.value.trim();
+    try {
+      await request(projectApi(state.activeProject.id, `/gates/${code}/reopen`), { method: "POST", body: JSON.stringify({ reason }) });
+      form.reset();
+      dialog.close();
+      toast(`${code} reopened.`);
       await refresh();
     } catch (error) {
       toast(error.message);
@@ -482,13 +761,30 @@ $("#development-login").addEventListener("submit", async (event) => {
 });
 
 $("#logout").addEventListener("click", async () => {
+  if (!(await confirmNoPendingCaptures("Sign out"))) return;
   await request("/api/auth/logout", { method: "POST" });
+  await endSession();
+});
+
+// Offline captures are synced first; if some remain on this device the user decides before the account changes (X.85 reuses this).
+async function confirmNoPendingCaptures(action) {
+  const pending = await pendingCount();
+  if (!pending) return true;
+  await syncOfflineCaptures();
+  const remaining = await pendingCount();
+  if (!remaining) return true;
+  return window.confirm(`${remaining} offline capture${remaining === 1 ? "" : "s"} remain on this device. ${action} anyway?`);
+}
+
+// Back to the sign-in screen. The message, if any, is shown after the account change (sign out, erasure) (X.85).
+async function endSession(message) {
   state.user = null;
   showEmpty();
   setDrawer(null);
   $("#account").hidden = true;
   $("#nav-toggle").hidden = true;
+  if (message) toast(message);
   authenticate();
-});
+}
 
 authenticate().catch((error) => toast(error.message));

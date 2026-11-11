@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Evidence Table Wireframe</title>
+<link rel="stylesheet" href="wireframe.css">
+<style>
+  .toolbar { display:flex; flex-wrap:wrap; gap:10px; align-items:center; padding:10px 20px; border-bottom:1px solid var(--line); background:#fff; font-size:14px; }
+  .toolbar label { display:flex; gap:6px; align-items:center; }
+  .work { display:grid; grid-template-columns:minmax(0,1fr); gap:14px; padding:14px 20px; }
+  .work.open { grid-template-columns:minmax(0,1fr) minmax(380px,46%); }
+  .tablewrap { overflow:auto; max-height:calc(100vh - 260px); border:1px solid var(--line); border-radius:10px; background:#fff; }
+  table { border-collapse:separate; border-spacing:0; font-size:13px; min-width:100%; }
+  th, td { border-bottom:1px solid var(--line); border-right:1px solid var(--line); padding:8px 10px; vertical-align:top; text-align:left; }
+  thead th { position:sticky; top:0; background:#f6f8f9; z-index:2; white-space:nowrap; color:var(--navy); }
+  tbody th { position:sticky; left:0; background:#fff; z-index:1; width:220px; min-width:200px; font-weight:650; color:var(--navy); }
+  thead th:first-child { left:0; z-index:3; }
+  td { min-width:170px; max-width:240px; cursor:pointer; }
+  td:hover { background:#f6f8f9; }
+  td[aria-selected="true"] { outline:2px solid var(--navy); outline-offset:-2px; background:#eef3f9; }
+  td:focus-visible { outline:2px solid var(--teal); outline-offset:-2px; }
+  .val { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+  .st { margin-top:5px; }
+  .crit { color:var(--pin); }
+  .legend { display:flex; flex-wrap:wrap; gap:8px; align-items:center; font-size:13px; }
+  .pane { display:grid; grid-template-rows:auto 1fr; max-height:calc(100vh - 260px); }
+  .split { display:grid; grid-template-columns:1fr; gap:12px; overflow:auto; }
+  .page { font-family:Georgia, "Times New Roman", serif; font-size:14.5px; line-height:1.65; background:#fbfaf6; border:1px solid var(--line); border-radius:8px; padding:14px 16px; }
+  .page .pghead { font-family:system-ui, sans-serif; font-size:12px; color:var(--muted); display:flex; justify-content:space-between; margin-bottom:6px; }
+  @media (max-width:980px) { .work.open { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<div class="wf-banner">
+  <span><strong>WIREFRAME</strong> · Evidence table (before M3.5) · invented example data · nothing is saved</span>
+  <span class="row">
+    <label>View as <select id="role"><option value="owner">Owner (Priya)</option><option value="supervisor">Supervisor (Dr. Nair)</option></select></label>
+    <label><input type="checkbox" id="pin-toggle" checked> Show walkthrough questions</label>
+    <a href="index.html">All wireframes</a>
+  </span>
+</div>
+
+<header class="topbar">
+  <div class="row">
+    <a class="brand" href="index.html">Research<span>AI</span></a>
+    <span class="crumbs"><a href="#" onclick="wfToast('Would go to the project overview.');return false;">Remote work &amp; gender wage gap</a> › Extraction › <strong>Evidence table</strong></span>
+  </div>
+  <span class="role-chip" id="role-chip">owner</span>
+</header>
+
+<div class="gatebar">
+  <div><strong>G4 · Critical fields verified</strong><span class="pin" title="Q1">Q1</span> <span class="muted" id="gate-status"></span></div>
+  <button id="gate-btn" disabled>Ask for G4 approval</button>
+</div>
+
+<div class="toolbar">
+  <span class="muted">Schema: default v1 (spec Appendix B) · 4 included papers</span>
+  <label><input type="checkbox" id="f-critical"> Critical fields only <span class="crit">★</span></label>
+  <label><input type="checkbox" id="f-check"> Needs checking only</label>
+  <span class="spacer"></span>
+  <button class="quiet" id="export-csv">Export CSV</button>
+  <button class="quiet" id="export-xlsx">Export Excel</button><span class="pin" title="Q6">Q6</span>
+</div>
+
+<div class="toolbar legend" aria-label="Legend">
+  <strong>Cell states</strong><span class="pin" title="Q4">Q4</span>
+  <span class="chip ok">✓ Checked by a person</span>
+  <span class="chip plain">Quote found in the text, not checked yet</span>
+  <span class="chip warn">Not reported (AI found no evidence)</span>
+  <span class="chip bad">Rejected: quote not in the paper</span>
+</div>
+
+<div class="work" id="work">
+  <div class="tablewrap" id="tablewrap"><table id="matrix" aria-label="Evidence table: papers by fields"></table></div>
+  <section class="panel pane" id="pane" hidden aria-label="Cell and its source">
+    <div class="panel-head"><span id="pane-title"></span><span class="row"><span class="pin" title="Q3">Q3</span><button class="quiet" id="pane-close">← Back to table <kbd>Esc</kbd></button></span></div>
+    <div class="panel-body split" id="pane-body"></div>
+  </section>
+</div>
+
+<section class="questions" aria-label="Walkthrough questions">
+  <h2>Questions for the walkthrough (orange pins on the screen)</h2>
+  <ol>
+    <li><span class="pin">Q1</span> <span><strong>Where do I approve?</strong> G4 opens only when every critical (★) cell is checked by a person. Is the bar at the top where you'd look? Should a supervisor also be able to check cells, or only approve?</span></li>
+    <li><span class="pin">Q2</span> <span><strong>Where do I see the source?</strong> Click any cell: the quote is shown highlighted on its page next to the value. Is that enough, or do you need the real PDF page image?</span></li>
+    <li><span class="pin">Q3</span> <span><strong>How do I go back?</strong> "Back to table", <kbd>Esc</kbd> and the browser Back button all return to the table with your place kept.</span></li>
+    <li><span class="pin">Q4</span> <span>Are the four cell states clear? Is "Not reported" different enough from "Rejected"?</span></li>
+    <li><span class="pin">Q5</span> <span>Rows = papers, columns = fields. Would you rather have it the other way round, or switch?</span></li>
+    <li><span class="pin">Q6</span> <span>Exports: one column per field plus a status column each? Should quotes and page numbers go into the export too?</span></li>
+    <li><span class="pin">Q7</span> <span>"Correct" makes you pick the supporting quote from the text; a value with no quote can't be saved. Is that too strict for fields like "limitations"?</span></li>
+  </ol>
+</section>
+
+<dialog id="correct-dialog" aria-labelledby="correct-title">
+  <div class="panel-head" id="correct-title">Correct this value <span class="pin" title="Q7">Q7</span></div>
+  <div class="panel-body">
+    <label class="small">New value<textarea id="c-value" rows="3" style="width:100%;padding:8px;border:1px solid #cdd5dc;border-radius:6px"></textarea></label>
+    <label class="small">Supporting quote (must appear word for word in the paper)<textarea id="c-quote" rows="3" style="width:100%;padding:8px;border:1px solid #cdd5dc;border-radius:6px"></textarea></label>
+    <p class="small muted" style="margin:0">Tip: select text in the page on the right and it fills in here.</p>
+    <p class="small" id="c-error" style="color:var(--bad);margin:0" hidden></p>
+    <div class="row"><span class="spacer"></span><button class="quiet" id="c-cancel">Cancel</button><button id="c-save">Save as checked</button></div>
+  </div>
+</dialog>
+
+<script src="wireframe.js"></script>
+<script>
+const FIELDS = [
+  { key:"research_question", label:"Research question" }, { key:"theory_used", label:"Theory" }, { key:"measures", label:"Measures", critical:true },
+  { key:"sample", label:"Sample", critical:true }, { key:"method", label:"Method" }, { key:"key_findings", label:"Key findings", critical:true },
+  { key:"limitations", label:"Limitations" }, { key:"future_research", label:"Future research" },
+];
+const PAPERS = [
+  { id:"p1", cite:"Menon & Thomas (2022)", title:"Working from home and the gender pay gap (example)",
+    text:{ 3:"We ask whether the post-2020 shift to remote work changed the gender gap in hourly earnings among IT employees. Drawing on human-capital theory and the compensating-differentials argument, we expect remote work to be valued differently by women and men.",
+           5:"The sample comprises 2,140 employees (46% women) in 31 IT firms in Kerala, India, observed in three waves (2019, 2021, 2023). Earnings are measured as log hourly wage from payroll records.",
+           9:"Women who moved to fully remote work saw wage growth 4.1 percentage points lower than comparable men (β = −0.041, 95% CI −0.066 to −0.016). The effect is concentrated among mothers of children under six.",
+           12:"Our data cover only formal-sector firms, so we cannot speak to informal remote work. Future research should examine whether the gap persists once firms formalise hybrid policies." } },
+  { id:"p2", cite:"Das & Varghese (2024)", title:"Remote work options and women's earnings (example)",
+    text:{ 2:"Does offering a remote option change who applies and what pay they accept? We draw on search theory and compensating differentials.",
+           4:"We posted 1,200 job adverts across four cities; 7,950 applicants (52% women) were tracked to offer acceptance.",
+           7:"Women accepted offers with 6% lower pay on average when a remote option was offered (p = 0.003); men's accepted pay was unchanged.",
+           10:"Adverts were for clerical and support roles only; results may not hold for professional jobs." } },
+  { id:"p3", cite:"Joseph (2020)", title:"Who gets to work from home? (example)",
+    text:{ 1:"We examine occupational sorting into remote-capable jobs and how pay differs by gender and caste.",
+           6:"Using the national labour-force survey (n = 101,233), remote-capable occupations pay 18% more on average.",
+           8:"The remote-capable premium is smaller for women (11%) than for men (21%)." } },
+  { id:"p4", cite:"Pillai & George (2021)", title:"Telework and household labour (example)",
+    text:{ 2:"How was childcare and housework divided between partners when one or both teleworked?",
+           3:"A survey of 860 dual-earner couples in Kochi and Thiruvananthapuram, collected online in 2020.",
+           9:"Women's share of childcare rose from 64% to 71% when both partners teleworked." } },
+];
+// Each cell: value, quote, page, section, confidence, state: checked | matched | absent | rejected
+const C = (value, quote, page, section, conf, state) => ({ value, quote, page, section, conf, state });
+const CELLS = {
+  p1:{ research_question:C("Did the shift to remote work change the gender gap in hourly earnings among IT employees?", "whether the post-2020 shift to remote work changed the gender gap in hourly earnings among IT employees", 3, "1 Introduction", .93, "checked"),
+       theory_used:C("Human-capital theory; compensating differentials", "human-capital theory and the compensating-differentials argument", 3, "1 Introduction", .88, "matched"),
+       measures:C("Log hourly wage (payroll records)", "Earnings are measured as log hourly wage from payroll records", 5, "3 Data", .9, "checked"),
+       sample:C("n = 2,140 (46% women), 31 IT firms, Kerala, India", "2,140 employees (46% women) in 31 IT firms in Kerala, India", 5, "3 Data", .95, "checked"),
+       method:C("Three-wave panel (2019, 2021, 2023)", "observed in three waves (2019, 2021, 2023)", 5, "3 Data", .84, "matched"),
+       key_findings:C("Fully remote women: wage growth 4.1 pp lower than men (β = −0.041, 95% CI −0.066 to −0.016)", "wage growth 4.1 percentage points lower than comparable men (β = −0.041, 95% CI −0.066 to −0.016)", 9, "5 Results", .9, "matched"),
+       limitations:C("Formal-sector firms only", "Our data cover only formal-sector firms", 12, "6 Discussion", .86, "matched"),
+       future_research:C("Does the gap persist once hybrid policies are formalised?", "examine whether the gap persists once firms formalise hybrid policies", 12, "6 Discussion", .82, "matched") },
+  p2:{ research_question:C("Does offering a remote option change who applies and what pay they accept?", "Does offering a remote option change who applies and what pay they accept?", 2, "1 Introduction", .94, "matched"),
+       theory_used:C("Search theory; compensating differentials", "search theory and compensating differentials", 2, "1 Introduction", .87, "matched"),
+       measures:C("Accepted offer pay", "accepted offers with 6% lower pay", 7, "4 Results", .71, "matched"),
+       sample:C("1,200 adverts; 7,950 applicants (52% women), four cities", "7,950 applicants (52% women)", 4, "3 Design", .92, "checked"),
+       method:C("Randomised field experiment", null, null, null, .4, "absent"),
+       key_findings:C("Women accepted 6% lower pay with a remote option (p = 0.003); men unchanged", "Women accepted offers with 6% lower pay on average when a remote option was offered (p = 0.003)", 7, "4 Results", .91, "matched"),
+       limitations:C("Clerical and support roles only", "Adverts were for clerical and support roles only", 10, "5 Discussion", .89, "matched"),
+       future_research:C(null, null, null, null, .3, "absent") },
+  p3:{ research_question:C("How do pay differences in remote-capable jobs vary by gender and caste?", "how pay differs by gender and caste", 1, "Abstract", .85, "matched"),
+       theory_used:C(null, null, null, null, .2, "absent"),
+       measures:C("Monthly earnings, national labour-force survey", "monthly earnings reported in the survey", 6, "2 Data", .62, "rejected"),
+       sample:C("n = 101,233, national labour-force survey", "national labour-force survey (n = 101,233)", 6, "2 Data", .93, "matched"),
+       method:C("Cross-sectional regression", null, null, null, .35, "absent"),
+       key_findings:C("Remote-capable premium smaller for women (11%) than men (21%)", "The remote-capable premium is smaller for women (11%) than for men (21%).", 8, "3 Results", .9, "matched"),
+       limitations:C(null, null, null, null, .2, "absent"), future_research:C(null, null, null, null, .2, "absent") },
+  p4:{ research_question:C("How was childcare and housework divided when partners teleworked?", "How was childcare and housework divided between partners when one or both teleworked?", 2, "1 Introduction", .93, "matched"),
+       theory_used:C(null, null, null, null, .25, "absent"),
+       measures:C("Share of childcare done by each partner", null, null, null, .45, "absent"),
+       sample:C("860 dual-earner couples, Kochi and Thiruvananthapuram, 2020", "860 dual-earner couples in Kochi and Thiruvananthapuram, collected online in 2020", 3, "2 Method", .94, "matched"),
+       method:C("Online survey", "collected online in 2020", 3, "2 Method", .7, "matched"),
+       key_findings:C("Women's childcare share rose from 64% to 71% when both teleworked", "Women's share of childcare rose from 64% to 71% when both partners teleworked.", 9, "4 Results", .92, "matched"),
+       limitations:C(null, null, null, null, .2, "absent"), future_research:C(null, null, null, null, .2, "absent") },
+};
+const STATE_CHIP = { checked:["ok","✓ Checked"], matched:["plain","Quote found"], absent:["warn","Not reported"], rejected:["bad","Rejected"] };
+const state = { open:null, role:"owner", gate:"open", critical:false, check:false };
+const $ = id => document.getElementById(id);
+
+function visibleFields() { return FIELDS.filter(f => !state.critical || f.critical); }
+function needsCheck(cell, f) { return f.critical ? cell.state !== "checked" : (cell.state === "matched" || cell.state === "rejected"); }
+function renderTable() {
+  const t = $("matrix"); t.innerHTML = "";
+  const fields = visibleFields();
+  const head = t.createTHead().insertRow();
+  const h0 = document.createElement("th"); h0.textContent = "Paper"; head.appendChild(h0);
+  fields.forEach(f => { const th = document.createElement("th"); th.innerHTML = f.critical ? '<span class="crit" title="Critical field: must be checked by a person before G4">★</span> ' : ""; th.append(f.label); head.appendChild(th); });
+  const body = t.createTBody();
+  PAPERS.forEach(p => {
+    const row = body.insertRow();
+    const th = document.createElement("th"); th.scope = "row"; th.textContent = p.cite; row.appendChild(th);
+    fields.forEach(f => {
+      const cell = CELLS[p.id][f.key];
+      const td = row.insertCell();
+      td.tabIndex = 0; td.dataset.id = p.id + "." + f.key;
+      td.setAttribute("aria-selected", state.open === td.dataset.id ? "true" : "false");
+      const [cls, txt] = STATE_CHIP[cell.state];
+      const dim = state.check && !needsCheck(cell, f);
+      if (dim) td.style.opacity = ".3";
+      td.innerHTML = `<div class="val"></div><div class="st"><span class="chip ${cls}">${txt}</span>${cell.page ? ` <span class="muted">p.${cell.page}</span>` : ""}</div>`;
+      td.querySelector(".val").textContent = cell.value ?? "—";
+      td.addEventListener("click", () => openCell(td.dataset.id));
+      td.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openCell(td.dataset.id); } });
+      row.appendChild(td);
+    });
+  });
+}
+function openCell(id) { showCell(id); if (location.hash !== "#" + id) location.hash = id; }
+function showCell(id) {
+  state.open = id;
+  const [pid, key] = id.split(".");
+  const p = PAPERS.find(x => x.id === pid), f = FIELDS.find(x => x.key === key), cell = CELLS[pid][key];
+  $("pane-title").textContent = `${p.cite} · ${f.label}${f.critical ? " ★" : ""}`;
+  const body = $("pane-body"); body.innerHTML = "";
+  const top = document.createElement("div");
+  const [cls, txt] = STATE_CHIP[cell.state];
+  top.innerHTML = `<div class="row"><span class="chip ${cls}">${txt}</span><span class="small muted">AI confidence ${cell.conf}</span></div>
+    <p style="margin:8px 0 4px;font-weight:650" id="pv"></p>
+    ${cell.quote ? `<div class="quote" id="pq"></div><div class="small muted">p.${cell.page} · ${cell.section}</div>` : ""}
+    <p class="small" style="margin:8px 0" id="pexpl"></p>
+    <div class="row">${cell.state === "checked" ? `<button class="quiet" data-a="uncheck">Undo check</button>` : `<button data-a="confirm" ${cell.quote && cell.state !== "rejected" ? "" : "disabled"}>Confirm ✓</button>`}
+      <button class="quiet" data-a="correct">Correct…</button><button class="quiet" data-a="absent">${state.confirmAbsent === id ? "Yes, mark not reported (AI value kept in history)" : "Not in the paper"}</button></div>
+    <div class="provenance" style="margin-top:8px">Extracted by gpt-x · prompt extraction@1 · 6 Oct 11:20${cell.state === "checked" ? " · checked by Priya 7 Oct 09:12" : ""}</div>`;
+  top.querySelector("#pv").textContent = cell.value ?? "Not reported";
+  if (cell.quote) top.querySelector("#pq").textContent = "“" + cell.quote + "”";
+  top.querySelector("#pexpl").textContent = {
+    checked: "A person confirmed this value against the quote.",
+    matched: "The quote was found word for word on this page. A person hasn't checked that the value matches the quote.",
+    absent: "The AI found no supporting text, so it left this empty instead of guessing. If you find it, use Correct.",
+    rejected: "The AI's quote does not appear in the paper, so its value was rejected and can't be used. Use Correct to enter it with a real quote.",
+  }[cell.state];
+  top.querySelectorAll("button").forEach(b => b.addEventListener("click", () => act(b.dataset.a, pid, key)));
+  body.appendChild(top);
+
+  const pageNo = cell.page || Number(Object.keys(p.text)[0]);
+  const pg = document.createElement("div"); pg.className = "page";
+  pg.innerHTML = `<div class="pghead"><span>Source text · ${p.title}</span><span>page ${pageNo} <span class="pin" title="Q2">Q2</span></span></div><div id="pgtext"></div>
+    <div class="row small" style="margin-top:10px;font-family:system-ui"><span class="muted">Other pages:</span></div>`;
+  const txtNode = pg.querySelector("#pgtext");
+  const text = p.text[pageNo] || "";
+  const at = cell.quote && cell.state !== "rejected" ? text.indexOf(cell.quote) : -1;
+  if (at >= 0) { txtNode.append(text.slice(0, at)); const m = document.createElement("mark"); m.textContent = cell.quote; txtNode.append(m, text.slice(at + cell.quote.length)); }
+  else txtNode.textContent = text;
+  const nav = pg.querySelector(".row");
+  Object.keys(p.text).forEach(n => { const a = document.createElement("a"); a.href = "#"; a.textContent = "p." + n; a.addEventListener("click", e => { e.preventDefault(); txtNode.textContent = p.text[n]; pg.querySelector(".pghead span:last-child").firstChild.textContent = "page " + n + " "; }); nav.append(a); });
+  body.appendChild(pg);
+  pg.addEventListener("mouseup", () => { const s = String(getSelection()); if (s.trim() && $("correct-dialog").open) $("c-quote").value = s.trim(); });
+
+  $("pane").hidden = false; $("work").classList.add("open");
+  renderTable();
+}
+function closeCell() {
+  const id = state.open; state.open = null;
+  $("pane").hidden = true; $("work").classList.remove("open"); renderTable();
+  if (id) { const td = document.querySelector(`td[data-id="${id}"]`); if (td) td.focus(); }
+  if (location.hash) history.replaceState(null, "", location.pathname);
+}
+function act(a, pid, key) {
+  if (state.gate !== "open") { wfToast("The table is locked while G4 is requested or approved."); return; }
+  const cell = CELLS[pid][key];
+  if (a === "confirm") { cell.state = "checked"; wfToast("Checked. Recorded with your name and the time."); }
+  if (a === "uncheck") { cell.state = "matched"; wfToast("Check removed. Both actions stay in the audit log."); }
+  if (a === "absent") { if (state.confirmAbsent !== pid + "." + key) { state.confirmAbsent = pid + "." + key; showCell(state.open); return; } state.confirmAbsent = null; Object.assign(cell, { value:null, quote:null, page:null, section:null, state:"absent" }); wfToast("Marked as not reported."); }
+  if (a === "correct") return openCorrect(pid, key);
+  renderAll(); showCell(state.open);
+}
+function openCorrect(pid, key) {
+  const cell = CELLS[pid][key], p = PAPERS.find(x => x.id === pid);
+  $("c-value").value = cell.value || ""; $("c-quote").value = ""; $("c-error").hidden = true;
+  const dlg = $("correct-dialog"); dlg.show();
+  $("c-save").onclick = () => {
+    const quote = $("c-quote").value.trim(), value = $("c-value").value.trim();
+    const norm = s => s.replace(/\s+/g, " ").toLowerCase();
+    const page = Object.keys(p.text).find(n => norm(p.text[n]).includes(norm(quote)));
+    if (!value || !quote) { $("c-error").textContent = "Both a value and a supporting quote are needed."; $("c-error").hidden = false; return; }
+    if (!page) { $("c-error").textContent = "That quote isn't in the paper word for word, so it can't be saved. Select it in the page text instead."; $("c-error").hidden = false; return; }
+    const exact = p.text[page].substr(norm(p.text[page]).indexOf(norm(quote)), quote.length);
+    Object.assign(cell, { value, quote:exact, page:Number(page), section:"(from page " + page + ")", state:"checked" });
+    dlg.close(); wfToast("Corrected and checked. The AI's original value stays in the history."); renderAll(); showCell(state.open);
+  };
+}
+function renderGate() {
+  let total = 0, done = 0;
+  PAPERS.forEach(p => FIELDS.filter(f => f.critical).forEach(f => { const c = CELLS[p.id][f.key]; if (c.state === "absent") return; total++; if (c.state === "checked") done++; }));
+  const btn = $("gate-btn"), st = $("gate-status");
+  $("role-chip").textContent = state.role;
+  if (state.gate === "approved") { st.textContent = ` · Approved by Dr. Nair (supervisor) · 7 Oct. The table is locked.`; btn.hidden = true; return; }
+  if (state.gate === "requested") { st.textContent = " · Waiting for approval from the owner or a supervisor."; btn.textContent = state.role === "supervisor" ? "Approve G4" : "Approval requested"; btn.disabled = state.role !== "supervisor"; return; }
+  st.textContent = ` · ${done} of ${total} critical cells checked by a person` + (done < total ? " · opens when all are checked" : " · ready");
+  btn.textContent = "Ask for G4 approval"; btn.disabled = done < total;
+}
+function renderAll() { renderTable(); renderGate(); }
+
+$("gate-btn").addEventListener("click", () => {
+  if (state.gate === "open") { state.gate = "requested"; wfToast("G4 requested. Switch 'View as' to Supervisor to see the approval."); }
+  else if (state.gate === "requested" && state.role === "supervisor") { state.gate = "approved"; wfToast("G4 approved and logged. Synthesis and gap analysis can start."); }
+  renderAll();
+});
+$("role").addEventListener("change", e => { state.role = e.target.value; renderAll(); });
+$("f-critical").addEventListener("change", e => { state.critical = e.target.checked; renderTable(); });
+$("f-check").addEventListener("change", e => { state.check = e.target.checked; renderTable(); });
+$("export-csv").addEventListener("click", () => wfToast("Would download evidence-table.csv: one column per field plus its status, quote and page."));
+$("export-xlsx").addEventListener("click", () => wfToast("Would download evidence-table.xlsx with the same columns."));
+$("pane-close").addEventListener("click", closeCell);
+$("c-cancel").addEventListener("click", () => $("correct-dialog").close());
+window.addEventListener("hashchange", () => { const m = location.hash.match(/^#(p\d\.\w+)$/); m ? showCell(m[1]) : closeCell(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape" && state.open && !$("correct-dialog").open && !wfTyping(e)) closeCell(); });
+renderAll();
+const start = location.hash.match(/^#(p\d\.\w+)$/); if (start) showCell(start[1]);
+</script>
+</body>
+</html>

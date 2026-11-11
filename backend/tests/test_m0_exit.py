@@ -17,29 +17,23 @@ import io
 import uuid
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import select, text
 
 from app import task_queue as q
 from app import task_registry as registry
 from app import task_runner
+from gate_helpers import approve_earlier_gates
 from app.config import get_settings
 from app.database import SessionLocal
-from app.main import app
 from app.models import AuditEvent, GateCode, Task, TaskStatus
-
-
-def _login(email):
-    client = TestClient(app)
-    user_id = client.post("/api/auth/development/login", json={"email": email, "display_name": email.split("@")[0]}).json()["id"]
-    return client, user_id
+from tests.api_helpers import sign_in_user
 
 
 def _trail(project_id):
     """The project's audit events in the order they were written."""
     with SessionLocal() as db:
         rows = db.scalars(
-            select(AuditEvent).where(AuditEvent.project_id == uuid.UUID(project_id)).order_by(text("rowid"))
+            select(AuditEvent).where(AuditEvent.project_id == uuid.UUID(project_id)).order_by(text("ctid"))  # insertion order; the table is append-only
         ).all()
         return [(e.action, e.actor, e.payload_json) for e in rows]
 
@@ -63,11 +57,11 @@ def test_m0_exit_create_share_log_and_run_a_gated_task(fake_llm, bulk_search, mo
     monkeypatch.setattr(get_settings(), "run_research_inline", False)  # the worker, not the request, does the work
 
     # 1. create and share --------------------------------------------------------------------------------
-    owner, owner_id = _login("m0-owner@example.com")
-    coauthor, coauthor_id = _login("m0-coauthor@example.com")
-    supervisor, supervisor_id = _login("m0-supervisor@example.com")
-    reviewer, reviewer_id = _login("m0-reviewer@example.com")
-    outsider, _ = _login("m0-outsider@example.com")
+    owner, owner_id = sign_in_user("m0-owner@example.com")
+    coauthor, coauthor_id = sign_in_user("m0-coauthor@example.com")
+    supervisor, supervisor_id = sign_in_user("m0-supervisor@example.com")
+    reviewer, reviewer_id = sign_in_user("m0-reviewer@example.com")
+    outsider, _ = sign_in_user("m0-outsider@example.com")
 
     project_id = owner.post("/api/projects", json={"title": "Female labour participation"}).json()["id"]
     for email, role in (("m0-coauthor@example.com", "co_author"), ("m0-supervisor@example.com", "supervisor"), ("m0-reviewer@example.com", "reviewer")):
@@ -101,6 +95,7 @@ def test_m0_exit_create_share_log_and_run_a_gated_task(fake_llm, bulk_search, mo
     assert task_runner.run_one_task() is False and bulk_search == []
 
     # 5. only a supervisor's approval releases it -------------------------------------------------------
+    approve_earlier_gates(project_id, "G2")  # G1 (setup, not audited); gates go in order (M0.5.10)
     approve = lambda who: who.post(f"/api/projects/{project_id}/gates/G2/approve", json={"note": "Strategy is sound"})  # noqa: E731
     assert approve(coauthor).status_code == 403 and approve(reviewer).status_code == 403
     assert task_runner.run_one_task() is False
@@ -141,7 +136,7 @@ def test_m0_exit_create_share_log_and_run_a_gated_task(fake_llm, bulk_search, mo
 
 
 def test_without_an_approval_the_gated_task_never_runs_however_often_the_worker_looks(bulk_search):
-    owner, _ = _login("m0-idle-owner@example.com")
+    owner, _ = sign_in_user("m0-idle-owner@example.com")
     project_id = owner.post("/api/projects", json={"title": "Waiting"}).json()["id"]
     with SessionLocal() as db:
         q.enqueue_task(db, uuid.UUID(project_id), "bulk_search")

@@ -6,7 +6,7 @@ from sqlalchemy import select
 from app.config import get_settings
 from app.connectors.base import ConnectorBase, ConnectorError, PaperRecord, SearchPage, SearchRequest
 from app.database import SessionLocal
-from app.models import AuditEvent, Project, SearchQuery, User
+from app.models import AuditEvent, Project, SearchQuery, Source, User
 from app.search_query import BooleanQuery, ConceptBlock
 from app.search_runner import SearchError, SearchFailed, diff_runs, rerun_search, run_search
 
@@ -65,16 +65,22 @@ def test_run_records_query_filters_counts_and_results():
         row = run_search(db, project=project, actor="u1", connector=conn, query=QUERY, filters={"year_from": 2015})
         db.commit()
         assert row.version == 1 and row.database == "openalex"
-        assert row.query_string == '("remote work" OR "telework") AND ("productivity")'
+        assert row.query_string == '(remote work OR telework) AND (productivity)'
         assert row.filters == {"year_from": 2015}
         assert row.run_at is not None and row.created_by == "u1"
         assert row.n_results == 5
         assert row.counts == {
             "retrieved": 5, "repeated_ids": 0, "unique": 5, "duplicates_removed": 0,
-            "reported_total": 1234, "truncated": False, "skipped_records": 0,
+            "reported_total": 1234, "truncated": False, "skipped_records": 0, "cache_bypassed": True,
         }
         assert [r["id"] for r in row.results] == [f"openalex:W{i}" for i in range(5)]
-        assert row.exact is True and row.caveats == []
+        assert row.results[0]["title"].startswith("A sufficiently long")
+        assert row.results[0]["year"] == 2020
+        sources = db.scalars(select(Source).where(Source.project_id == project.id)).all()
+        assert len(sources) == 5
+        assert all(source.metadata_verified is False and source.origin == "retrieved" for source in sources)
+        assert all(source.ingest_key and source.found_via["method"] == "database_search" for source in sources)
+        assert row.exact is False and any("OpenAlex" in caveat for caveat in row.caveats)
         assert len(conn.requests) == 3  # paged 2 + 2 + 1
         event = db.scalar(select(AuditEvent).where(AuditEvent.action == "search.run"))
         assert event.actor == "u1" and event.payload_json["counts"]["unique"] == 5
@@ -117,16 +123,40 @@ def test_no_truncation_flag_when_everything_fits():
         assert row.counts["truncated"] is False and row.counts["retrieved"] == 4
 
 
-def test_failure_saves_nothing_but_logs_and_raises():
+def test_connector_provider_cap_is_recorded_as_truncated():
+    db, project = setup()
+    with db:
+        conn = FakeConnector([rec(i) for i in range(5)])
+        conn.last_search_capped = True
+        row = run_search(db, project=project, actor="u", connector=conn, query=QUERY, max_results=10)
+
+        assert row.counts["truncated"] is True
+
+
+def test_a_first_page_failure_saves_nothing_but_logs_and_raises():
     db, project = setup()
     with db:
         with pytest.raises(SearchFailed):
-            run_search(db, project=project, actor="u", connector=FakeConnector([rec(i) for i in range(5)], fail_on_page=2), query=QUERY)
+            run_search(db, project=project, actor="u", connector=FakeConnector([rec(i) for i in range(5)], fail_on_page=1), query=QUERY)
         db.commit()
         assert db.scalar(select(SearchQuery).where(SearchQuery.project_id == project.id)) is None
         event = db.scalar(select(AuditEvent).where(AuditEvent.action == "search.failed"))
         assert event.payload_json["error"] == "ConnectorError"
         assert "secret" not in str(event.payload_json)
+
+
+def test_a_later_page_failure_keeps_what_was_collected_and_notes_a_caveat():
+    db, project = setup()
+    with db:
+        conn = FakeConnector([rec(i) for i in range(5)], page=2, fail_on_page=2)
+        row = run_search(db, project=project, actor="u", connector=conn, query=QUERY)
+        db.commit()
+        assert row.counts["retrieved"] == 2 and row.counts["truncated"] is True
+        assert row.n_results == 2
+        assert any("stopped paging after page 1" in c for c in row.caveats)
+        assert "FakeConnector" not in str(row.caveats)  # exception text, not the Python repr, is kept
+        assert db.scalar(select(AuditEvent).where(AuditEvent.action == "search.run")) is not None
+        assert db.scalar(select(AuditEvent).where(AuditEvent.action == "search.failed")) is None
 
 
 def test_rerun_repeats_same_string_and_filters_as_next_version_and_diffs():
@@ -183,3 +213,74 @@ def test_inexact_adaptation_is_kept_with_the_record():
         assert row.exact is False and row.caveats
         again = rerun_search(db, project=project, actor="u", connector=FakeConnector([rec(1)]), search_id=row.search_id)
         assert again.exact is False and again.caveats == row.caveats
+
+
+class BulkConnector(FakeConnector):
+    """Relevance `search` plus a Boolean `boolean_search` whose pages ignore `limit` (like S2 bulk, M1.5.5)."""
+
+    name = "openalex"
+
+    def search(self, request: SearchRequest) -> SearchPage:
+        raise AssertionError("a search run must use boolean_search when the connector has it")
+
+    def boolean_search(self, request: SearchRequest) -> SearchPage:
+        self.requests.append(request)
+        start = int(request.cursor or 0)
+        chunk = self.records[start : start + self.page]  # the whole page, whatever the limit
+        nxt = start + len(chunk)
+        return SearchPage(records=tuple(chunk), total=len(self.records), next_cursor=str(nxt) if nxt < len(self.records) else None)
+
+
+def test_boolean_search_is_preferred_when_a_connector_offers_it():
+    db, project = setup()
+    with db:
+        conn = BulkConnector([rec(i) for i in range(5)], page=1000)
+        row = run_search(db, project=project, actor="u", connector=conn, query=QUERY, max_results=10)
+        assert row.counts["retrieved"] == 5 and row.counts["truncated"] is False and len(conn.requests) == 1
+
+
+def test_a_last_page_bigger_than_the_cap_is_cut_and_reported():
+    db, project = setup()
+    with db:
+        conn = BulkConnector([rec(i) for i in range(12)], page=1000)
+        row = run_search(db, project=project, actor="u", connector=conn, query=QUERY, max_results=4)
+        assert row.counts["retrieved"] == 4 and row.counts["truncated"] is True
+
+
+def _stored_s2(db, project, caveats, exact=False, text="remote work telework productivity"):
+    row = SearchQuery(project_id=project.id, search_id=uuid.uuid4(), database="semantic_scholar", query_string=text,
+                      filters={}, version=1, exact=exact, caveats=caveats, counts={"retrieved": 0}, results=[])
+    db.add(row)
+    db.flush()
+    return row
+
+
+def test_a_semantic_scholar_search_saved_before_bulk_search_is_not_rerun(monkeypatch):
+    from app.search_rerun import LEGACY_S2_CAVEAT, rerun_refusal
+
+    monkeypatch.setattr(get_settings(), "connectors_enabled", ["semantic_scholar"])
+    db, project = setup()
+    with db:
+        legacy = _stored_s2(db, project, [LEGACY_S2_CAVEAT + ": the terms are searched together and ranked by similarity."])
+        conn = BulkConnector([rec(1)])
+        conn.name = "semantic_scholar"
+        with pytest.raises(SearchError, match="Start a new search"):
+            rerun_search(db, project=project, actor="u", connector=conn, search_id=legacy.search_id)
+        assert conn.requests == []  # refused before any call
+
+        current = _stored_s2(db, project, [], exact=True, text='("remote work" | "telework") + ("productivity")')
+        assert rerun_refusal(current) is None
+        again = rerun_search(db, project=project, actor="u", connector=conn, search_id=current.search_id)
+        assert again.version == 2 and again.query_string == current.query_string
+
+
+def test_the_same_doi_found_by_two_saved_searches_is_stored_as_one_source_in_the_project():
+    db, project = setup()
+    with db:
+        run_search(db, project=project, actor="u", connector=FakeConnector([rec(1, doi="10.1000/shared"), rec(2)]), query=QUERY)
+        db.commit()
+        run_search(db, project=project, actor="u", connector=FakeConnector([rec(3, doi="10.1000/shared")]), query=QUERY)
+        db.commit()
+        sources = db.scalars(select(Source).where(Source.project_id == project.id)).all()
+        assert len(sources) == 2
+        assert sorted(source.doi for source in sources if source.doi) == ["10.1000/shared"]

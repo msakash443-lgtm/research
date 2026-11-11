@@ -11,7 +11,7 @@ that runs out of attempts ends `failed` (plan rule 22). Tasks behind a human gat
 `blocked` and are never claimed; releasing them is tied to gate approval (M0.5.4).
 
 On PostgreSQL the claim uses `FOR UPDATE SKIP LOCKED`, so concurrent workers never take
-the same task. SQLite (tests, local dev) ignores that clause.
+the same task.
 
 Every state change is a conditional UPDATE that repeats its precondition (status, attempt
 number, lease) in its WHERE clause and checks the row count, so the database re-checks at
@@ -22,22 +22,26 @@ stale worker, the reaper and a pause/block racing for the same row can't overwri
 from __future__ import annotations
 
 import logging
+import threading
 import uuid
 from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import or_, select, update
+from sqlalchemy.exc import IntegrityError
 
 from app import audit
 from app.config import get_settings
 from app.database import SessionLocal
-from app.models import GateCode, Task, TaskStatus, utcnow
-from app.gates import gate_is_approved
-from app.task_registry import FAILURE_HOOKS, REQUIRED_GATES, ClaimedTask
+from app.models import GateCode, Project, Task, TaskStatus, utcnow
+from app.gates import GATE_STAGES, gate_is_approved
+from app.stage_order import StageNotInChain, require_stage
+from app.task_registry import FAILURE_HOOKS, PAYLOAD_SCRUBS, REQUIRED_GATES, ClaimedTask
 
 logger = logging.getLogger(__name__)
 
 MAX_ERROR_CHARS = 1000
+_REAPER_LOCK = threading.Lock()
 
 
 def backoff_seconds(attempt: int) -> int:
@@ -58,13 +62,26 @@ def enqueue_task(
 
     Callers can't forget the gate: it comes from the type's registration. With an
     `idempotency_key`, asking again for the same key in the same project returns the existing
-    task and adds nothing (a unique index backs this up). The caller commits.
+    task and adds nothing (a unique index backs this up, and losing a true race returns the winner's
+    task rather than an error). The caller commits.
     """
     if idempotency_key is not None:
         existing = db.scalar(select(Task).where(Task.project_id == project_id, Task.idempotency_key == idempotency_key))
         if existing is not None:
             return existing
     gate = REQUIRED_GATES.get(task_type)
+    if gate is not None:
+        project = db.get(Project, project_id)
+        if project is not None:
+            stage = GATE_STAGES[gate]
+            try:
+                require_stage(project, stage)
+            except StageNotInChain:
+                audit.record(
+                    db, actor=actor, action="stage.not_in_chain", project_id=project_id,
+                    payload={"stage": stage.value, "task_type": task_type},
+                )
+                raise
     waiting = gate is not None and not gate_is_approved(db, project_id, gate)
     task = Task(
         project_id=project_id,
@@ -74,8 +91,18 @@ def enqueue_task(
         blocked_by_gate=gate if waiting else None,
         idempotency_key=idempotency_key,
     )
-    db.add(task)
-    db.flush()
+    try:
+        with db.begin_nested():  # savepoint: a lost race rolls back only this insert, not the caller's work
+            db.add(task)
+            db.flush()
+    except IntegrityError:
+        if idempotency_key is None:
+            raise
+        # Another request inserted the same key between our SELECT and INSERT: hand back its task.
+        existing = db.scalar(select(Task).where(Task.project_id == project_id, Task.idempotency_key == idempotency_key))
+        if existing is None:
+            raise
+        return existing
     if waiting:
         audit.record(
             db, actor=actor, action="task.blocked", project_id=project_id,
@@ -127,7 +154,7 @@ def claim_next_task(now: datetime | None = None, task_id: uuid.UUID | None = Non
             # Another worker may have taken it since we read it (SKIP LOCKED isn't available everywhere).
             if _transition(
                 db, task.id, Task.status == TaskStatus.queued, Task.attempts == task.attempts,
-                status=TaskStatus.running, attempts=attempt, run_after=None, lease_expires_at=lease,
+                status=TaskStatus.running, attempts=attempt, run_after=None, lease_expires_at=lease, started_at=now,
             ):
                 claimed = ClaimedTask(task.id, task.project_id, task.type, task.payload, attempt)
                 db.commit()
@@ -166,10 +193,24 @@ def heartbeat(task_id: uuid.UUID, attempt: int, now: datetime | None = None) -> 
         db.close()
 
 
+def _scrubbed(task_type: str, payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The payload to keep once a task of this type has ended for good (see `PAYLOAD_SCRUBS`)."""
+    scrub = PAYLOAD_SCRUBS.get(task_type)
+    if scrub is None or payload is None:
+        return payload
+    return scrub(payload)
+
+
 def complete_task(task_id: uuid.UUID, attempt: int) -> bool:
     db = SessionLocal()
     try:
-        done = _transition(db, task_id, *_owned(attempt), status=TaskStatus.completed, lease_expires_at=None, error=None)
+        task = db.get(Task, task_id)
+        if task is None:
+            return False
+        done = _transition(
+            db, task_id, *_owned(attempt), status=TaskStatus.completed, lease_expires_at=None, error=None, finished_at=utcnow(),
+            payload=_scrubbed(task.type, task.payload),
+        )
         db.commit()
         return done
     finally:
@@ -204,9 +245,13 @@ def _fail_or_retry(
         status, run_after, action = TaskStatus.failed, None, "task.failed"
     else:
         status, run_after, action = TaskStatus.queued, now + timedelta(seconds=backoff_seconds(task.attempts)), "task.requeued"
+    values = {}
+    if status == TaskStatus.failed:
+        values["payload"] = _scrubbed(task.type, task.payload)
+        values["finished_at"] = now
     if not _transition(
         db, task.id, *_owned(task.attempts), *conditions,
-        status=status, run_after=run_after, error=error, lease_expires_at=None,
+        status=status, run_after=run_after, error=error, lease_expires_at=None, **values,
     ):
         return None
     audit.record(
@@ -249,6 +294,7 @@ def fail_task(
 
 def reap_expired_tasks(now: datetime | None = None) -> int:
     """Recover tasks whose worker stopped renewing the lease (crash, kill, hang)."""
+    _REAPER_LOCK.acquire()
     now = now or utcnow()
     db = SessionLocal()
     try:
@@ -268,9 +314,12 @@ def reap_expired_tasks(now: datetime | None = None) -> int:
                 reaped += 1
             if outcome == TaskStatus.failed:
                 gave_up.append(_info(task))
-        db.commit()
+        # Run terminal cleanup before publishing the failed task status. This keeps
+        # observers from seeing a terminal task while its domain record still looks
+        # in progress (and mirrors fail_task's cleanup-before-return contract).
         for info in gave_up:
             _run_failure_hook(info)
+        db.commit()
         return reaped
     except Exception:
         db.rollback()
@@ -278,6 +327,7 @@ def reap_expired_tasks(now: datetime | None = None) -> int:
         return 0
     finally:
         db.close()
+        _REAPER_LOCK.release()
 
 
 def block_claimed_task(task_id: uuid.UUID, attempt: int, gate: GateCode) -> bool:

@@ -14,25 +14,50 @@ Failure policy (plan rule 22: fail loudly, never return placeholder data):
 * After `breaker_threshold` consecutive calls that exhausted their retries, the circuit opens and
   calls fail at once with `CircuitOpenError` until `breaker_cooldown` passes; then one trial call
   is allowed (success closes the circuit, failure reopens it).
+* Optional response cache (off unless `cache_ttl_seconds` > 0, i.e. `CONNECTOR_CACHE_TTL_SECONDS`): a
+  repeat of the same connector + method + path + params + body within the TTL is answered from memory
+  *before* the rate gate, breaker and network. Only successful JSON replies are stored (never errors or
+  404s). `cache_hits`/`cache_misses` and `last_from_cache` let callers record that an answer was cached;
+  a search that must be fresh passes `fresh=True` or runs inside `bypass_cache()`. Headers are not part of the key.
 * Redirects are not followed. Error messages carry the connector name and status only, never the
   URL, query or headers (they can hold API keys or the researcher's search terms).
 """
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
+import copy
+import hashlib
+import json
 import random
 import threading
 import time
-from dataclasses import dataclass
+from collections import OrderedDict
+from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 
 import httpx
 
+from app.config import get_settings
 from app.connectors.base import ConnectorError
 
 RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+
+# Set while a block of code must see live answers (a database search). Per thread/task, never global.
+_BYPASS_CACHE: contextvars.ContextVar[bool] = contextvars.ContextVar("connector_bypass_cache", default=False)
+
+
+@contextlib.contextmanager
+def bypass_cache():
+    """Inside this block every connector request skips the response cache (and refreshes it)."""
+    token = _BYPASS_CACHE.set(True)
+    try:
+        yield
+    finally:
+        _BYPASS_CACHE.reset(token)
 
 
 class NotFoundError(ConnectorError):
@@ -41,6 +66,21 @@ class NotFoundError(ConnectorError):
 
 class CircuitOpenError(ConnectorError):
     """Recent calls kept failing; this connector is paused until the cooldown ends."""
+
+
+class BreakerSync(Protocol):
+    """Persists breaker state somewhere shared (e.g. a DB row), so the breaker trips across
+    separate `ConnectorHttpClient` instances too — different tasks, different processes
+    (M1.3.8). `open_until`/the return value are wall-clock (`time.time()`) seconds, never the
+    instance's own (possibly monotonic) clock, because that clock means nothing to another
+    process. Optional: without one the breaker stays exactly the M1.3.2 in-memory behaviour.
+    """
+
+    def load(self) -> tuple[int, float | None]:
+        """Current (failures, open_until) as last saved, or (0, None) if never saved."""
+
+    def save(self, failures: int, open_until: float | None) -> None:
+        """Persist the latest (failures, open_until)."""
 
 
 @dataclass(frozen=True)
@@ -53,12 +93,14 @@ class HttpPolicy:
     min_interval_seconds: float = 0.0  # rate gate: minimum spacing between request starts
     breaker_threshold: int = 5
     breaker_cooldown_seconds: float = 60.0
+    cache_ttl_seconds: float = field(default_factory=lambda: get_settings().connector_cache_ttl_seconds)  # 0 = no cache
+    cache_max_entries: int = 256
 
     def __post_init__(self) -> None:
         if self.timeout_seconds <= 0 or self.max_retries < 0 or self.breaker_threshold < 1:
             raise ValueError("invalid HttpPolicy")
         if min(self.backoff_base_seconds, self.backoff_max_seconds, self.max_retry_after_seconds,
-               self.min_interval_seconds, self.breaker_cooldown_seconds) < 0:
+               self.min_interval_seconds, self.breaker_cooldown_seconds, self.cache_ttl_seconds) < 0 or self.cache_max_entries < 1:
             raise ValueError("invalid HttpPolicy")
 
 
@@ -90,17 +132,25 @@ class ConnectorHttpClient:
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
         rng: random.Random | None = None,
+        wall_clock: Callable[[], float] = time.time,
+        breaker_sync: BreakerSync | None = None,
     ):
         self.name = name
         self.policy = policy or HttpPolicy()
         self._clock = clock
         self._sleep = sleep
         self._rng = rng or random.Random()
+        self._wall_clock = wall_clock
+        self._breaker_sync = breaker_sync
         self._lock = threading.Lock()
         self._next_slot = 0.0  # earliest time the next request may start
         self._failures = 0
         self._open_until: float | None = None
         self._trial_in_flight = False
+        self._cache: OrderedDict[str, tuple[float, Any]] = OrderedDict()
+        self.cache_hits = 0
+        self.cache_misses = 0
+        self.last_from_cache = False
         self._client = httpx.Client(
             base_url=base_url,
             headers=headers,
@@ -108,14 +158,49 @@ class ConnectorHttpClient:
             follow_redirects=False,
             transport=transport,
         )
+        if self._breaker_sync is not None:
+            self._adopt_remote_locked()
 
     def close(self) -> None:
         self._client.close()
 
+    def attach_breaker_sync(self, sync: BreakerSync) -> None:
+        """Wire a shared store after construction (connectors build their own client, so the
+        factory attaches this rather than threading a constructor arg through every connector)."""
+        with self._lock:
+            self._breaker_sync = sync
+            self._adopt_remote_locked()
+
     # --- breaker -------------------------------------------------------------
+
+    def _wall_to_local(self, open_until_wall: float | None) -> float | None:
+        """A remote open-until, in wall-clock seconds, translated to this instance's own clock."""
+        if open_until_wall is None:
+            return None
+        remaining = open_until_wall - self._wall_clock()
+        if remaining <= 0:
+            return None
+        return self._clock() + remaining
+
+    def _local_to_wall(self) -> float | None:
+        if self._open_until is None:
+            return None
+        remaining = self._open_until - self._clock()
+        return self._wall_clock() + max(0.0, remaining)
+
+    def _adopt_remote_locked(self) -> None:
+        """Caller holds `self._lock`. Remote state wins: it is the one source of truth other
+        processes also read and write, so this instance's own counters just mirror it. Failures
+        below threshold (so `open_until` is None) still carry over — only a success zeroes
+        them, exactly like the in-memory breaker."""
+        failures, open_until_wall = self._breaker_sync.load()
+        self._failures = failures
+        self._open_until = self._wall_to_local(open_until_wall)
 
     def _before_call(self) -> None:
         with self._lock:
+            if self._breaker_sync is not None:
+                self._adopt_remote_locked()
             if self._open_until is None:
                 return
             if self._clock() < self._open_until or self._trial_in_flight:
@@ -123,15 +208,20 @@ class ConnectorHttpClient:
             self._trial_in_flight = True  # half-open: exactly one trial call
 
     def _record(self, ok: bool) -> None:
+        sync = None
         with self._lock:
             self._trial_in_flight = False
             if ok:
                 self._failures = 0
                 self._open_until = None
-                return
-            self._failures += 1
-            if self._failures >= self.policy.breaker_threshold:
-                self._open_until = self._clock() + self.policy.breaker_cooldown_seconds
+            else:
+                self._failures += 1
+                if self._failures >= self.policy.breaker_threshold:
+                    self._open_until = self._clock() + self.policy.breaker_cooldown_seconds
+            if self._breaker_sync is not None:
+                sync, failures, open_until_wall = self._breaker_sync, self._failures, self._local_to_wall()
+        if sync is not None:
+            sync.save(failures, open_until_wall)
 
     # --- rate gate -----------------------------------------------------------
 
@@ -152,19 +242,82 @@ class ConnectorHttpClient:
         cap = min(self.policy.backoff_max_seconds, self.policy.backoff_base_seconds * (2**attempt))
         return self._rng.uniform(0, cap)
 
-    def get_json(self, path: str, params: dict[str, Any] | None = None, headers: dict[str, str] | None = None) -> Any:
-        return self._request_json("GET", path, params, headers, None)
+    def get_json(
+        self, path: str, params: dict[str, Any] | None = None, headers: dict[str, str] | None = None, *, fresh: bool = False
+    ) -> Any:
+        return self._request_json("GET", path, params, headers, None, fresh)
+
+    def get_text(
+        self, path: str, params: dict[str, Any] | None = None, headers: dict[str, str] | None = None, *, fresh: bool = False
+    ) -> str:
+        """GET a text reply (e.g. an Atom feed); same retry/gate/breaker/cache policy as `get_json`."""
+        return self._request_json("GET", path, params, headers, None, fresh, as_text=True)
 
     def post_json(
-        self, path: str, body: Any, params: dict[str, Any] | None = None, headers: dict[str, str] | None = None
+        self, path: str, body: Any, params: dict[str, Any] | None = None, headers: dict[str, str] | None = None,
+        *, fresh: bool = False,
     ) -> Any:
         """POST a JSON body for read-only batch lookups; same retry/gate/breaker policy as `get_json`."""
-        return self._request_json("POST", path, params, headers, body)
+        return self._request_json("POST", path, params, headers, body, fresh)
 
-    def _request_json(self, method: str, path: str, params, headers, body) -> Any:
+    def post(
+        self, path: str, body: Any, params: dict[str, Any] | None = None, headers: dict[str, str] | None = None,
+        *, fresh: bool = False,
+    ) -> httpx.Response:
+        """POST and return the raw 2xx response: for services whose success reply is not a JSON body
+        (e.g. an empty reply carrying the new resource id in a header). Never cached; the same
+        retry/rate-gate/breaker policy as `post_json` applies."""
+        return self._request_json("POST", path, params, headers, body, fresh, as_response=True)
+
+    # --- cache ---------------------------------------------------------------
+
+    def _cache_key(self, method: str, path: str, params, body, as_text: bool = False) -> str:
+        raw = json.dumps([self.name, method, path, params, body, as_text], sort_keys=True, default=str)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def _cache_get(self, key: str) -> tuple[bool, Any]:
+        with self._lock:
+            entry = self._cache.get(key)
+            if entry is None:
+                return False, None
+            stored_at, value = entry
+            if self._clock() - stored_at >= self.policy.cache_ttl_seconds:
+                del self._cache[key]
+                return False, None
+            self._cache.move_to_end(key)
+            return True, copy.deepcopy(value)
+
+    def _cache_put(self, key: str, value: Any) -> None:
+        with self._lock:
+            self._cache[key] = (self._clock(), copy.deepcopy(value))
+            self._cache.move_to_end(key)
+            while len(self._cache) > self.policy.cache_max_entries:
+                self._cache.popitem(last=False)
+
+    def _request_json(self, method: str, path: str, params, headers, body, fresh: bool = False, *, as_text: bool = False,
+                      as_response: bool = False) -> Any:
+        caching = self.policy.cache_ttl_seconds > 0 and not as_response  # raw responses are never cached
+        fresh = fresh or _BYPASS_CACHE.get()
+        key = self._cache_key(method, path, params, body, as_text) if caching else ""
+        if caching and not fresh:
+            hit, value = self._cache_get(key)
+            if hit:
+                self.cache_hits += 1
+                self.last_from_cache = True
+                return value
+        self.last_from_cache = False
+        if caching:
+            self.cache_misses += 1
+        result = self._request_json_network(method, path, params, headers, body, as_text, as_response)
+        if caching:
+            self._cache_put(key, result)
+        return result
+
+    def _request_json_network(self, method: str, path: str, params, headers, body, as_text: bool = False,
+                              as_response: bool = False) -> Any:
         self._before_call()
         try:
-            result = self._get_json_with_retries(method, path, params, headers, body)
+            result = self._get_json_with_retries(method, path, params, headers, body, as_text, as_response)
         except NotFoundError:
             self._record(True)  # the service is healthy; the record just isn't there
             raise
@@ -177,7 +330,8 @@ class ConnectorHttpClient:
         self._record(True)
         return result
 
-    def _get_json_with_retries(self, method, path, params, headers, body) -> Any:
+    def _get_json_with_retries(self, method, path, params, headers, body, as_text: bool = False,
+                               as_response: bool = False) -> Any:
         last = "no response"
         for attempt in range(self.policy.max_retries + 1):
             self._wait_for_slot()
@@ -195,6 +349,10 @@ class ConnectorHttpClient:
                     retry_after = parse_retry_after(response.headers.get("Retry-After"))
                 elif status >= 400:
                     raise ConnectorError(f"{self.name}: request rejected (HTTP {status})")
+                elif as_response:
+                    return response
+                elif as_text:
+                    return response.text
                 else:
                     try:
                         return response.json()

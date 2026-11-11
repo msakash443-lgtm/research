@@ -1,0 +1,77 @@
+# Research type: mixed-methods study (X.172 decision, docs/step-by-step-journey-audit.md §3). Differs from full_journey in two ways:
+# it drops gaps_selected (G5, optional): the questions of both strands are set at the framework stage (G6) instead of picked from
+# a single literature gap; and it relabels five stages for two strands. G8 (quantitative strand's analysis plan) and G9 stay.
+name = "mixed_methods"
+version = 1
+label = "Mixed-methods study"
+description = "A study that combines a quantitative and a qualitative strand and integrates the two."
+human_participants = true
+
+[[stages]]
+stage = "idea"
+
+[[stages]]
+stage = "scoped"
+gate = "G1"
+
+[[stages]]
+stage = "search_planned"
+gate = "G2"
+
+[[stages]]
+stage = "retrieved"
+
+[[stages]]
+stage = "screened"
+gate = "G3"
+
+[[stages]]
+stage = "extracted"
+gate = "G4"
+
+[[stages]]
+stage = "synthesized"
+
+[[stages]]
+stage = "framework"
+gate = "G6"
+label = "Questions for each strand"
+
+[[stages]]
+stage = "design_approved"
+gate = "G7"
+label = "Integrated design & ethics"
+
+[[stages]]
+stage = "data_collected"
+label = "Both strands collected"
+
+[[stages]]
+stage = "plan_locked"
+gate = "G8"
+label = "Quantitative plan locked"
+
+[[stages]]
+stage = "analyzed"
+gate = "G9"
+label = "Strand analysis & integration"
+
+[[stages]]
+stage = "drafted"
+gate = "G10"
+
+[[stages]]
+stage = "revised"
+
+[[stages]]
+stage = "submission_ready"
+gate = "G11"
+
+[[stages]]
+stage = "submitted"
+
+[[stages]]
+stage = "revision_loop"
+
+[[stages]]
+stage = "accepted"

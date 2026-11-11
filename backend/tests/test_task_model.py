@@ -8,7 +8,7 @@ from app.database import SessionLocal
 from app.models import GateCode, Project, Task, TaskStatus, User
 
 
-def _project(db):
+def _make_project(db):
     user = User(email=f"task-{uuid.uuid4().hex}@example.test")
     db.add(user)
     db.flush()
@@ -20,7 +20,7 @@ def _project(db):
 
 def test_a_new_task_has_safe_defaults():
     with SessionLocal() as db:
-        project = _project(db)
+        project = _make_project(db)
         db.add(Task(project_id=project.id, type="research_run", payload={"run_id": "r1"}))
         db.commit()
         task = db.scalar(select(Task))
@@ -34,7 +34,7 @@ def test_a_new_task_has_safe_defaults():
 
 def test_every_status_round_trips():
     with SessionLocal() as db:
-        project = _project(db)
+        project = _make_project(db)
         for status in TaskStatus:
             gate = GateCode.G2 if status == TaskStatus.blocked else None
             db.add(Task(project_id=project.id, type=status.value, status=status, blocked_by_gate=gate))
@@ -46,7 +46,7 @@ def test_every_status_round_trips():
 
 def test_a_blocked_task_must_name_its_gate():
     with SessionLocal() as db:
-        project = _project(db)
+        project = _make_project(db)
         db.add(Task(project_id=project.id, type="bulk_search", status=TaskStatus.blocked, blocked_by_gate=GateCode.G2))
         db.commit()
         db.add(Task(project_id=project.id, type="bulk_search", status=TaskStatus.blocked))
@@ -56,7 +56,7 @@ def test_a_blocked_task_must_name_its_gate():
 
 def test_max_attempts_must_be_at_least_one():
     with SessionLocal() as db:
-        project = _project(db)
+        project = _make_project(db)
         db.add(Task(project_id=project.id, type="x", max_attempts=0))
         with pytest.raises(IntegrityError):
             db.commit()

@@ -20,7 +20,7 @@
 Rows in scope for this milestone that are **not** done: <list, or "none">.
 
 ## 2. Test results
-**Automated:** `pytest -q` in `research-main/research/` → **<N> passed, <F> failed** (previous report: <N>).
+**Automated:** `pytest -q` from the repo root → **<N> passed, <F> failed** (previous report: <N>).
 Untested paths (e.g. Postgres-only SQL): <list>.
 
 **Gold set** (X.15; spec §11) — "not measured" is an allowed answer; a guess is not.

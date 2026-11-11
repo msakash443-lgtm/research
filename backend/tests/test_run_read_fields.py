@@ -4,6 +4,7 @@ from app.agent import executor
 from app.agent.llm import LLMResponseError, OpenAICompatibleLLM
 from app.config import get_settings
 from app.main import app
+from tests.llm_replies import structured
 
 QUESTION = "What does the evidence say about female labour participation?"
 
@@ -30,7 +31,7 @@ def _post_run(client, project_id):
 
 def test_run_exposes_input_snapshot(monkeypatch):
     monkeypatch.setattr(get_settings(), "llm_model", "test-model")
-    monkeypatch.setattr(OpenAICompatibleLLM, "complete", lambda self, system, user: "Answer [S1].")
+    monkeypatch.setattr(OpenAICompatibleLLM, "complete_json", lambda self, system, user, schema, max_attempts=None: structured("Answer [S1]."))
     client, project_id = _client_with_source()
 
     run = _post_run(client, project_id)
@@ -43,11 +44,11 @@ def test_run_exposes_input_snapshot(monkeypatch):
 
 
 def test_failed_run_still_records_provider_model(monkeypatch):
-    def fail(self, system, user):
+    def fail(self, system, user, schema, max_attempts=None):
         raise LLMResponseError("provider unavailable")
 
     monkeypatch.setattr(get_settings(), "llm_model", "test-model")
-    monkeypatch.setattr(OpenAICompatibleLLM, "complete", fail)
+    monkeypatch.setattr(OpenAICompatibleLLM, "complete_json", fail)
     client, project_id = _client_with_source()
 
     run = _post_run(client, project_id)

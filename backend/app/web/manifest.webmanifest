@@ -1,0 +1,9 @@
+{
+  "name": "Research AI",
+  "short_name": "Research AI",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fcfcfa",
+  "theme_color": "#fcfcfa",
+  "icons": []
+}

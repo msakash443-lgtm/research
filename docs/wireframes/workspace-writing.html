@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Workspace Writing Wireframe</title>
+<link rel="stylesheet" href="wireframe.css">
+<style>
+  .layout { display:grid; grid-template-columns:170px minmax(0,1fr) 380px; gap:14px; padding:14px 20px; align-items:start; }
+  body.focus .layout { grid-template-columns:minmax(0,1fr); max-width:760px; margin:0 auto; }
+  body.focus .rail, body.focus aside, body.focus .gatebar, body.focus .questions, body.focus .topbar { display:none; }
+  .rail a { display:block; padding:6px 8px; border-radius:6px; text-decoration:none; color:var(--navy); font-size:14px; }
+  .rail a[aria-current="page"] { background:#eef1f4; font-weight:700; }
+  .editor { font-family:Georgia, "Times New Roman", serif; font-size:17px; line-height:1.8; max-width:70ch; }
+  .editor h2 { font-family:system-ui, sans-serif; font-size:20px; margin:0 0 10px; }
+  .s { cursor:pointer; border-radius:3px; padding:1px 0; }
+  .s:hover { background:#f1f4f7; }
+  .s[aria-selected="true"] { background:#e4ecf6; box-shadow:0 0 0 2px #e4ecf6; }
+  .s.nosrc { text-decoration:underline dotted var(--warn); text-decoration-thickness:2px; text-underline-offset:4px; }
+  .s.pasted { background:var(--warn-bg); box-shadow:0 0 0 2px var(--warn-bg); }
+  .cite { font-family:system-ui, sans-serif; font-size:13px; padding:1px 6px; border-radius:5px; background:#eef1f4; color:var(--navy); font-weight:650; white-space:nowrap; }
+  body.colours .o-typed { background:#eef6ff; }
+  body.colours .o-ai { background:var(--ai-bg); }
+  body.colours .o-quote { background:#f0f7ee; }
+  body.colours .o-paste { background:var(--warn-bg); }
+  .ev { border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin:8px 0; }
+  .stack { display:grid; gap:8px; }
+  .stack button { text-align:left; }
+  .savebar { font-size:13px; color:var(--muted); }
+  @media (max-width:1100px) { .layout { grid-template-columns:minmax(0,1fr) 340px; } .rail { display:none; } }
+  @media (max-width:760px) { .layout { grid-template-columns:1fr; padding:12px 16px; } }
+</style>
+</head>
+<body>
+<div class="wf-banner">
+  <span><strong>WIREFRAME</strong> · Researcher workspace: writing, AI settings, report (X.31.6, design doc S4–S6) · invented example text · nothing is saved</span>
+  <span class="row">
+    <label><input type="checkbox" id="pin-toggle" checked> Show walkthrough questions</label>
+    <a href="index.html">All wireframes</a>
+  </span>
+</div>
+
+<header class="topbar">
+  <div class="row">
+    <a class="brand" href="index.html">Research<span>AI</span></a>
+    <span class="crumbs">Remote work &amp; gender wage gap › Write › <strong>2 Background</strong></span>
+  </div>
+  <div class="row">
+    <button class="quiet" id="ai-settings-btn" title="S6">AI: <span id="ai-level-label">Suggestions only</span> ●</button>
+    <span class="pin" title="W5">W5</span>
+  </div>
+</header>
+
+<div class="gatebar">
+  <div class="savebar" id="savebar">Saved 10:43 ✓ <span class="pin" title="W1">W1</span></div>
+  <div class="row">
+    <label class="small row"><input type="checkbox" id="colour-toggle" checked> Show colours by origin <span class="pin" title="W3">W3</span></label>
+    <button class="quiet" id="focus-btn">Focus <kbd>Ctrl+Shift+F</kbd></button>
+    <button class="quiet" id="sim-btn">Similarity check</button>
+    <button class="quiet" id="report-btn">Writing record → Create report</button>
+  </div>
+</div>
+
+<div class="layout">
+  <nav class="rail panel panel-body" aria-label="Sections">
+    <div class="muted small" style="margin-bottom:6px">Sections</div>
+    <a href="#" onclick="wfToast('Would open 1 Intro.');return false;">1 Intro</a>
+    <a href="#" aria-current="page">2 Background</a>
+    <a href="#" onclick="wfToast('Would open 3 Methods.');return false;">3 Methods</a>
+    <a href="#" onclick="wfToast('Would add a section.');return false;">+ Section</a>
+    <a href="#" onclick="wfToast('Would open version history. Every autosave is kept; restoring adds a new version.');return false;">History</a>
+  </nav>
+
+  <article class="panel panel-body">
+    <div class="editor" id="editor" aria-label="Section text"></div>
+    <p class="small muted" style="margin-top:14px">Click a sentence to see its sources and record. Dotted underline = "No source linked yet" (a hint, never a block). Typing is not part of this wireframe.</p>
+    <div class="row" style="margin-top:8px">
+      <button class="quiet" id="paste-btn">Simulate: paste a sentence from a PDF</button>
+      <button class="quiet" id="at-btn">Simulate: type <kbd>@</kbd></button>
+    </div>
+  </article>
+
+  <aside class="panel">
+    <div class="panel-head">
+      <div class="tabs" role="tablist">
+        <button role="tab" aria-selected="true" data-tab="sources">Sources</button>
+        <button role="tab" aria-selected="false" data-tab="ai">AI</button>
+        <button role="tab" aria-selected="false" data-tab="record">Record</button>
+      </div>
+      <span class="pin" title="W2">W2</span>
+    </div>
+    <div class="panel-body" id="panel"></div>
+  </aside>
+</div>
+
+<section class="questions" aria-label="Walkthrough questions">
+  <h2>Questions for the walkthrough (orange pins on the screen)</h2>
+  <ol>
+    <li><span class="pin">W1</span> <span><strong>Calm by default.</strong> Only "Saved 10:43 ✓" shows while you write; nothing nags. Is that the right amount of status? In focus mode even the rail and panel disappear.</span></li>
+    <li><span class="pin">W2</span> <span><strong>One panel, three tabs</strong> (Sources / AI / Record), with the AI and Record tabs only on request. Is "Sources" the tab you want open by default? (Also settles claim-evidence Q6: this panel is the same one.)</span></li>
+    <li><span class="pin">W3</span> <span><strong>Origin colours are on by default (owner, W3).</strong> Turn them off to see typed / pasted / AI / quoted text tinted. Would you want them on while writing, or only when checking?</span></li>
+    <li><span class="pin">W4</span> <span><strong>Pasted text</strong> gets a soft highlight and a question: own text, a quotation, or remove. Is it acceptable that the highlight stays until you answer, and that nothing blocks saving?</span></li>
+    <li><span class="pin">W5</span> <span><strong>AI level (top right).</strong> Off, Suggestions only (default, Q14/Q27) or Full. Is it clear what is sent, and that "Suggestions only" never supplies words for your manuscript?</span></li>
+    <li><span class="pin">W6</span> <span><strong>Writing record report.</strong> Does the report give a supervisor or journal what they need, and is the generic AI-use statement (Q19) the right start?</span></li>
+  </ol>
+</section>
+
+<dialog id="dlg" aria-labelledby="dlg-title">
+  <div class="panel-head" id="dlg-title"></div>
+  <div class="panel-body" id="dlg-body"></div>
+</dialog>
+
+<script src="wireframe.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const REFS = {
+  kumar:{ cite:"Kumar (2021)", verified:true, excerpts:[{ q:"1.2 lakh women are employed in the sector", p:4 }] },
+  sen:{ cite:"Sen (2019)", verified:true, excerpts:[{ q:"Care burden falls on women", p:12 }] },
+  kapoor:{ cite:"Kapoor (2023)", verified:false, why:"not verified yet" },
+};
+// o = origin: typed | ai | quote | paste
+const SENTENCES = [
+  { o:"typed", text:"Kerala's IT sector employs 1.2 lakh women.", cites:["kumar"], by:"typed by Priya · 4 Oct 10:31" },
+  { o:"typed", text:"Wage growth after the shift to remote work was uneven across the sector.", cites:[], by:"typed by Priya · 4 Oct 10:35", nosrc:true },
+  { o:"ai", text:"Remote work may widen the gap between women's and men's pay.", cites:[], by:"AI-edited (model X, workspace_clearer_sentence@1, 10:42), 2 words changed by Priya 10:44" },
+];
+const state = { cur:0, tab:"sources", level:"Suggestions only" };
+
+function renderEditor() {
+  const ed = $("editor"); ed.innerHTML = "<h2>2 Background</h2>";
+  const p = document.createElement("p"); ed.appendChild(p);
+  SENTENCES.forEach((s, i) => {
+    const span = document.createElement("span");
+    span.className = "s o-" + s.o + (s.nosrc && !s.cites.length ? " nosrc" : "") + (s.o === "paste" ? " pasted" : "");
+    span.tabIndex = 0; span.setAttribute("role", "button"); span.setAttribute("aria-selected", i === state.cur ? "true" : "false");
+    span.append(s.text.replace(/\.$/, ""));
+    s.cites.forEach(c => { const b = document.createElement("span"); b.className = "cite"; b.textContent = " (" + REFS[c].cite + ")"; span.append(" ", b); });
+    span.append(". ");
+    span.addEventListener("click", () => { state.cur = i; renderAll(); });
+    span.addEventListener("keydown", e => { if (e.key === "Enter") { state.cur = i; renderAll(); } });
+    p.appendChild(span);
+  });
+}
+function esc(t) { const d = document.createElement("div"); d.textContent = t; return d.innerHTML; }
+function renderPanel() {
+  const s = SENTENCES[state.cur], box = $("panel");
+  document.querySelectorAll("[data-tab]").forEach(b => b.setAttribute("aria-selected", b.dataset.tab === state.tab ? "true" : "false"));
+  if (state.tab === "sources") {
+    let h = `<div class="small muted">Sources for the selected sentence</div><p style="margin:6px 0">“${esc(s.text)}”</p>`;
+    if (!s.cites.length) h += `<p class="small">${s.nosrc ? "No source linked yet." : "This sentence cites nothing."} Type <kbd>@</kbd> in the text to add a verified source.</p>`;
+    s.cites.forEach(c => { REFS[c].excerpts.forEach(x => { h += `<div class="ev"><div class="row"><strong>${esc(REFS[c].cite)}</strong><span class="chip ok">✓ verified</span></div><div class="quote">“${esc(x.q)}”</div><div class="small muted">p.${x.p}</div></div>`; }); });
+    h += `<button class="quiet" id="add-ex">Add excerpt link</button>`;
+    box.innerHTML = h;
+    $("add-ex").addEventListener("click", () => wfToast("Would let you pick a stored excerpt of a verified source and link it to this sentence."));
+  } else if (state.tab === "ai") {
+    const off = state.level === "Off";
+    box.innerHTML = `<div class="small muted">AI level for this project: <strong>${state.level}</strong></div>
+      <div class="stack" style="margin-top:8px">
+        <button class="quiet" data-ai="Challenge this idea" ${off ? "disabled" : ""}>Challenge this idea</button>
+        <button class="quiet" data-ai="Find evidence in my sources" ${off ? "disabled" : ""}>Find evidence in my sources</button>
+        <button class="quiet" data-ai="Check argument structure" ${off ? "disabled" : ""}>Check argument structure</button>
+        <button class="quiet" data-ai="Suggest a clearer sentence" ${state.level === "Full" ? "" : "disabled"}>Suggest a clearer sentence ${state.level === "Full" ? "" : "(needs Full)"}</button>
+      </div>
+      <p class="small muted" style="margin-top:8px">${off ? "AI is off: no text is sent anywhere." : "Each button first shows exactly what will be sent. Suggestions never edit your text."}</p>`;
+    box.querySelectorAll("[data-ai]").forEach(b => b.addEventListener("click", () => aiConfirm(b.dataset.ai)));
+  } else {
+    box.innerHTML = `<div class="small muted">Record for the selected sentence</div><p style="margin:6px 0">“${esc(s.text)}”</p>
+      <ul class="small" style="padding-left:18px"><li>${esc(s.by)}</li></ul>
+      <p class="small muted">Every version is kept. The record shows who or what wrote each part.</p>`;
+  }
+}
+function openDlg(title, html) { $("dlg-title").innerHTML = title; $("dlg-body").innerHTML = html; $("dlg").showModal(); }
+function aiConfirm(action) {
+  const s = SENTENCES[state.cur], words = s.text.split(/\s+/).length;
+  openDlg("Before the AI sees anything", `<p>“${action}” will send <strong>this sentence (${words} words)</strong> to <em>model X via your provider</em>. Nothing else is sent.</p>
+    <div class="row"><button id="ok">Send</button><button class="quiet" id="no">Cancel</button></div>`);
+  $("no").onclick = () => $("dlg").close();
+  $("ok").onclick = () => {
+    $("dlg").close();
+    if (action === "Suggest a clearer sentence") {
+      openDlg("Two proposals <span class='chip ai'>AI</span>", `<div class="ev">Remote work may widen women's pay gap.<div class="row" style="margin-top:6px"><button id="ins">Insert</button></div></div><div class="ev">Remote work could increase the gender pay gap.<div class="row" style="margin-top:6px"><button class="quiet" id="ins2">Insert</button></div></div>
+        <p class="small muted">Inserting is your act; the record will say "AI-edited, then changed by Priya".</p><button class="quiet" id="no2">Close</button>`);
+      const done = () => { $("dlg").close(); wfToast("Inserted. Record: AI-edited (model X, workspace_clearer_sentence@1). Your original stays in the version history."); };
+      $("ins").onclick = done; $("ins2").onclick = done; $("no2").onclick = () => $("dlg").close();
+    } else wfToast("The AI's comment would appear here in the AI tab, labelled as a suggestion. It never changes your text.");
+  };
+}
+function renderAll() { renderEditor(); renderPanel(); }
+
+document.querySelectorAll("[data-tab]").forEach(b => b.addEventListener("click", () => { state.tab = b.dataset.tab; renderPanel(); }));
+$("colour-toggle").addEventListener("change", e => document.body.classList.toggle("colours", e.target.checked));
+function toggleFocus() { document.body.classList.toggle("focus"); if (document.body.classList.contains("focus")) wfToast("Focus mode: press Ctrl+Shift+F again to leave."); }
+$("focus-btn").addEventListener("click", toggleFocus);
+document.addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "f") { e.preventDefault(); toggleFocus(); } });
+
+$("paste-btn").addEventListener("click", () => {
+  if (SENTENCES.some(s => s.o === "paste")) return;
+  SENTENCES.push({ o:"paste", text:"Care burden falls on women.", cites:[], by:"pasted 4 Oct 10:50 (not yet confirmed)" });
+  state.cur = SENTENCES.length - 1; renderAll();
+  openDlg("Pasted. Is this your own text, a quotation or should it go? <span class='pin'>W4</span>", `<p class="small muted">It matches an excerpt of Sen (2019), p.12.</p>
+    <div class="row"><button id="own">My own text</button><button id="quo">Quotation</button><button class="danger" id="rm">Remove</button><button class="quiet" id="later">Decide later</button></div>`);
+  const s = SENTENCES[state.cur];
+  $("own").onclick = () => { s.o = "typed"; s.by = "pasted, confirmed as own text by Priya 10:51"; $("dlg").close(); renderAll(); wfToast("Recorded as pasted and confirmed as your own."); };
+  $("quo").onclick = () => { s.o = "quote"; s.text = "“Care burden falls on women.”"; s.cites = ["sen"]; s.by = "quotation from Sen (2019), p.12, confirmed by Priya 10:51"; $("dlg").close(); renderAll(); wfToast("Quotation marks and the Sen (2019) citation added."); };
+  $("rm").onclick = () => { SENTENCES.pop(); state.cur = 0; $("dlg").close(); renderAll(); };
+  $("later").onclick = () => $("dlg").close();
+});
+$("at-btn").addEventListener("click", () => {
+  openDlg("Cite a source (verified only)", `<div class="stack"><button class="quiet" id="a1"><strong>Kumar (2021)</strong> ✓ verified</button><button class="quiet" id="a2"><strong>Sen (2019)</strong> ✓ verified</button><button class="quiet" disabled>Kapoor (2023) · not verified yet</button><button class="quiet" id="a3">Cancel</button></div>`);
+  $("a1").onclick = $("a2").onclick = () => { $("dlg").close(); wfToast("Citation inserted at the cursor."); };
+  $("a3").onclick = () => $("dlg").close();
+});
+$("sim-btn").addEventListener("click", () => openDlg("Similarity check <span class='chip plain'>on this server only</span>", `<p>Compared with excerpts and abstracts stored in this project. Nothing is sent out.</p>
+  <div class="ev"><mark>Wage growth after the shift to remote work was uneven</mark><div class="small">Very close to Kumar (2021), p.4: quote it, or put it in your own words.</div></div>
+  <p class="small muted">Institutional check (Turnitin / iThenticate): <strong>Not connected: ask your institution.</strong></p><button class="quiet" id="c">Close</button>`) || ($("c").onclick = () => $("dlg").close()));
+$("ai-settings-btn").addEventListener("click", () => {
+  openDlg("AI settings (project owner changes this) <span class='pin'>W5</span>", `<label><input type="radio" name="lv" value="Off" ${state.level === "Off" ? "checked" : ""}> <strong>Off</strong> — no text is sent to any AI.</label>
+    <label><input type="radio" name="lv" value="Suggestions only" ${state.level === "Suggestions only" ? "checked" : ""}> <strong>Suggestions only</strong> (default) — comments, challenges, evidence finding, structure checks; never supplies manuscript words.</label>
+    <label><input type="radio" name="lv" value="Full" ${state.level === "Full" ? "checked" : ""}> <strong>Full</strong> — also reworded sentences you may insert, always labelled in the writing record.</label>
+    <label class="small"><input type="checkbox"> Use the local model only</label>
+    <div class="row"><button id="sv">Save</button><button class="quiet" id="cx">Cancel</button></div>`);
+  $("cx").onclick = () => $("dlg").close();
+  $("sv").onclick = () => { state.level = document.querySelector("input[name=lv]:checked").value; $("ai-level-label").textContent = state.level; $("dlg").close(); renderAll(); wfToast("AI level set to " + state.level + ". The change is audited."); };
+});
+$("report-btn").addEventListener("click", () => openDlg("Writing record report <span class='pin'>W6</span>", `<p><strong>Whole manuscript · 5 weeks · 14 writing sessions</strong></p>
+  <ul class="small" style="padding-left:18px"><li>91% typed</li><li>4% quoted (each with its source)</li><li>3% AI-edited then accepted (half of it changed by Priya afterwards)</li><li>2% pasted and confirmed as her own</li></ul>
+  <p class="small">Lists every AI contribution with model and prompt version, and every quotation with its source. Includes a ready-to-paste AI-use statement (generic template).</p>
+  <div class="row"><button id="e1">Export Markdown</button><button class="quiet" id="e2">Export JSON</button><button class="quiet" id="e3">Close</button></div>`) || ($("e1").onclick = $("e2").onclick = () => wfToast("Would download the report. A supervisor can open the same report in the app."), $("e3").onclick = () => $("dlg").close()));
+
+document.body.classList.add("colours");
+renderAll();
+</script>
+</body>
+</html>

@@ -2,43 +2,49 @@
 
 import re
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app import stage_machine as sm
 from app.artifacts import StageError
 from app.database import SessionLocal
-from app.main import app
+from app.extraction_schema import load_schema, schema_version
 from app.models import (
-    Artifact, ArtifactStatus, AuditEvent, Gate, GateCode, GateStatus, Project, ProjectMember, ProjectRole,
+    AnalysisPlan, AnalysisRun, Artifact, ArtifactStatus, AuditEvent, Extraction, Gap, Gate, GateCode, GateStatus, Project, ProjectMember,
+    ProjectRole, SearchQuery, Source,
     ProjectStage as S,
 )
+from tests.api_helpers import create_project, sign_in_user
 
 ORDER = [s.value for s in S]
-
-
-def _login(email):
-    client = TestClient(app)
-    user_id = client.post("/api/auth/development/login", json={"email": email, "display_name": "A"}).json()["id"]
-    return client, user_id
 
 
 @pytest.fixture
 def world():
     tag = uuid.uuid4().hex[:8]
-    owner, owner_id = _login(f"adv-owner-{tag}@example.com")
-    project_id = owner.post("/api/projects", json={"title": "Advance"}).json()["id"]
+    owner, owner_id = sign_in_user(f"adv-owner-{tag}@example.com")
+    project_id = create_project(owner, "Advance")
     clients = {"owner": owner}
     for role in (ProjectRole.supervisor, ProjectRole.co_author, ProjectRole.reviewer):
-        client, uid = _login(f"adv-{role.value}-{tag}@example.com")
+        client, uid = sign_in_user(f"adv-{role.value}-{tag}@example.com")
         with SessionLocal() as db:
             db.add(ProjectMember(project_id=uuid.UUID(project_id), user_id=uuid.UUID(uid), role=role))
             db.commit()
         clients[role.value] = client
-    return {"clients": clients, "project": project_id, "pid": uuid.UUID(project_id), "owner_id": owner_id}
+    with SessionLocal() as db:
+        # G4's approval locks `Source` creation (`app.source_gate_guard`); this project's source for
+        # G6's conceptual-model path (M4.8) must be created before the walk reaches G4.
+        source = Source(project_id=uuid.UUID(project_id), title="Smith 2020", source_type="article", created_by="test-setup")
+        db.add(source)
+        db.commit()
+        source_id = str(source.id)
+    return {
+        "clients": clients, "project": project_id, "pid": uuid.UUID(project_id), "owner_id": owner_id,
+        "source_id": source_id,
+    }
 
 
 def _set_stage(world, stage):
@@ -53,10 +59,117 @@ def _stage(world):
 
 def _advance(world, stage=None, who="owner"):
     body = {"stage": stage} if stage else {}
-    return world["clients"][who].post(f"/api/projects/{world['project']}/stage/advance", json=body)
+    url = f"/api/projects/{world['project']}/stage/advance"
+    response = world["clients"][who].post(url, json=body)
+    detail = response.json().get("detail") if response.status_code == 409 else None
+    locked = detail.get("recommended") if isinstance(detail, dict) else None
+    if locked:
+        # These tests check gates, re-entry and roles; lock levels are covered in test_stage_condition_overrides.py.
+        body["override_reasons"] = {c["id"]: "Set up by this test; not what it checks." for c in locked}
+        response = world["clients"][who].post(url, json=body)
+    return response
+
+
+def _lock_a_plan(client, project_id):
+    """G8 needs a locked analysis plan (M5.3.4); create one through the API as the owner would."""
+    dataset = client.post(f"/api/projects/{project_id}/datasets", json={"name": "survey", "csv_text": "x\n1\n2\n"}).json()["id"]
+    plan = client.post(
+        f"/api/projects/{project_id}/datasets/{dataset}/analysis-plans",
+        json={"tests": ["descriptives"], "variables": ["x"], "seed": 1},
+    ).json()["id"]
+    assert client.post(f"/api/projects/{project_id}/analysis-plans/{plan}/lock").status_code == 200
+
+
+def _complete_interpretation(world):
+    """G9 needs a findings-to-literature map with every finding confirmed by a person, not merely
+    AI-computed (M6.9, EC-12.2/EC-12.3). Writes a run against G8's locked plan directly (no Docker
+    sandbox in this test), then generates and confirms the map through the real API."""
+    client = world["clients"]["owner"]
+    with SessionLocal() as db:
+        plan = db.scalar(select(AnalysisPlan).where(AnalysisPlan.project_id == world["pid"], AnalysisPlan.locked_at.is_not(None)))
+        g8 = db.scalar(select(Gate).where(Gate.project_id == world["pid"], Gate.code == GateCode.G8))
+        run = AnalysisRun(
+            project_id=world["pid"], analysis_plan_id=plan.id, dataset_id=plan.dataset_id,
+            plan_sha256=plan.plan_sha256, dataset_sha256="0" * 64, script_sha256="0" * 64,
+            environment_sha256=plan.environment_sha256, image="sandbox:test",
+            output_json={"results": {"mean": 1.0}}, output_sha256="0" * 64, created_by="test-setup",
+            created_at=g8.decided_at + timedelta(days=1),  # explicit: avoids tying G8's and the run's clock to the same second
+        )
+        db.add(run)
+        db.commit()
+    findings = client.post(f"/api/projects/{world['project']}/interpretation/generate").json()
+    for finding in findings:
+        assert client.post(
+            f"/api/projects/{world['project']}/interpretation/findings/{finding['id']}/review", json={"decision": "confirmed"}
+        ).status_code == 200
+
+
+def _approve_a_section(client, project_id, owner_id):
+    """G10 needs every manuscript section approved (M6.11); create, save, report and approve one, as the owner would."""
+    document_id = client.post(f"/api/projects/{project_id}/documents", json={"title": "Introduction", "position": 1}).json()["id"]
+    content = {"type": "doc", "content": [{"type": "paragraph", "content": [{
+        "type": "text", "text": "Advance test section.",
+        "marks": [{"type": "prov", "attrs": {"sid": "s1", "origin": "typed", "by": owner_id, "sug": None, "note": None, "paste": None, "src": None}}],
+    }]}]}
+    assert client.post(
+        f"/api/projects/{project_id}/documents/{document_id}/versions",
+        json={"base_number": 0, "client_save_id": uuid.uuid4().hex, "content_json": content},
+    ).status_code == 201
+    assert client.post(f"/api/projects/{project_id}/provenance-reports", json={"scope": "section", "document_id": document_id}).status_code == 201
+    assert client.post(f"/api/projects/{project_id}/documents/{document_id}/approve").status_code == 201
+
+
+def _complete_framework(world):
+    """G6 needs a research question linked to a selected gap and a conceptual-model path whose
+    constructs each carry a measure (M4.8, EC-8.2/EC-8.3)."""
+    client = world["clients"]["owner"]
+    with SessionLocal() as db:
+        gap = Gap(project_id=world["pid"], type="empirical", statement="A selected evidence-backed gap",
+                   selected=True, created_by="test-setup")
+        db.add(gap)
+        db.commit()
+        gap_id = str(gap.id)
+    question = client.post(f"/api/projects/{world['project']}/research-questions", json={
+        "text": "How does trust affect remote collaboration?", "type": "relational", "gap_ids": [gap_id],
+    })
+    assert question.status_code == 201, question.text
+    from_id = client.post(f"/api/projects/{world['project']}/constructs", json={
+        "name": "Trust", "definition": "Definition", "author": "Smith", "measures": [{"scale": "Trust Index"}],
+    }).json()["id"]
+    to_id = client.post(f"/api/projects/{world['project']}/constructs", json={
+        "name": "Performance", "definition": "Definition", "author": "Smith", "measures": [{"scale": "Perf Index"}],
+    }).json()["id"]
+    path = client.post(f"/api/projects/{world['project']}/conceptual-model/paths", json={
+        "from_construct_id": from_id, "to_construct_id": to_id, "kind": "direct",
+        "source_ids": [world["source_id"]], "rationale": "Prior studies report it.",
+    })
+    assert path.status_code == 201, path.text
+
+
+def _verify_extraction(world):
+    """G4 waits for a human-verified, current-schema extraction of every active source, including the
+    one `world()` creates for G6's conceptual-model path."""
+    with SessionLocal() as db:
+        db.add(Extraction(
+            project_id=world["pid"], source_id=uuid.UUID(world["source_id"]),
+            schema_version=schema_version(load_schema()), fields_json={}, evidence_spans={},
+            verified_by_human=True, verified_by="test-setup", verified_at=datetime.now(timezone.utc),
+            extracted_by="human", extractor="test-setup",
+        ))
+        db.commit()
 
 
 def _approve(world, code):
+    if code == "G4":
+        _verify_extraction(world)
+    if code == "G6":
+        _complete_framework(world)
+    if code == "G9":
+        _complete_interpretation(world)
+    if code == "G10":
+        _approve_a_section(world["clients"]["owner"], world["project"], world["owner_id"])
+    if code == "G8":
+        _lock_a_plan(world["clients"]["owner"], world["project"])
     return world["clients"]["owner"].post(f"/api/projects/{world['project']}/gates/{code}/approve", json={"note": "ok"})
 
 
@@ -162,7 +275,8 @@ def test_accepted_is_final(world):
     response = _advance(world)
 
     assert response.status_code == 409 and "final stage" in response.json()["detail"]
-    assert world["clients"]["owner"].get(f"/api/projects/{world['project']}/stage").json() == {"stage": "accepted", "next": []}
+    body = world["clients"]["owner"].get(f"/api/projects/{world['project']}/stage").json()
+    assert body["stage"] == "accepted" and body["next"] == []
 
 
 # ---- interaction with re-entry -----------------------------------------------------------------
@@ -178,6 +292,7 @@ def test_after_re_entry_the_voided_gate_must_be_approved_again_before_moving_on(
 
     blocked = _advance(world)
     assert blocked.status_code == 409 and blocked.json()["detail"]["gate"] == "G2"  # the earlier approval no longer counts
+    _approve(world, "G1")  # reopening 'scoped' voided its own gate too, and gates go in order
     _approve(world, "G2")
     assert _advance(world).status_code == 200 and _stage(world) == "search_planned"
 
@@ -199,13 +314,22 @@ def test_every_member_can_see_where_the_project_can_go(world):
 
     for who in ("owner", "supervisor", "co_author", "reviewer"):
         body = world["clients"][who].get(f"/api/projects/{world['project']}/stage").json()
-        assert body == {"stage": "idea", "next": [{"stage": "scoped", "gate": "G1", "gate_status": "approved", "ready": True}]}
+        assert body["stage"] == "idea"
+        assert [(o["stage"], o["gate"], o["gate_status"], o["ready"]) for o in body["next"]] == [("scoped", "G1", "approved", True)]
 
 
 def test_the_stage_view_shows_a_stage_that_is_not_ready(world):
     body = world["clients"]["owner"].get(f"/api/projects/{world['project']}/stage").json()
 
-    assert body["next"] == [{"stage": "scoped", "gate": "G1", "gate_status": "pending", "ready": False}]
+    assert [(o["stage"], o["gate"], o["gate_status"], o["ready"]) for o in body["next"]] == [("scoped", "G1", "pending", False)]
+
+def test_the_stage_view_lists_the_whole_workflow_with_the_gate_that_completes_each_stage(world):
+    body = world["clients"]["owner"].get(f"/api/projects/{world['project']}/stage").json()
+
+    assert [item["stage"] for item in body["chain"]] == [s.value for s in S]
+    gates = {item["stage"]: item["gate"] for item in body["chain"]}
+    assert gates["idea"] is None and gates["scoped"] == "G1" and gates["accepted"] is None
+
 
 
 # ---- audit and side effects --------------------------------------------------------------------
@@ -223,7 +347,8 @@ def test_an_advance_is_audited_with_who_moved_it_and_who_approved_the_gate(world
 def test_advancing_never_touches_gates_or_artifacts(world):
     _approve(world, "G1")
     with SessionLocal() as db:
-        db.add(Artifact(project_id=world["pid"], kind="x", ref_id="", stage=S.scoped, status=ArtifactStatus.stale, stale_reason="r"))
+        # A later stage's stale result: one at or before the target would block the advance (M0.5.9).
+        db.add(Artifact(project_id=world["pid"], kind="x", ref_id="", stage=S.synthesized, status=ArtifactStatus.stale, stale_reason="r"))
         db.commit()
     before = _snapshot(world)
 
@@ -243,6 +368,9 @@ def _snapshot(world):
 
 def test_a_system_producer_can_advance_an_ungated_stage_but_can_never_pass_a_gate(world):
     _set_stage(world, S.search_planned)
+    with SessionLocal() as db:
+        db.add(SearchQuery(project_id=world["pid"], search_id=uuid.uuid4(), database="openalex", query_string="q", version=1, run_at=datetime.now(timezone.utc), n_results=0, counts={"retrieved": 0}, results=[]))
+        db.commit()
     with SessionLocal() as db:
         project = db.get(Project, world["pid"])
         moved = sm.advance_stage(db, project, actor="agent:search")

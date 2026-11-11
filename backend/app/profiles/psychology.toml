@@ -1,0 +1,18 @@
+# Discipline profile: Psychology (chosen by the product owner, plan Q3, 2026-10-09). Projects can override any setting.
+name = "psychology"
+version = 1
+label = "Psychology"
+description = "Psychological science: experimental, survey and longitudinal designs; PsycINFO alongside biomedical indexes."
+
+[settings]
+citation_style = "apa"
+databases = ["psycinfo", "pubmed", "openalex", "crossref", "semantic_scholar", "scopus"]
+methods = [
+  "randomized_controlled_trial",
+  "lab_experiment",
+  "cross_sectional_survey",
+  "longitudinal_study",
+  "structural_equation_modeling",
+  "meta_analysis",
+]
+reporting_guideline = "PRISMA-2020"

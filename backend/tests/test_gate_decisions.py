@@ -8,24 +8,20 @@ from sqlalchemy import select
 
 from app.database import SessionLocal
 from app.main import app
-from app.models import AuditEvent, Gate, GateCode, Project, ProjectMember, ProjectRole, User
-
-
-def _login(email):
-    client = TestClient(app)
-    user_id = client.post("/api/auth/development/login", json={"email": email, "display_name": "G"}).json()["id"]
-    return client, user_id
+from app.models import AuditEvent, Gate, GateCode, Project, ProjectMember, ProjectRole, User, utcnow
+from gate_helpers import approve_earlier_gates
+from tests.api_helpers import sign_in_user
 
 
 @pytest.fixture
 def team():
     tag = uuid.uuid4().hex[:8]
-    owner, owner_id = _login(f"gd-owner-{tag}@example.com")
+    owner, owner_id = sign_in_user(f"gd-owner-{tag}@example.com")
     project_id = owner.post("/api/projects", json={"title": "Gated"}).json()["id"]
     clients = {"owner": owner}
     ids = {"owner": owner_id}
     for role in (ProjectRole.supervisor, ProjectRole.co_author, ProjectRole.reviewer):
-        client, user_id = _login(f"gd-{role.value}-{tag}@example.com")
+        client, user_id = sign_in_user(f"gd-{role.value}-{tag}@example.com")
         with SessionLocal() as db:
             db.add(ProjectMember(project_id=uuid.UUID(project_id), user_id=uuid.UUID(user_id), role=role))
             db.commit()
@@ -68,6 +64,14 @@ def test_supervisor_approves_a_normal_gate_and_it_is_recorded(team):
 @pytest.mark.parametrize("code", ["G7", "G8", "G11"])
 def test_owner_only_gates_refuse_a_supervisor_but_accept_the_owner(team, code):
     clients, _, project_id = team
+    approve_earlier_gates(project_id, code)
+    if code == "G8":  # M5.3.4: G8 needs a locked analysis plan first
+        dataset = clients["owner"].post(f"/api/projects/{project_id}/datasets", json={"name": "s", "csv_text": "x\n1\n2\n"}).json()["id"]
+        plan = clients["owner"].post(
+            f"/api/projects/{project_id}/datasets/{dataset}/analysis-plans",
+            json={"tests": ["descriptives"], "variables": ["x"], "seed": 1},
+        ).json()["id"]
+        assert clients["owner"].post(f"/api/projects/{project_id}/analysis-plans/{plan}/lock").status_code == 200
 
     assert clients["supervisor"].post(_url(project_id, code, "approve")).status_code == 403
     assert clients["owner"].post(_url(project_id, code, "approve")).status_code == 200
@@ -87,6 +91,7 @@ def test_co_authors_and_reviewers_can_never_decide_any_gate(team, role):
 def test_rejection_needs_a_reason_and_can_be_followed_by_approval(team):
     clients, _, project_id = team
     url = lambda verb: _url(project_id, "G2", verb)  # noqa: E731
+    approve_earlier_gates(project_id, "G2")
 
     assert clients["owner"].post(url("reject")).status_code == 422
     assert clients["owner"].post(url("reject"), json={"note": "   "}).status_code == 422
@@ -99,6 +104,7 @@ def test_rejection_needs_a_reason_and_can_be_followed_by_approval(team):
 
 def test_an_approved_gate_cannot_be_decided_again(team):
     clients, _, project_id = team
+    approve_earlier_gates(project_id, "G3")
     clients["owner"].post(_url(project_id, "G3", "approve"))
 
     assert clients["owner"].post(_url(project_id, "G3", "approve")).status_code == 409
@@ -114,7 +120,7 @@ def test_unknown_gate_code_is_rejected(team):
 
 
 def test_gates_are_created_on_demand_for_projects_without_them():
-    owner, owner_id = _login("gd-legacy@example.com")
+    owner, owner_id = sign_in_user("gd-legacy@example.com")
     with SessionLocal() as db:
         project = Project(owner_id=uuid.UUID(owner_id), title="Direct insert")
         db.add(project)
@@ -153,21 +159,14 @@ def test_nothing_in_the_app_approves_a_gate_except_the_decision_function():
 
 
 @pytest.fixture
-def race_db(tmp_path):
-    """Sessions on a file-backed SQLite database, each with its own connection.
-
-    The shared test engine is in-memory with a StaticPool (one connection for everyone), so
-    two sessions on it can't interleave like two real requests do.
-    """
-    from sqlalchemy import create_engine
+def race_db():
+    """Sessions on the test database, each with its own pooled connection, so two sessions can
+    interleave like two real requests do."""
     from sqlalchemy.orm import sessionmaker
 
-    from app.database import Base
+    from app.database import engine
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'race.db'}", connect_args={"check_same_thread": False})
-    Base.metadata.create_all(engine)
     yield sessionmaker(bind=engine, autocommit=False, autoflush=False, expire_on_commit=False)
-    engine.dispose()
 
 
 def _race_project(Session):
@@ -195,7 +194,8 @@ def test_a_concurrent_decision_cannot_overwrite_an_approval(race_db):
     first, second = race_db(), race_db()
     try:
         p1, p2 = first.get(Project, project_id), second.get(Project, project_id)
-        ensure_gates(first, p1)
+        g1 = next(g for g in ensure_gates(first, p1) if g.code == GateCode.G1)
+        g1.status, g1.decided_by, g1.decided_at = GateStatus.approved, "test-setup", utcnow()  # gates go in order
         first.commit()
         # Both requests have read G2 as pending before either writes. Keep the second read alive:
         # the session's identity map is weak, and a reloaded row would hide the race window.

@@ -1,0 +1,60 @@
+{
+  "screening_prescreen@2": {
+    "eval": "screening",
+    "status": "unevaluated",
+    "reason": "The gold set is empty until the scholar supplies it (plan X.15, Q10)."
+  },
+  "evidence_synthesis@5": {
+    "eval": "none",
+    "reason": "No gold dataset type for synthesis answers yet; citation eligibility is enforced per run, including retracted-source exclusion."
+  },
+  "evidence_extraction@1": {
+    "eval": "extraction",
+    "status": "unevaluated",
+    "reason": "The gold set has no verified extractions yet (plan X.15, Q10); run `python -m evals.run_eval extraction` once the scholar supplies them."
+  },
+  "synonym_suggestions@1": {
+    "eval": "none",
+    "reason": "Suggestions are proposals the scholar edits before use (M1.5.3); there is no gold dataset type for them."
+  },
+  "workspace_challenge@1": {
+    "eval": "none",
+    "reason": "Side-panel challenge on the researcher's own passage. No gold set exists for this task; every reply is schema-checked and leak-checked in code, and it only proposes comments a person may accept or reject."
+  },
+  "workspace_find_evidence@1": {
+    "eval": "none",
+    "reason": "Side-panel evidence matching against project source excerpts. No gold set exists for this task; ids are checked against what was sent, and nothing is stored as verified."
+  },
+  "workspace_clearer_sentence@1": {
+    "eval": "none",
+    "reason": "Side-panel clearer-wording proposals (Full level only). No gold set exists for this task; proposals are reviewed by the researcher before any insert."
+  },
+  "workspace_argument_check@1": {
+    "eval": "none",
+    "reason": "Side-panel argument-structure checks on the researcher's own passage. No gold set exists for this task; every reply is schema-checked and leak-checked in code."
+  },
+  "section_draft@1": {
+    "eval": "none",
+    "reason": "Section-drafting proposals from a claim outline (X.46.8/M6.1.a, Q27 suggestions-only). No gold dataset type exists for draft prose; every draft is a shared AiSuggestion the researcher must explicitly accept, and the reply is schema- and leak-checked in code before it is ever stored."
+  },
+  "front_matter_abstract@1": {
+    "eval": "none",
+    "reason": "Front-matter proposals are reviewed explicitly by the researcher; no gold dataset type exists."
+  },
+  "front_matter_keywords@1": {
+    "eval": "none",
+    "reason": "Front-matter proposals are reviewed explicitly by the researcher; no gold dataset type exists."
+  },
+  "front_matter_highlights@1": {
+    "eval": "none",
+    "reason": "Front-matter proposals are reviewed explicitly by the researcher; no gold dataset type exists."
+  },
+  "front_matter_cover_letter@1": {
+    "eval": "none",
+    "reason": "Front-matter proposals are reviewed explicitly by the researcher; no gold dataset type exists."
+  },
+  "qual_code_suggestions@1": {
+    "eval": "none",
+    "reason": "Qualitative code proposals for one participant excerpt (M5.5.2, X.121). No gold dataset type exists for qualitative codes; every suggestion stays pending until a person accepts or rejects it, and the reply is schema-checked in code before it is stored."
+  }
+}

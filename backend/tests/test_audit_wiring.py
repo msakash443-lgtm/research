@@ -1,7 +1,5 @@
 import uuid
-from datetime import datetime, timedelta, timezone
 
-from fastapi.testclient import TestClient
 from sqlalchemy import select, text
 
 from app.agent import executor
@@ -9,20 +7,13 @@ from app.agent.arc_client import ArcRetrievedSource
 from app.agent.llm import LLMResponseError, OpenAICompatibleLLM
 from app.config import get_settings
 from app.database import SessionLocal
-from app.main import app
-from app.models import AuditEvent, Project, ResearchRun, ResearchRunStatus, User
-from app.worker import reap_stale_runs
-
-
-def _login(email):
-    client = TestClient(app)
-    user_id = client.post("/api/auth/development/login", json={"email": email, "display_name": "A"}).json()["id"]
-    return client, user_id
+from app.models import AuditEvent, Project, ResearchRun, User
+from tests.api_helpers import sign_in_user
 
 
 def _events(project_id=None):
     with SessionLocal() as db:
-        query = select(AuditEvent).order_by(AuditEvent.timestamp.asc(), text("rowid"))  # rowid breaks same-second ties (SQLite tests)
+        query = select(AuditEvent).order_by(AuditEvent.timestamp.asc(), text("ctid"))  # now() is fixed per transaction; ctid breaks ties in insertion order (the table is append-only)
         if project_id:
             query = query.where(AuditEvent.project_id == uuid.UUID(project_id))
         events = db.scalars(query).all()
@@ -30,8 +21,8 @@ def _events(project_id=None):
 
 
 def test_user_writes_are_recorded_with_the_acting_user():
-    client, user_id = _login("audit-user@example.com")
-    _login("audit-peer@example.com")
+    client, user_id = sign_in_user("audit-user@example.com")
+    sign_in_user("audit-peer@example.com")
     project_id = client.post("/api/projects", json={"title": "Audited"}).json()["id"]
     client.post(f"/api/projects/{project_id}/context", json={"kind": "question", "content": "Why?"})
     source = client.post(f"/api/projects/{project_id}/sources", json={"title": "S", "evidence_excerpt": "text"}).json()
@@ -51,7 +42,7 @@ def test_user_writes_are_recorded_with_the_acting_user():
 
 
 def test_failed_or_repeated_actions_do_not_write_events():
-    client, _ = _login("audit-noop@example.com")
+    client, _ = sign_in_user("audit-noop@example.com")
     project_id = client.post("/api/projects", json={"title": "Quiet"}).json()["id"]
     source = client.post(f"/api/projects/{project_id}/sources", json={"title": "S"}).json()
     url = f"/api/projects/{project_id}/sources/{source['id']}/verify"
@@ -64,7 +55,7 @@ def test_failed_or_repeated_actions_do_not_write_events():
 
 
 def test_events_never_contain_source_text_or_answers(fake_llm):
-    client, _ = _login("audit-secret@example.com")
+    client, _ = sign_in_user("audit-secret@example.com")
     project_id = client.post("/api/projects", json={"title": "Private"}).json()["id"]
     client.post(f"/api/projects/{project_id}/sources", json={"title": "S", "evidence_excerpt": "SECRET-EXCERPT"})
     client.post(f"/api/projects/{project_id}/research-runs", json={"question": "A long enough question?"})
@@ -74,7 +65,7 @@ def test_events_never_contain_source_text_or_answers(fake_llm):
 
 
 def test_research_run_events_record_the_agent_and_model(fake_llm):
-    client, user_id = _login("audit-run@example.com")
+    client, user_id = sign_in_user("audit-run@example.com")
     project_id = client.post("/api/projects", json={"title": "Runs"}).json()["id"]
     source_id = client.post(f"/api/projects/{project_id}/sources", json={"title": "S", "evidence_excerpt": "text"}).json()["id"]
     client.post(f"/api/projects/{project_id}/sources/{source_id}/verify")  # cited sources must be verified (M1.10.3)
@@ -88,12 +79,12 @@ def test_research_run_events_record_the_agent_and_model(fake_llm):
 
 
 def test_failed_run_is_recorded_loudly(monkeypatch):
-    def fail(self, system, user):
+    def fail(self, system, user, schema, max_attempts=None):
         raise LLMResponseError("provider unavailable")
 
     monkeypatch.setattr(get_settings(), "llm_model", "test-model")
-    monkeypatch.setattr(OpenAICompatibleLLM, "complete", fail)
-    client, _ = _login("audit-fail@example.com")
+    monkeypatch.setattr(OpenAICompatibleLLM, "complete_json", fail)
+    client, _ = sign_in_user("audit-fail@example.com")
     project_id = client.post("/api/projects", json={"title": "Fails"}).json()["id"]
     client.post(f"/api/projects/{project_id}/sources", json={"title": "S", "evidence_excerpt": "text"})
     client.post(f"/api/projects/{project_id}/research-runs", json={"question": "A long enough question?"})
@@ -102,13 +93,13 @@ def test_failed_run_is_recorded_loudly(monkeypatch):
     assert finished[2]["status"] == "failed" and finished[3] == "test-model"
 
 
-def test_arc_ingest_is_recorded_as_unverified(monkeypatch):
+def test_arc_ingest_is_recorded_as_unverified(monkeypatch, fake_llm):
     settings = get_settings()
     monkeypatch.setattr(settings, "arc_retrieval_enabled", True)
     monkeypatch.setattr(settings, "arc_retrieval_base_url", "http://arc.test")
     item = ArcRetrievedSource("Found", "https://x.example/1", None, 2020, "scholar", "abs", "loc")
     monkeypatch.setattr(executor.ArcRetrievalClient, "retrieve", lambda self, topic: [item])
-    client, _ = _login("audit-arc@example.com")
+    client, _ = sign_in_user("audit-arc@example.com")
     project_id = client.post("/api/projects", json={"title": "Arc"}).json()["id"]
     client.post(f"/api/projects/{project_id}/research-runs", json={"question": "A long enough question?", "use_web_retrieval": True})
 
@@ -116,28 +107,3 @@ def test_arc_ingest_is_recorded_as_unverified(monkeypatch):
     assert retrieved[1] == "agent:arc-retrieval"
     assert retrieved[2]["added"] == 1 and retrieved[2]["verified"] is False
 
-
-def test_reaper_records_requeue_and_abandon():
-    settings = get_settings()
-    old = datetime.now(timezone.utc) - timedelta(seconds=settings.research_run_lease_seconds + 60)
-    with SessionLocal() as db:
-        user = User(email=f"audit-reap-{uuid.uuid4().hex}@example.test")
-        db.add(user)
-        db.flush()
-        project = Project(owner_id=user.id, title="Reap")
-        db.add(project)
-        db.flush()
-        for attempts in (1, settings.research_run_max_attempts):
-            db.add(
-                ResearchRun(
-                    project_id=project.id, question="q", status=ResearchRunStatus.running,
-                    started_at=old, attempt_count=attempts,
-                )
-            )
-        db.commit()
-        project_id = str(project.id)
-
-    assert reap_stale_runs() == 2
-
-    actions = {e[0]: e[1] for e in _events(project_id)}
-    assert actions == {"research_run.requeued": "agent:worker", "research_run.abandoned": "agent:worker"}

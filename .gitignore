@@ -1,6 +1,8 @@
 # Databases
 *.db
 *.db.bak
+*.db.bak*
+omp-session-*.html
 
 # Python
 __pycache__/
@@ -11,3 +13,30 @@ venv/
 
 # Secrets
 .env
+
+# Local object storage (M0.10.2)
+/data/
+/backend/data/objects/projects/*/
+
+# Scratch pytest dirs (M3 work)
+.pytest-m3-*/
+.pytest-*/
+
+# Local review scratch output
+local-review-*.txt
+
+# Node dev dependencies (JS tests)
+node_modules/
+
+# Local notes objects (runtime data)
+/backend/data/objects/notes/
+local-e2e-cookies.txt
+
+# Underscore-prefixed scratch pytest dirs and plan backups (history lives in git)
+/_pytest*/
+/plan-backup-*/
+# Local runtime logs, cookies and scratch output
+/*.log
+/*.tmp
+local-cookies.txt
+test_localsystem.txt

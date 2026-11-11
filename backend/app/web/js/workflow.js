@@ -1,10 +1,21 @@
-// Pure data and status logic, no DOM. Mirrors spec Appendix C / app/artifacts.py GATE_STAGES
-// (the stage a gate must be approved to reach).
-export const STAGES = [
-  ["idea"], ["scoped", "G1"], ["search_planned", "G2"], ["retrieved"], ["screened", "G3"], ["extracted", "G4"], ["synthesized"],
-  ["gaps_selected", "G5"], ["framework", "G6"], ["design_approved", "G7"], ["data_collected"], ["plan_locked", "G8"],
-  ["analyzed", "G9"], ["drafted", "G10"], ["revised"], ["submission_ready", "G11"], ["submitted"], ["revision_loop"], ["accepted"],
-];
+// Pure data and status logic, no DOM. The stage order comes from the server (GET /stage `chain`,
+// app/stage_order.py), so it is filled in by setStageChain(); nothing here hard-codes the workflow.
+import { label } from "./dom.js";
+
+export const STAGES = [];
+export function setStageChain(chain) {
+  STAGES.splice(
+    0,
+    STAGES.length,
+    ...chain.map((item) => (item.gate ? [item.stage, item.gate, item.label || null] : [item.stage, undefined, item.label || null]))
+  );
+}
+// `[stage, gate, label]`; `label` is the research type's own override (e.g. qualitative's design_approved is
+// "Design, interview guide & ethics"), falling back to the generic snake_case -> Title Case conversion.
+export function stageLabel(entry) {
+  if (!entry) return "";
+  return entry[2] || label(entry[0]);
+}
 export const GATE_NAMES = {
   G1: "Scope", G2: "Search plan", G3: "Screening", G4: "Extraction", G5: "Gap selection",
   G6: "Framework", G7: "Design", G8: "Analysis plan", G9: "Results", G10: "Draft", G11: "Final sign-off",
@@ -21,17 +32,40 @@ export const FRAMEWORK_ELEMENTS = {
   custom: [],
 };
 
-// Every screen the workspace builds. "overview" sits above the groups; everything else is
-// grouped in the left rail. Later spec stages (screening onward) have no screen yet (rule 32) —
-// they only appear, locked, in the "Later stages" disclosure built from STAGES.
+// ProjectStage ids (app/models.py) with no dedicated built screen today: there is no STEPS entry whose work is
+// locked behind reaching exactly that stage. Mirrors the current screen coverage (frontend constant, not backend
+// data, same pattern as GATE_NAMES/FRAMEWORK_ELEMENTS) — re-derive by reading STEPS below if screens change.
+// NOT "screened"/"extracted"/"gaps_selected"/"framework"/"drafted": the Screening, Evidence table/Verify extraction,
+// Gaps & questions, and Write screens below cover that work now, even though an older version had no screen past "retrieved".
+export const NO_SCREEN_STAGES = new Set([
+  "retrieved", "synthesized", "design_approved",
+  "data_collected", "plan_locked", "analyzed", "revised", "submission_ready",
+  "submitted", "revision_loop", "accepted",
+]);
+// `STAGES` entries (order preserved) that have no dedicated screen yet; used for the "Later stages" disclosure.
+// Order-independent: membership-tested against NO_SCREEN_STAGES, never index-sliced from a named anchor stage
+// (decision 4a forbids hard-coding the 19-stage order at call sites).
+export function stagesWithoutScreen(stages = STAGES) {
+  return stages.filter(([name]) => NO_SCREEN_STAGES.has(name));
+}
+
+// Every screen the workspace builds. Steps without a group ("overview", "guide") sit above the groups; everything
+// else is grouped in the left rail. Mirrored by app/guidance.py UI_STEPS (a guide entry may only point at a screen
+// listed here).
 export const STEPS = [
   { id: "overview", title: "Overview" },
+  { id: "guide", title: "Research path" },
   { id: "scope", title: "Scope", group: "Plan" },
   { id: "criteria", title: "Criteria & seeds", group: "Plan" },
   { id: "search", title: "Search", group: "Gather" },
   { id: "results", title: "Results check", group: "Gather" },
   { id: "sources", title: "Sources", group: "Gather" },
+  { id: "screen", title: "Screening", group: "Gather" },
+  { id: "evidence", title: "Evidence table", group: "Synthesize" },
+  { id: "verification", title: "Verify extraction", group: "Synthesize" },
+  { id: "gaps", title: "Gaps & questions", group: "Synthesize" },
   { id: "ask", title: "Ask", group: "Synthesize" },
+  { id: "write", title: "Write", group: "Synthesize" },
   { id: "approvals", title: "Approvals", group: "Project" },
   { id: "team", title: "Team", group: "Project" },
   { id: "activity", title: "Activity", group: "Project" },
@@ -43,6 +77,11 @@ export const GUIDES = {
   overview: {
     what: "Where this project stands and what to do next.",
     why: "One place to see progress and anything waiting on you.",
+    approval: null,
+  },
+  guide: {
+    what: "What each stage means, which kind of review fits your question, and when meta-analysis is advisable.",
+    why: "So you always know what comes next and why.",
     approval: null,
   },
   scope: {
@@ -70,6 +109,31 @@ export const GUIDES = {
     why: "Only verified sources may be cited in answers.",
     approval: null,
   },
+  screen: {
+    what: "Screen titles and abstracts one record at a time: include, exclude with a reason, or maybe.",
+    why: "Your decisions, not the AI's, decide what reaches the included set; every exclusion reason feeds the PRISMA counts.",
+    approval: "G3 Screening: owner or supervisor approves the included set.",
+  },
+  evidence: {
+    what: "Compare extracted fields across papers and inspect every populated cell against stored source text.",
+    why: "The table keeps each value tied to its quote, page or section, and review status.",
+    approval: "Critical fields need a person's verification before G4 can be approved.",
+  },
+  verification: {
+    what: "Compare each extraction with its stored PDF and confirm every critical field.",
+    why: "Human checks make sample sizes, measures and effects accountable before synthesis.",
+    approval: "G4 opens only after every included paper's current extraction is verified.",
+  },
+  write: {
+    what: "Write a manuscript section. Every sentence records who wrote it: typed by you, pasted, or from an AI suggestion.",
+    why: "Authorship is kept for the writing record and the provenance report. Nothing is deleted: every save adds a version you can restore.",
+    approval: null,
+  },
+  gaps: {
+    what: "Curate evidence-backed literature gaps, draft research questions, and review advisory FINER criteria.",
+    why: "Make the human's reasoning about relevance, novelty, theory, and evidence explicit.",
+    approval: "G5 and G6 remain human decisions; FINER is advisory only.",
+  },
   ask: {
     what: "Ask a research question answered from saved context and sources.",
     why: "Every run records its plan, inputs, model and prompt version.",
@@ -90,15 +154,6 @@ export const GUIDES = {
     why: "Accountability: who did what, when, with which model.",
     approval: null,
   },
-};
-
-const ACTION_TEXT = {
-  scope: "Write your research question",
-  criteria: "Set screening criteria",
-  search: "Plan and queue a search",
-  results: "Check search results",
-  sources: "Verify your sources",
-  ask: "Ask the agent",
 };
 
 function gate(summary, code) {
@@ -143,6 +198,9 @@ export function stepStatus(stepId, summary) {
       if (unverified === 0) return { status: "done" };
       return { status: "attention", count: unverified };
     }
+    case "evidence":
+    case "verification":
+      return { status: "info" };
     case "ask": {
       const runs = summary.runs || [];
       if (runs.length === 0) return { status: "todo" };
@@ -170,13 +228,25 @@ export function stepStatus(stepId, summary) {
   }
 }
 
-const NEXT_ORDER = ["scope", "criteria", "search", "results", "sources", "ask"];
+// The research-path guide (GET /api/guide, app/guides/journey.toml) is the same for every project, so it is
+// fetched once and kept in ctx.cache. `request` is passed in to keep this module free of fetch/DOM code.
+export async function loadGuide(ctx, request) {
+  if (!ctx.cache.guide) ctx.cache.guide = await request("/api/guide");
+  return ctx.cache.guide;
+}
 
-export function nextAction(summary) {
-  for (const id of NEXT_ORDER) {
-    if (stepStatus(id, summary).status !== "done") {
-      return { id, title: STEPS.find((s) => s.id === id).title, action: ACTION_TEXT[id] };
-    }
-  }
-  return null;
+// The stage(s) whose work each screen does (frontend constant, same pattern as NO_SCREEN_STAGES). A screen is
+// available when any mapped stage appears in the project's chain (GET /stage); screens with no mapping belong
+// to every type.
+export const SCREEN_STAGE = {
+  scope: "scoped", criteria: "search_planned", search: "search_planned", results: "retrieved", sources: "retrieved",
+  screen: "screened", evidence: "extracted", verification: "extracted", gaps: ["gaps_selected", "framework"],
+  ask: "synthesized", write: "drafted",
+};
+// `chain` is the GET /stage shape: [{stage, gate, label}]. An empty or missing chain hides nothing.
+export function screenInChain(stepId, chain) {
+  const stage = SCREEN_STAGE[stepId];
+  if (!stage || !chain?.length) return true;
+  const alternatives = Array.isArray(stage) ? stage : [stage];
+  return chain.some((item) => alternatives.includes(item.stage));
 }

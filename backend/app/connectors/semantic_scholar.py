@@ -1,6 +1,8 @@
 """Semantic Scholar connector (official Graph API, https://api.semanticscholar.org/api-docs).
 
 Search, lookup by id (S2 paper id or DOI), batch lookup, references and citations (each paged).
+`search` is relevance search (no operators); `boolean_search` is the bulk endpoint that applies
+AND / OR / phrases, which database searches use (M1.5.5).
 Full text is not offered (`get_fulltext` raises `NotSupportedError`); the open-access PDF link is
 returned as `oa_url`.
 
@@ -33,13 +35,17 @@ from app.connectors.base import (
     PaperRecord,
     SearchPage,
     SearchRequest,
+    citation_count,
+    clean_abstract,
+    clean_link,
+    clean_text,
 )
 from app.connectors.http import ConnectorHttpClient, HttpPolicy, NotFoundError
 from app.doi import normalize_doi
 
 BASE_URL = "https://api.semanticscholar.org/graph/v1"
 NAME = "semantic_scholar"
-FIELDS = "paperId,title,abstract,year,venue,authors,externalIds,openAccessPdf,url,publicationTypes"
+FIELDS = "paperId,title,abstract,year,venue,authors,externalIds,openAccessPdf,url,publicationTypes,citationCount"
 MAX_SEARCH_WINDOW = 1000  # offset + limit may not exceed this for relevance search
 MAX_BATCH = 500
 SUPPORTED_FILTERS = ("year_from", "year_to", "type", "is_oa")
@@ -47,6 +53,7 @@ _PAPER_ID = re.compile(r"^[0-9a-f]{40}$")
 _YEAR = re.compile(r"^\d{4}$")
 _TYPE = re.compile(r"^[A-Za-z]{3,40}$")
 _OFFSET = re.compile(r"^\d{1,6}$")
+_TOKEN = re.compile(r"^[A-Za-z0-9_\-=+/.]{1,500}$")  # bulk-search continuation token
 
 
 def paper_ref(value: str) -> str:
@@ -67,15 +74,6 @@ def _path_ref(ref: str) -> str:
     return quote(ref, safe="/()-._:;")
 
 
-def _str(value: Any, limit: int) -> str | None:
-    return value.strip()[:limit] if isinstance(value, str) and value.strip() else None
-
-
-def _http(value: Any) -> str | None:
-    text = _str(value, 2000)
-    return text if text and text.lower().startswith(("http://", "https://")) else None
-
-
 def to_record(paper: Any) -> PaperRecord | None:
     """Normalise one S2 paper; None when it has no id or title (S2 returns such stubs)."""
     if not isinstance(paper, dict):
@@ -83,7 +81,7 @@ def to_record(paper: Any) -> PaperRecord | None:
     pid = paper.get("paperId")
     if not isinstance(pid, str) or not _PAPER_ID.match(pid.lower()):
         return None
-    title = _str(paper.get("title"), 500)
+    title = clean_text(paper.get("title"), 500)
     if not title:
         return None
     pid = pid.lower()
@@ -102,8 +100,8 @@ def to_record(paper: Any) -> PaperRecord | None:
         if value not in (None, ""):
             source_ids[label] = str(value)[:100]
 
-    abstract = _str(paper.get("abstract"), 20000)
-    venue = _str(paper.get("venue"), 500)
+    abstract = clean_abstract(paper.get("abstract"), 20000)
+    venue = clean_text(paper.get("venue"), 500)
     if (venue or "").lower() == "arxiv.org":
         flags.append("preprint")
     if not abstract:
@@ -113,7 +111,7 @@ def to_record(paper: Any) -> PaperRecord | None:
     authors = tuple(
         name
         for a in (paper.get("authors") or [])[:200]
-        if isinstance(a, dict) and (name := _str(a.get("name"), 200))
+        if isinstance(a, dict) and (name := clean_text(a.get("name"), 200))
     )
     return PaperRecord(
         connector=NAME,
@@ -124,10 +122,11 @@ def to_record(paper: Any) -> PaperRecord | None:
         year=year if isinstance(year, int) and 1000 <= year <= 2200 else None,
         venue=venue,
         abstract=abstract,
-        url=_http(paper.get("url")),
-        oa_url=_http(pdf.get("url")),
+        url=clean_link(paper.get("url")),
+        oa_url=clean_link(pdf.get("url")),
         source_ids=source_ids,
         quality_flags=tuple(flags),
+        cited_by_count=citation_count(paper.get("citationCount")),
     )
 
 
@@ -230,6 +229,34 @@ class SemanticScholarConnector(ConnectorBase):
             records=tuple(records),
             total=total if isinstance(total, int) and total >= 0 else None,
             next_cursor=str(nxt) if has_next and nxt < MAX_SEARCH_WINDOW else None,
+        )
+
+    def boolean_search(self, request: SearchRequest) -> SearchPage:
+        """Boolean search over titles and abstracts (`/paper/search/bulk`, M1.5.5).
+
+        Takes the bulk syntax the `semantic_scholar` adapter writes (`+` AND, `|` OR, quoted phrases,
+        `*` prefix). Results are not ranked by relevance. Each page holds up to 1,000 records
+        whatever `limit` says (the API has no page size); the cursor is the API's continuation token,
+        so there is no 1,000-result window here. `search` stays the relevance search used for
+        title look-ups (the citation verifier).
+        """
+        params = self._search_params(request.filters)
+        params.update(query=request.query, fields=FIELDS)
+        if request.cursor is not None:
+            if not _TOKEN.match(request.cursor):
+                raise ConnectorError("Invalid cursor for Semantic Scholar bulk search")
+            params["token"] = request.cursor
+        data = self._http.get_json("/paper/search/bulk", params)
+        if not isinstance(data, dict):
+            raise ConnectorError("Semantic Scholar returned an unexpected reply")
+        records = self._records(data.get("data") if data.get("data") is not None else [])
+        total = data.get("total")
+        token = data.get("token")
+        self.last_search_capped = False
+        return SearchPage(
+            records=tuple(records),
+            total=total if isinstance(total, int) and total >= 0 else None,
+            next_cursor=token if isinstance(token, str) and _TOKEN.match(token) and data.get("data") else None,
         )
 
     def get_by_id(self, external_id: str) -> PaperRecord | None:

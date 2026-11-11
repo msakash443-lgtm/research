@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Observability Dashboard Wireframe</title>
+<link rel="stylesheet" href="wireframe.css">
+<style>
+  .grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; padding:14px 20px 0; }
+  @media (max-width:800px) { .grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+  .tile { border:1px solid var(--line); border-radius:10px; padding:10px 12px; background:#fff; }
+  .tile .k { font-size:12px; color:var(--muted); }
+  .tile .v { font-size:24px; font-weight:650; color:var(--navy); }
+  .tile .s { font-size:12px; color:var(--muted); }
+  .work { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:14px; padding:14px 20px; }
+  @media (max-width:800px) { .work { grid-template-columns:minmax(0,1fr); } }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:6px 6px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { font-size:12px; color:var(--muted); font-weight:600; }
+  td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .unpriced { color:var(--warn); font-size:12px; }
+  .bad { color:var(--bad); font-weight:650; }
+  .note { font-size:12px; color:var(--muted); margin:8px 0 0; }
+  .bar { height:6px; background:#eef1f3; border-radius:3px; margin-top:4px; overflow:hidden; }
+  .bar > span { display:block; height:100%; background:var(--teal); }
+</style>
+</head>
+<body>
+<div class="wf-banner"><span><strong>WIREFRAMES</strong> · X.7.3 · static prototype with invented data · not connected to the app · resets on reload</span></div>
+<header class="topbar">
+  <div class="brand">Research AI</div>
+  <div class="crumbs">Project · Observability</div>
+  <div class="spacer"></div>
+  <label class="small"><input type="checkbox" id="pin-toggle" checked> Show walkthrough questions</label>
+  <label class="small">View as
+    <select id="role">
+      <option value="owner">Owner</option>
+    </select>
+  </label>
+</header>
+
+<main>
+  <section class="grid" aria-label="Totals">
+    <div class="tile"><div class="k">Steps run <span class="pin" title="Q1">Q1</span></div><div class="v">412</div><div class="s">364 completed · <span class="bad">11 failed</span></div></div>
+    <div class="tile"><div class="k">Steps retried</div><div class="v">17</div><div class="s">ran more than once before ending</div></div>
+    <div class="tile"><div class="k">Model calls</div><div class="v">538</div><div class="s">1,94M tokens (where reported)</div></div>
+    <div class="tile"><div class="k">Cost (lower bound) <span class="pin" title="Q3">Q3</span></div><div class="v">$3.42</div><div class="s"><span class="unpriced">12 calls unpriced, not counted</span></div></div>
+    <p class="note" style="padding:0 20px">Whole project history. Owner only: co-authors, reviewers and supervisors do not see this page. A time-window filter is a follow-up task (X.137).</p>
+  </section>
+
+  <section class="work">
+    <div>
+      <div class="panel">
+        <div class="panel-head"><h2>Steps by type</h2><span class="pin" title="Q2">Q2</span></div>
+        <div class="panel-body">
+          <table>
+            <thead><tr><th>Step</th><th class="num">Total</th><th class="num">Done</th><th class="num">Failed</th><th class="num">Queued</th><th class="num">Running</th><th class="num">Paused</th><th class="num">Blocked</th><th class="num">Retried</th></tr></thead>
+            <tbody>
+              <tr><td>Screening prescreen</td><td class="num">120</td><td class="num">118</td><td class="num">2</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">2</td></tr>
+              <tr><td>Research run</td><td class="num">38</td><td class="num">31</td><td class="num">4</td><td class="num">1</td><td class="num">1</td><td class="num">0</td><td class="num">1</td><td class="num">9</td></tr>
+              <tr><td>Source retrieval</td><td class="num">254</td><td class="num">215</td><td class="num">5</td><td class="num">30</td><td class="num">3</td><td class="num">1</td><td class="num">0</td><td class="num">6</td></tr>
+            </tbody>
+          </table>
+          <p class="note">Queued, running and paused are shown separately. Blocked = waiting for a gate approval. Retried = the step needed a second or later attempt.</p>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top:12px">
+        <div class="panel-head"><h2>How long completed steps took</h2></div>
+        <div class="panel-body">
+          <table>
+            <thead><tr><th>Step</th><th class="num">Timed</th><th class="num">Average</th><th class="num">Longest</th></tr></thead>
+            <tbody>
+              <tr><td>Screening prescreen</td><td class="num">118</td><td class="num">4.2 s</td><td class="num">19.8 s</td></tr>
+              <tr><td>Research run</td><td class="num">31</td><td class="num">1 min 12 s</td><td class="num">6 min 40 s</td></tr>
+              <tr><td>Source retrieval</td><td class="num">0</td><td class="num">—</td><td class="num">—</td></tr>
+            </tbody>
+          </table>
+          <p class="note">Times use the attempt that finished. Steps that ran before timings were recorded show "0 timed", not zero seconds.</p>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="panel">
+        <div class="panel-head"><h2>Model calls and cost</h2><span class="pin" title="Q4">Q4</span></div>
+        <div class="panel-body">
+          <table>
+            <thead><tr><th>Purpose</th><th>Model</th><th class="num">Calls</th><th class="num">Tokens</th><th class="num">Cost</th></tr></thead>
+            <tbody>
+              <tr><td>Screening</td><td>claude-haiku-5-5</td><td class="num">402</td><td class="num">1,21M</td><td class="num">$0.61</td></tr>
+              <tr><td>Research run</td><td>claude-sonnet-5-5</td><td class="num">96</td><td class="num">0,58M</td><td class="num">$2.81</td></tr>
+              <tr><td>Research run</td><td>claude-haiku-5-5</td><td class="num">40</td><td class="num">0,12M</td><td class="num">—</td></tr>
+            </tbody>
+          </table>
+          <p class="note">Costs use the hand-kept price table. A model without a price shows "—" and is left out of the total. Counts only: no prompts, answers or error text appear on this page.</p>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top:12px">
+        <div class="panel-head"><h2>Failures</h2></div>
+        <div class="panel-body">
+          <p class="small">11 steps ended in failure. Error text is not shown here: each failure links to its details.</p>
+          <table>
+            <thead><tr><th>Step</th><th>Failed at</th><th>Details</th></tr></thead>
+            <tbody>
+              <tr><td>Research run</td><td>2026-10-21 14:03</td><td><a href="#" onclick="return false">Open run</a></td></tr>
+              <tr><td>Research run</td><td>2026-10-20 09:17</td><td><a href="#" onclick="return false">Open run</a></td></tr>
+              <tr><td>Source retrieval</td><td>2026-10-19 16:42</td><td><a href="#" onclick="return false">Open step</a></td></tr>
+              <tr><td>Source retrieval</td><td>2026-10-18 11:05</td><td><a href="#" onclick="return false">Open step</a></td></tr>
+            </tbody>
+          </table>
+          <p class="note">Showing 4 of 11 failures. The rest are listed on the run's own screen.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel" style="margin:0 20px 20px">
+    <div class="panel-head"><h2>Walkthrough questions</h2></div>
+    <ol class="small" style="margin:0;padding-left:20px">
+      <li><span class="pin">Q1</span> Is the whole project history enough, or does the scholar need a time window (last 7 days, this stage)? The endpoint has no date filter yet.</li>
+      <li><span class="pin">Q2</span> "Waiting" lumps queued, running and paused together. Should they be shown as three columns instead?</li>
+      <li><span class="pin">Q3</span> The cost total is a lower bound: calls without a price are left out. Is that acceptable, or should the screen refuse to show a total at all?</li>
+      <li><span class="pin">Q4</span> Who sees this page? The backend allows every project member to read it. Should co-authors and reviewers see cost figures, or owner and supervisor only?</li>
+      <li><span class="pin">Q5</span> Is a failure count without the error text enough to act on, or does the scholar need a link from each failure to its details?</li>
+    </ol>
+  </section>
+</main>
+<script src="wireframe.js"></script>
+</body>
+</html>

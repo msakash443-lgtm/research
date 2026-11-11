@@ -30,6 +30,8 @@ from app.connectors.base import (
     PaperRecord,
     SearchPage,
     SearchRequest,
+    clean_link,
+    clean_text,
 )
 from app.connectors.http import ConnectorHttpClient, HttpPolicy, NotFoundError
 from app.doi import normalize_doi
@@ -52,15 +54,6 @@ class OaLocation(BaseModel):
     host_type: str | None = None  # publisher / repository
 
 
-def _str(value: Any, limit: int) -> str | None:
-    return value.strip()[:limit] if isinstance(value, str) and value.strip() else None
-
-
-def _http(value: Any) -> str | None:
-    text = _str(value, 2000)
-    return text if text and text.lower().startswith(("http://", "https://")) else None
-
-
 def _doi(value: str) -> str:
     try:
         doi = normalize_doi(value)
@@ -76,16 +69,16 @@ def to_location(data: dict[str, Any], doi: str) -> OaLocation | None:
     best = data.get("best_oa_location")
     if not data.get("is_oa") or not isinstance(best, dict):
         return None
-    landing, pdf = _http(best.get("url")), _http(best.get("url_for_pdf"))
+    landing, pdf = clean_link(best.get("url")), clean_link(best.get("url_for_pdf"))
     if not (landing or pdf):
         return None
     return OaLocation(
         doi=doi,
         landing_page_url=landing,
         pdf_url=pdf,
-        license=_str(best.get("license"), 100),
-        version=_str(best.get("version"), 50),
-        host_type=_str(best.get("host_type"), 50),
+        license=clean_text(best.get("license"), 100),
+        version=clean_text(best.get("version"), 50),
+        host_type=clean_text(best.get("host_type"), 50),
     )
 
 
@@ -94,15 +87,15 @@ def to_record(data: dict[str, Any]) -> PaperRecord | None:
         doi = _doi(str(data.get("doi", "")))
     except ConnectorError:
         return None
-    title = _str(data.get("title"), 500)
+    title = clean_text(data.get("title"), 500)
     if not title:
         return None
     location = to_location(data, doi)
     authors = []
     for a in (data.get("z_authors") or [])[:200]:
         if isinstance(a, dict):
-            name = _str(a.get("raw_author_name"), 200) or " ".join(
-                p for p in (_str(a.get("given"), 100), _str(a.get("family"), 100)) if p
+            name = clean_text(a.get("raw_author_name"), 200) or " ".join(
+                p for p in (clean_text(a.get("given"), 100), clean_text(a.get("family"), 100)) if p
             )
             if name:
                 authors.append(name)
@@ -114,8 +107,8 @@ def to_record(data: dict[str, Any]) -> PaperRecord | None:
         doi=doi,
         authors=tuple(authors),
         year=year if isinstance(year, int) and 1000 <= year <= 2200 else None,
-        venue=_str(data.get("journal_name"), 500),
-        url=_http(data.get("doi_url")),
+        venue=clean_text(data.get("journal_name"), 500),
+        url=clean_link(data.get("doi_url")),
         oa_url=(location.pdf_url or location.landing_page_url) if location else None,
         source_ids={NAME: doi},
         quality_flags=("no_abstract",),

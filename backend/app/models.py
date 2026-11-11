@@ -1,9 +1,9 @@
 import enum
 import hashlib
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
-from sqlalchemy import event, CheckConstraint, and_, or_, DateTime, Enum, ForeignKey, Index, JSON, String, Text, UniqueConstraint, false, func
+from sqlalchemy import event, select, Boolean, CheckConstraint, Date, ForeignKeyConstraint, and_, or_, DateTime, Enum, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, false, func
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -33,6 +33,11 @@ class User(Timestamped, Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
     display_name: Mapped[str | None] = mapped_column(String(200))
+    # Bumped by "sign out everywhere"; a browser session carries the epoch it was issued at (X.4.3).
+    session_epoch: Mapped[int] = mapped_column(default=0, server_default="0")
+    # Set when the person's account was pseudonymised (X.4.7.1): email/name blanked, identities removed, row and id
+    # kept so audit history stays attributable. An erased user can never sign in again.
+    erased_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     projects: Mapped[list["Project"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     external_identities: Mapped[list["ExternalIdentity"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
@@ -45,6 +50,26 @@ class ExternalIdentity(Timestamped, Base):
     provider: Mapped[str] = mapped_column(String(50))
     subject: Mapped[str] = mapped_column(String(255))
     user: Mapped[User] = relationship(back_populates="external_identities")
+
+
+class AiInvolvement(str, enum.Enum):
+    """How far AI may take part in a project (X.31.7, Q14/Q27). Stored per project.
+
+    `off`: no project text is sent to any AI. `suggestions_only`: AI may comment, challenge, find evidence and
+    check structure, but never supplies manuscript words. `full`: also reworded sentences the researcher may
+    choose to insert, always labelled in the writing record.
+    """
+
+    off = "off"
+    suggestions_only = "suggestions_only"
+    full = "full"
+
+
+class AiModelRoute(str, enum.Enum):
+    """Which model endpoint a project's AI calls use: the deployment's default, or only the local/self-hosted one."""
+
+    standard = "standard"
+    local = "local"
 
 
 class ProjectStage(str, enum.Enum):
@@ -75,13 +100,19 @@ class ProjectStage(str, enum.Enum):
     accepted = "accepted"
 
 
+def _stage_plan_of_research_type(context) -> dict:
+    """A new project's `stage_plan_json`: a snapshot of the research type its row names (X.43.2)."""
+    from app.research_types import load_research_type  # imported here: app.research_types imports this module
+
+    return load_research_type(context.get_current_parameters()["research_type"]).model_dump(mode="json")
+
+
 class Project(Timestamped, Base):
     __tablename__ = "projects"
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
     title: Mapped[str] = mapped_column(String(200))
     description: Mapped[str | None] = mapped_column(Text)
-    status: Mapped[str] = mapped_column(String(40), default="active")
     stage: Mapped[ProjectStage] = mapped_column(
         Enum(ProjectStage, name="project_stage"), default=ProjectStage.idea, server_default=ProjectStage.idea.value
     )
@@ -90,6 +121,50 @@ class Project(Timestamped, Base):
     config_json: Mapped[dict | None] = mapped_column(JSON)
     # Framework the screening criteria are organised by: pico, picoc, spider or custom (app/criteria.py). NULL = not chosen.
     criteria_framework: Mapped[str | None] = mapped_column(String(20))
+    # Owner-set override of settings.project_token_budget for this project only (M0.9.3); NULL = use the
+    # global default. 0 means "no limit" here too, same as the global setting.
+    token_budget_override: Mapped[int | None] = mapped_column()
+    # Dual-screen mode (M2.4.1, spec 5.3.3): off by default. When on, screening at both stages needs
+    # two independent human deciders (blinded from each other's answer and from the AI suggestion
+    # until they submit their own) before a decision counts; disagreement is a conflict, not a decision.
+    dual_screen_enabled: Mapped[bool] = mapped_column(default=False, server_default=false())
+    # AI auto-exclude (M2.5.1, spec 5.3 human gate): off by default. When on, a title/abstract AI
+    # exclude at or above the confidence threshold counts as the final decision without a person
+    # deciding that record, as long as it is trusted or confirmed by the sampling audit
+    # (`AutoExcludeAudit`); NULL threshold uses `settings.screening_ai_autoexclude_confidence_threshold`.
+    ai_autoexclude_enabled: Mapped[bool] = mapped_column(default=False, server_default=false())
+    ai_autoexclude_confidence_threshold: Mapped[float | None] = mapped_column()
+    # AI pre-screen quality guard (M2.5.2, spec 5.3 quality checks): set automatically when
+    # AI-human agreement falls below threshold (`app.ai_quality.should_disable_prescreen`), or
+    # manually by the owner; `POST .../screening/prescreen` refuses while this is true.
+    ai_prescreen_disabled: Mapped[bool] = mapped_column(default=False, server_default=false())
+    ai_prescreen_disabled_reason: Mapped[str | None] = mapped_column(Text)
+    # Active-learning prioritisation (M2.6, spec 5.3.2): off by default. When on, the screening queue
+    # (`GET .../screening/queue?sort=relevance`) can rank unscreened records by a classifier trained
+    # fresh, each request, on the project's current human decisions (`app.active_learning`).
+    active_learning_enabled: Mapped[bool] = mapped_column(default=False, server_default=false())
+    # Project-wide AI controls (X.31.7). Default Suggestions only for new and existing projects (Q14).
+    ai_involvement: Mapped[AiInvolvement] = mapped_column(
+        Enum(AiInvolvement, name="ai_involvement"), default=AiInvolvement.suggestions_only, server_default=AiInvolvement.suggestions_only.value
+    )
+    ai_model_route: Mapped[AiModelRoute] = mapped_column(
+        Enum(AiModelRoute, name="ai_model_route"), default=AiModelRoute.standard, server_default=AiModelRoute.standard.value
+    )
+    # Research type (X.43, Q22): a type in app/research_types/ saying which stages this project passes through.
+    # `stage_plan_json` is a snapshot of that type taken when it was set, so editing a type file never changes an
+    # existing project's stages. Migration 0066 backfilled existing projects to full_journey v1 (today's 19 stages)
+    # and keeps that snapshot as the column's server default; the ORM always writes the column itself.
+    research_type: Mapped[str] = mapped_column(String(60), default="full_journey", server_default="full_journey")
+    stage_plan_json: Mapped[dict] = mapped_column(JSON, default=_stage_plan_of_research_type)
+    # Manuscript submission statements (M6.5, spec §5.11.6): the researcher's own words, carried verbatim into
+    # every manuscript export; NULL means not yet written (export shows a bracketed to-complete marker, never a guess).
+    data_availability_statement: Mapped[str | None] = mapped_column(Text)
+    conflict_of_interest_statement: Mapped[str | None] = mapped_column(Text)
+    ethics_statement: Mapped[str | None] = mapped_column(Text)
+    # Reversible read-only state (X.4.7.3, Q23): owner-only, audited. An archived project rejects new
+    # writes (project_access blocks everything but READ_ROLES and the archive/unarchive/delete routes
+    # themselves) and is hidden from the default project list; unarchiving restores it. NULL = active.
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     owner: Mapped[User] = relationship(back_populates="projects")
     context_items: Mapped[list["ResearchContextItem"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     sources: Mapped[list["Source"]] = relationship(back_populates="project", cascade="all, delete-orphan")
@@ -118,6 +193,10 @@ class ProjectMember(Timestamped, Base):
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
     role: Mapped[ProjectRole] = mapped_column(Enum(ProjectRole, name="project_role"))
+    # CRediT (Contributor Roles Taxonomy, M6.6, spec Sec5.11.6) contribution roles for the manuscript's
+    # "Author contributions" statement. Empty list means not yet assigned; `app.credit.CREDIT_ROLES` is the
+    # allowed set. AI is never a member here, so it can never hold a CRediT role.
+    credit_roles: Mapped[list[str]] = mapped_column(JSON, default=list, server_default="[]")
     project: Mapped[Project] = relationship(back_populates="members")
     user: Mapped[User] = relationship()
 
@@ -173,6 +252,10 @@ class ContextKind(str, enum.Enum):
     variable = "variable"
     decision = "decision"
     idea = "idea"
+    # Promotion targets from the inbox (X.31.2). Never sent to a research run (agent/context.py).
+    gap = "gap"
+    claim = "claim"
+    memo = "memo"
 
 
 class ResearchContextItem(Timestamped, Base):
@@ -183,7 +266,45 @@ class ResearchContextItem(Timestamped, Base):
     content: Mapped[str] = mapped_column(Text)
     rationale: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[str | None] = mapped_column(String(100))
+    # The note this item was promoted from (X.31.2). Read-only link: the note's text is never copied into `content`.
+    promoted_from_note_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("notes.id"), index=True)
+    # A decision points at the item it concerns (X.31.2). Same project only; enforced by the promote route.
+    related_item_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("research_context_items.id"), index=True)
+    # An entry is never deleted (it is the decision log): a correction keeps the earlier wording in `history`
+    # and a retired entry is hidden from every list and prompt but stays here (X.161).
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retired_by: Mapped[str | None] = mapped_column(String(100))
+    history: Mapped[list[dict] | None] = mapped_column(JSON)
     project: Mapped[Project] = relationship(back_populates="context_items")
+
+
+class ResearchObjective(Timestamped, Base):
+    """What the research is for (spec 5.1, X.193): the statement, how success is judged, and what it delivers.
+    Like a context entry (X.161) it is never deleted: a correction keeps earlier wording in `history`, and a
+    retired objective is hidden from lists but stays here."""
+
+    __tablename__ = "research_objectives"
+    __table_args__ = (
+        # The linked question must belong to the same project (the referenced key is (id, project_id)).
+        ForeignKeyConstraint(
+            ["research_question_id", "project_id"],
+            ["research_questions.id", "research_questions.project_id"],
+            name="fk_research_objective_question_same_project",
+        ),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    research_question_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
+    statement: Mapped[str] = mapped_column(Text)
+    rationale: Mapped[str | None] = mapped_column(Text)
+    measure: Mapped[str | None] = mapped_column(Text)
+    deliverable: Mapped[str | None] = mapped_column(Text)
+    target_date: Mapped[date | None] = mapped_column(Date)
+    created_by: Mapped[str | None] = mapped_column(String(100))
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retired_by: Mapped[str | None] = mapped_column(String(100))
+    history: Mapped[list[dict] | None] = mapped_column(JSON)
+
 
 
 class Source(Timestamped, Base):
@@ -208,7 +329,11 @@ class Source(Timestamped, Base):
     abstract: Mapped[str | None] = mapped_column(Text)  # untrusted text when it came from a connector
     oa_url: Mapped[str | None] = mapped_column(String(2000))  # open-access location, if any
     source_ids: Mapped[dict | None] = mapped_column(JSON)  # external ids, e.g. {"openalex": "W123", "pmid": "1"}
+    bibliometric_reference_ids: Mapped[list | None] = mapped_column(JSON)  # explicitly supplied cited-work IDs
+    bibliometric_keywords: Mapped[list | None] = mapped_column(JSON)  # explicitly supplied author keywords
     fulltext_path: Mapped[str | None] = mapped_column(String(1000))  # storage key (never an absolute path); set by the system only (M0.10.2)
+    # Last open-access full-text check (M2.7.1, `app/oa_fetch.py`): status, licence as reported, links, sha256. System-set only.
+    fulltext_access: Mapped[dict | None] = mapped_column(JSON)
     quality_flags: Mapped[list | None] = mapped_column(JSON)  # e.g. ["preprint", "no_abstract"]; set by the system only
     # Set when a duplicate was merged into another source (M1.6.4): the row is kept (ids in old run
     # snapshots, ingest keys) but hidden from lists and prompts. Plain id, not a foreign key.
@@ -220,6 +345,16 @@ class Source(Timestamped, Base):
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     verified_by: Mapped[str | None] = mapped_column(String(100))
     verification: Mapped[dict | None] = mapped_column(JSON)
+    # How an automated method found this source (M1.9.2), e.g. {"method": "snowball", "direction":
+    # "backward", "round": 1, "via": {"title": ...}}. System-set only; NULL for everything else.
+    found_via: Mapped[dict | None] = mapped_column(JSON)
+    # Times cited (M2.13), as the named connector counted it on `citation_count_at`. System-set only.
+    # NULL = unknown (no service gave a count), which is never treated as 0.
+    citation_count: Mapped[int | None] = mapped_column(Integer)
+    citation_count_source: Mapped[str | None] = mapped_column(String(50))
+    citation_count_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Language the service reports, as a lower-case two-letter ISO 639-1 code (X.86). NULL = not reported, never assumed.
+    language: Mapped[str | None] = mapped_column(String(2))
     project: Mapped[Project] = relationship(back_populates="sources")
     excerpts: Mapped[list["SourceExcerpt"]] = relationship(
         back_populates="source", cascade="all, delete-orphan", order_by="SourceExcerpt.created_at"
@@ -291,6 +426,50 @@ def _reject_screening_change(mapper, connection, target) -> None:
     raise ValueError("screening_decisions is append-only: rows cannot be updated or deleted")
 
 
+class AutoExcludeAudit(Base):
+    """The human sampling audit for one AI auto-exclude (spec 5.3 human gate, plan M2.5.1).
+
+    Every `screening_ai_autoexclude_sample_rate`-th eligible AI exclude gets one of these rows,
+    `status="pending"`, when the suggestion is written (`app.prescreen.run_prescreen`). Until a
+    person reviews it (`confirmed` or `overturned`), that one exclude does not count, even though
+    other, unsampled excludes at the same confidence already do. Never updated except by the single
+    review call that sets `status`/`reviewed_by`/`reviewed_at` once. The review endpoint does a
+    conditional `UPDATE ... WHERE status='pending'` and returns 409 when the rowcount is not 1, so two
+    concurrent reviews cannot both succeed. The `before_update` ORM guard below refuses a second review
+    on the ORM flush path. The DB CHECK only requires the review fields to be set together, so it does
+    not stop a second review.
+    """
+
+    __tablename__ = "auto_exclude_audits"
+    __table_args__ = (
+        UniqueConstraint("decision_id", name="uq_auto_exclude_audit_decision"),
+        CheckConstraint("status in ('pending','confirmed','overturned')", name="ck_auto_exclude_audit_status"),
+        CheckConstraint(
+            "(status = 'pending' and reviewed_by is null and reviewed_at is null) or "
+            "(status != 'pending' and reviewed_by is not null and reviewed_at is not null)",
+            name="ck_auto_exclude_audit_review_fields",
+        ),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    source_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sources.id"), index=True)
+    stage: Mapped[str] = mapped_column(String(20))
+    decision_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("screening_decisions.id"))
+    confidence: Mapped[float]
+    status: Mapped[str] = mapped_column(String(10), default="pending", server_default="pending")
+    reviewed_by: Mapped[str | None] = mapped_column(String(100))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+@event.listens_for(AutoExcludeAudit, "before_update")
+def _guard_auto_exclude_audit_single_review(mapper, connection, target) -> None:
+    current = connection.execute(select(AutoExcludeAudit.__table__.c.status).where(AutoExcludeAudit.__table__.c.id == target.id)).scalar()
+    if current != "pending":
+        raise ValueError("auto_exclude_audits: a reviewed row cannot be reviewed again")
+
+
 class SeedPaper(Timestamped, Base):
     """A paper the scholar already knows belongs in the review (spec 5.2 inputs; known-item test, M1.8.2).
 
@@ -307,6 +486,55 @@ class SeedPaper(Timestamped, Base):
     year: Mapped[int | None]
     note: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[str | None] = mapped_column(String(100))
+
+
+class SeedCheckRun(Base):
+    """One seed-based false-exclusion check (plan M2.9.1): the AI pre-screen's answer for each seed that
+    matches a stored source, with the model, prompt and settings used. A record of what the model said,
+    never a screening decision: nothing here counts toward PRISMA or the queue. Rows are never changed.
+    """
+
+    __tablename__ = "seed_check_runs"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    created_by: Mapped[str] = mapped_column(String(100))
+    model_id: Mapped[str] = mapped_column(String(255))
+    prompt_version: Mapped[str] = mapped_column(String(100))
+    min_confidence: Mapped[float]
+    autoexclude_threshold: Mapped[float]
+    summary: Mapped[dict] = mapped_column(JSON)
+    entries: Mapped[list] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+@event.listens_for(SeedCheckRun, "before_update")
+@event.listens_for(SeedCheckRun, "before_delete")
+def _reject_seed_check_change(mapper, connection, target) -> None:
+    raise ValueError("seed_check_runs is append-only: rows cannot be updated or deleted")
+
+
+class ProjectExtractionSchema(Timestamped, Base):
+    """One version of a scholar-edited extraction schema owned by a project (spec 5.4.1; plan M3.1.2).
+
+    It starts as a copy of a built-in schema (`based_on`, e.g. `default@1`) or of another project schema.
+    Rows are never changed: an edit adds the next `version`, so extractions recording
+    `project:<name>@<version>` keep pointing at the exact fields they were checked against.
+    """
+
+    __tablename__ = "project_extraction_schemas"
+    __table_args__ = (
+        UniqueConstraint("project_id", "name", "version", name="uq_project_extraction_schema_version"),
+        CheckConstraint("version >= 1", name="ck_project_extraction_schema_version_positive"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    name: Mapped[str] = mapped_column(String(60))
+    version: Mapped[int]
+    label: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str] = mapped_column(Text)
+    fields: Mapped[list] = mapped_column(JSON)
+    based_on: Mapped[str] = mapped_column(String(80))
+    created_by: Mapped[str] = mapped_column(String(100))
 
 
 class SearchQuery(Timestamped, Base):
@@ -338,6 +566,55 @@ class SearchQuery(Timestamped, Base):
     created_by: Mapped[str | None] = mapped_column(String(100))
 
 
+class SearchAlert(Timestamped, Base):
+    """An alert subscription on a saved search (spec 5.2.4, plan M1.12): re-run it on a schedule,
+    surface new papers.
+
+    One alert per saved search. The worker sweeps `next_run_at` and enqueues a G2-gated
+    `query_alert` task per due slot (idempotent per slot); a successful run records `last_run_at`
+    / `last_run_version` / `last_new`. A paper that appeared in any earlier version of the search
+    is never re-surfaced, even if it left and came back.
+    """
+
+    __tablename__ = "search_alerts"
+    __table_args__ = (
+        UniqueConstraint("search_id", name="uq_search_alert_search"),
+        CheckConstraint("interval_seconds >= 3600", name="ck_search_alert_interval_min"),
+        CheckConstraint("interval_seconds <= 2592000", name="ck_search_alert_interval_max"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    search_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    interval_seconds: Mapped[int] = mapped_column(default=86400)
+    next_run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_run_version: Mapped[int | None] = mapped_column()
+    last_new: Mapped[int | None] = mapped_column()
+    enabled: Mapped[bool] = mapped_column(default=True)
+    created_by: Mapped[str | None] = mapped_column(String(100))
+
+
+class SnowballRun(Timestamped, Base):
+    """One completed citation-chasing run (spec 5.2.3, M1.9): where it started, how far it went, what it found.
+
+    Saved only when the run finished; a failed run leaves an audit event and no row (plan rule 22).
+    Sources it added carry `found_via.run_id` pointing here.
+    """
+
+    __tablename__ = "snowball_runs"
+    __table_args__ = (CheckConstraint("rounds >= 1", name="ck_snowball_run_rounds"),)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    connector: Mapped[str] = mapped_column(String(50))
+    directions: Mapped[list] = mapped_column(JSON)  # ["backward"] / ["forward"] / both
+    rounds: Mapped[int] = mapped_column()
+    caps: Mapped[dict] = mapped_column(JSON)  # max_per_paper / max_new
+    starts: Mapped[list] = mapped_column(JSON)  # the papers it started from, resolved or not
+    counts: Mapped[dict] = mapped_column(JSON)  # per round + totals; `capped` / truncated papers are recorded
+    run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_by: Mapped[str | None] = mapped_column(String(100))
+
+
 class SourceExcerpt(Timestamped, Base):
     """An auditable, immutable note or quotation supplied for a source."""
 
@@ -354,6 +631,928 @@ class SourceExcerpt(Timestamped, Base):
 def excerpt_hash(content: str) -> str:
     """The `SourceExcerpt.content_hash` for `content`."""
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+class Extraction(Timestamped, Base):
+    """Data pulled out of one paper by one extraction schema (spec 4 Extraction, 5.4; plan M3.2).
+
+    `fields_json` maps field key -> value (None = not in the paper) and `evidence_spans` maps field
+    key -> {quote, page, section}; `app.extraction_schema.check_extraction` keeps the two consistent.
+    `schema_version` is `name@version` of the schema that produced it. `verified_by_human` is set only
+    by the verification step (M3.4/M3.6), never on create or edit, and needs who and when (DB check).
+    `model_id`/`prompt_version` are filled for AI extractions (M3.3) and NULL for a person's.
+    """
+
+    __tablename__ = "extractions"
+    __table_args__ = (
+        UniqueConstraint("task_id", name="uq_extraction_task"),
+        CheckConstraint(
+            "verified_by_human = false OR (verified_by IS NOT NULL AND verified_at IS NOT NULL)",
+            name="ck_extraction_verified_has_verifier",
+        ),
+        CheckConstraint("extracted_by IN ('human', 'ai')", name="ck_extraction_extracted_by"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    task_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("tasks.id"), nullable=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    source_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sources.id"), index=True)  # the spec's `paper_id`
+    schema_version: Mapped[str] = mapped_column(String(80))
+    fields_json: Mapped[dict] = mapped_column(JSON)
+    evidence_spans: Mapped[dict] = mapped_column(JSON)
+    confidence_json: Mapped[dict | None] = mapped_column(JSON)  # per-field confidence for AI extractions; NULL for human entries
+    # What the AI first returned (X.80). `fields_json` is overwritten by a person's edit; this copy is not, so the
+    # accuracy report can compare the AI with the person's final values. NULL for human entries and for AI rows
+    # made before the column existed (those cannot be scored).
+    ai_fields_json: Mapped[dict | None] = mapped_column(JSON)
+    agreement_json: Mapped[dict | None] = mapped_column(JSON)  # second sampled extraction and field agreement; NULL when unsampled
+    verified_by_human: Mapped[bool] = mapped_column(default=False, server_default=false())
+    verified_by: Mapped[str | None] = mapped_column(String(100))
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    extracted_by: Mapped[str] = mapped_column(String(10))  # "human" | "ai"
+    extractor: Mapped[str] = mapped_column(String(100))  # user id, or `agent:<name>`
+    model_id: Mapped[str | None] = mapped_column(String(200))
+    prompt_version: Mapped[str | None] = mapped_column(String(100))
+
+
+class MetaAnalysisPlan(Timestamped, Base):
+    """A scholar's selected comparable correlations, frozen by G8 before pooling."""
+
+    __tablename__ = "meta_analysis_plans"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    outcome: Mapped[str] = mapped_column(String(200))
+    primary_model: Mapped[str] = mapped_column(String(10))
+    studies_json: Mapped[list] = mapped_column(JSON)
+    created_by: Mapped[str] = mapped_column(String(100))
+    result_json: Mapped[dict | None] = mapped_column(JSON)
+
+
+class Construct(Timestamped, Base):
+    """A named construct with author-specific definition and measurement notes (M3.7)."""
+
+    __tablename__ = "constructs"
+    __table_args__ = (
+        UniqueConstraint("project_id", "name", "author", name="uq_construct_project_name_author"),
+        UniqueConstraint("id", "project_id", name="uq_construct_id_project"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    definition: Mapped[str] = mapped_column(Text)
+    measures: Mapped[list] = mapped_column(JSON, default=list)
+    author: Mapped[str] = mapped_column(String(200))
+    jingle_jangle_flags: Mapped[list] = mapped_column(JSON, default=list)
+    created_by: Mapped[str] = mapped_column(String(100))
+
+
+class Theory(Timestamped, Base):
+    """A theory/lens linked to a project's construct inventory (M3.7)."""
+
+    __tablename__ = "theories"
+    __table_args__ = (
+        UniqueConstraint("project_id", "name", name="uq_theory_project_name"),
+        UniqueConstraint("id", "project_id", name="uq_theory_id_project"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str] = mapped_column(Text)
+    created_by: Mapped[str] = mapped_column(String(100))
+    construct_links: Mapped[list["TheoryConstruct"]] = relationship(back_populates="theory", cascade="all, delete-orphan")
+
+    @property
+    def construct_ids(self) -> list[uuid.UUID]:
+        return [link.construct_id for link in self.construct_links]
+
+
+class TheoryConstruct(Base):
+    """A project-scoped theory-to-construct link; composite FKs prevent cross-project links."""
+
+    __tablename__ = "theory_constructs"
+    __table_args__ = (
+        UniqueConstraint("theory_id", "construct_id", name="uq_theory_construct"),
+        ForeignKeyConstraint(["theory_id", "project_id"], ["theories.id", "theories.project_id"]),
+        ForeignKeyConstraint(["construct_id", "project_id"], ["constructs.id", "constructs.project_id"]),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    theory_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    construct_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    theory: Mapped[Theory] = relationship(back_populates="construct_links")
+
+
+class ConceptualPath(Timestamped, Base):
+    """A scholar-drawn path in the conceptual model (M4.2), backed by at least one project source.
+
+    `kind` is direct, mediation or moderation; `via_construct_id` is the mediator or moderator and is
+    NULL only for a direct path. Composite FKs keep every construct inside the path's project."""
+
+    __tablename__ = "conceptual_paths"
+    __table_args__ = (
+        UniqueConstraint("project_id", "from_construct_id", "to_construct_id", "kind", "via_construct_id", name="uq_conceptual_path"),
+        CheckConstraint("kind IN ('direct', 'mediation', 'moderation')", name="ck_conceptual_path_kind"),
+        CheckConstraint("(kind = 'direct') = (via_construct_id IS NULL)", name="ck_conceptual_path_via"),
+        CheckConstraint("from_construct_id <> to_construct_id", name="ck_conceptual_path_not_self"),
+        ForeignKeyConstraint(["from_construct_id", "project_id"], ["constructs.id", "constructs.project_id"]),
+        ForeignKeyConstraint(["to_construct_id", "project_id"], ["constructs.id", "constructs.project_id"]),
+        ForeignKeyConstraint(["via_construct_id", "project_id"], ["constructs.id", "constructs.project_id"]),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    from_construct_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    to_construct_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    kind: Mapped[str] = mapped_column(String(20))
+    via_construct_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
+    source_ids: Mapped[list] = mapped_column(JSON, default=list)
+    rationale: Mapped[str] = mapped_column(Text)
+    created_by: Mapped[str] = mapped_column(String(100))
+
+
+class Claim(Timestamped, Base):
+    """A proposed synthesis statement; only a person may verify linked evidence."""
+
+    __tablename__ = "claims"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    extraction_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("extractions.id"), index=True)
+    run_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("research_runs.id"), index=True)
+    text: Mapped[str] = mapped_column(Text)
+    verified: Mapped[bool] = mapped_column(default=False, server_default=false())
+    strength: Mapped[str | None] = mapped_column(String(30))
+    section_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("documents.id", ondelete="SET NULL"), index=True)
+    created_by: Mapped[str] = mapped_column(String(100))
+    evidence: Mapped[list["ClaimEvidence"]] = relationship(back_populates="claim", cascade="all, delete-orphan")
+
+
+class ClaimEvidence(Base):
+    __tablename__ = "claim_evidence"
+    __table_args__ = (
+        UniqueConstraint("claim_id", "source_id", name="uq_claim_evidence_source"),
+        CheckConstraint(
+            "(support_confirmed_by IS NULL) = (support_confirmed_at IS NULL)",
+            name="ck_claim_evidence_support_confirmation_paired",
+        ),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    claim_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("claims.id"), index=True)
+    source_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sources.id"), index=True)
+    excerpt_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("source_excerpts.id"), index=True)
+    quote: Mapped[str] = mapped_column(Text)
+    quote_matches_source: Mapped[bool] = mapped_column(default=False, server_default=false())
+    support_confirmed_by: Mapped[str | None] = mapped_column(String(100))
+    support_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    claim: Mapped[Claim] = relationship(back_populates="evidence")
+
+
+class Gap(Timestamped, Base):
+    """A scholar-curated literature gap with auditable supporting evidence (M3.9)."""
+
+    __tablename__ = "gaps"
+    __table_args__ = (UniqueConstraint("project_id", "statement", name="uq_gap_project_statement"),)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    type: Mapped[str] = mapped_column(String(30))
+    statement: Mapped[str] = mapped_column(Text)
+    supporting_paper_ids: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    matrix_cell_ids: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    future_research: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    priority: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    selected: Mapped[bool] = mapped_column(default=False, server_default=false())
+    created_by: Mapped[str] = mapped_column(String(100))
+
+
+class ResearchBrief(Timestamped, Base):
+    """The researcher's brief for a project (M2.12): topic, keyword groups, scope and a citation threshold.
+
+    One row per project. `keyword_groups` are concept blocks (`app.search_query.ConceptBlock`) that feed the
+    Boolean query builder. `min_citations` is the default threshold of the citation filter (M2.13, `app/citation_rank.py`).
+    """
+
+    __tablename__ = "research_briefs"
+    __table_args__ = (CheckConstraint("min_citations IS NULL OR min_citations >= 0", name="ck_research_brief_min_citations"),)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), unique=True)
+    topic: Mapped[str] = mapped_column(Text)
+    keyword_groups: Mapped[list] = mapped_column(JSON, default=list)
+    scope: Mapped[str | None] = mapped_column(Text)
+    min_citations: Mapped[int | None] = mapped_column(Integer)
+    updated_by: Mapped[str] = mapped_column(String(100))
+
+
+class IdeaBrief(Timestamped, Base):
+    """The scholar's idea brief for gate G1 (M4.7, spec 5.1): one row per project.
+
+    The problem, why it matters, risks, the chosen idea and the feasibility answers are the scholar's own words.
+    `selected_idea_id` points at a `ResearchContextItem` of kind `idea` in the same project (checked by the router).
+    `feasibility` is a list of `{item, status, note}`; items not yet answered are simply absent.
+    """
+
+    __tablename__ = "idea_briefs"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), unique=True)
+    problem: Mapped[str] = mapped_column(Text)
+    why_it_matters: Mapped[str] = mapped_column(Text)
+    risks: Mapped[str | None] = mapped_column(Text)
+    selected_idea_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("research_context_items.id"))
+    feasibility: Mapped[list] = mapped_column(JSON, default=list)
+    updated_by: Mapped[str] = mapped_column(String(100))
+
+
+class LandscapeScanRun(Timestamped, Base):
+    """One stored landscape scan (spec 5.1.2, X.189): the query, every connector searched (with per-service
+    counts and failures) and the deduplicated record ids found, so the idea brief can cite a reproducible
+    scan. Holds ids and counts only -- never abstracts or titles from the network response."""
+
+    __tablename__ = "landscape_scan_runs"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    query: Mapped[str] = mapped_column(Text)
+    reviews_since: Mapped[int] = mapped_column(Integer)
+    services: Mapped[list] = mapped_column(JSON)  # [{"service","status","count","total_reported","error"}]
+    record_ids: Mapped[list] = mapped_column(JSON)  # [{"connector","external_id"}], deduplicated
+    sample_size: Mapped[int] = mapped_column(Integer)
+    run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_by: Mapped[str] = mapped_column(String(100))
+
+
+class DatasetVersion(Timestamped, Base):
+    """One version of a dataset (M5.1, spec 5.8.3). Raw versions hold the upload exactly; cleaned versions point at
+    their parent and record every step. Rows are never edited or deleted by the API."""
+
+    __tablename__ = "dataset_versions"
+    __table_args__ = (UniqueConstraint("project_id", "version_no", name="uq_dataset_version_project_no"),)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    version_no: Mapped[int] = mapped_column(Integer)
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("dataset_versions.id"), nullable=True)
+    kind: Mapped[str] = mapped_column(String(10))  # "raw" or "cleaned"
+    name: Mapped[str] = mapped_column(String(200))
+    content: Mapped[str] = mapped_column(Text)  # the CSV text exactly as stored
+    sha256: Mapped[str] = mapped_column(String(64))
+    row_count: Mapped[int] = mapped_column(Integer)
+    column_names: Mapped[list] = mapped_column(JSON, default=list)
+    cleaning_steps: Mapped[list] = mapped_column(JSON, default=list)
+    created_by: Mapped[str] = mapped_column(String(100))
+
+
+class AnalysisPlan(Timestamped, Base):
+    """A human-chosen analysis plan for one dataset version (M5.3.1, spec 5.9). Once locked it is frozen: the plan
+    hash covers the spec, the dataset's SHA-256 and the pinned environment, and nothing edits the row afterwards."""
+
+    __tablename__ = "analysis_plans"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    dataset_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("dataset_versions.id"), index=True)
+    spec_json: Mapped[dict] = mapped_column(JSON)  # {"tests", "variables", "seed"}, normalised
+    plan_sha256: Mapped[str] = mapped_column(String(64))
+    environment_sha256: Mapped[str] = mapped_column(String(64))
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    locked_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_by: Mapped[str] = mapped_column(String(100))
+
+
+class AnalysisRun(Timestamped, Base):
+    """One sandboxed run of a locked analysis plan (M5.3.3). Records what ran (plan, dataset and script hashes, image
+    digest) and what came back. Results are stored as the script printed them; nothing is edited afterwards."""
+
+    __tablename__ = "analysis_runs"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    analysis_plan_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("analysis_plans.id"), index=True)
+    dataset_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("dataset_versions.id"), index=True)
+    plan_sha256: Mapped[str] = mapped_column(String(64))
+    dataset_sha256: Mapped[str] = mapped_column(String(64))
+    script_sha256: Mapped[str] = mapped_column(String(64))
+    environment_sha256: Mapped[str] = mapped_column(String(64))
+    image: Mapped[str] = mapped_column(String(300))
+    output_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    output_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_by: Mapped[str] = mapped_column(String(100))
+
+
+class RobustnessCheck(Timestamped, Base):
+    """One robustness comparison against a stored `AnalysisRun` (M5.4.2, spec 5.9 bullet 3): the same spec re-run
+    unchanged ("rerun_identity"), with one variable dropped ("alternative_spec"), or against a different, already
+    governed dataset version ("outlier_sensitivity"/"missing_data", e.g. one produced by an approved exclusion
+    rule). Each check runs its own sandboxed script and compares its fingerprint to the base run's; nothing here
+    computes an outlier rule or imputes data itself."""
+
+    __tablename__ = "robustness_checks"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    base_run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("analysis_runs.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(20))  # "rerun_identity", "alternative_spec", "outlier_sensitivity" or "missing_data"
+    label: Mapped[str] = mapped_column(String(200))
+    compare_dataset_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("dataset_versions.id"), nullable=True)
+    compare_plan_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("analysis_plans.id"), nullable=True)
+    compare_run_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("analysis_runs.id"), nullable=True)
+    base_fingerprint: Mapped[str] = mapped_column(String(64))
+    compare_fingerprint: Mapped[str] = mapped_column(String(64))
+    identical: Mapped[bool] = mapped_column(Boolean)
+    created_by: Mapped[str] = mapped_column(String(100))
+
+
+class DeviationLog(Timestamped, Base):
+    """A deviation log (M5.8.4, spec 5.9): the differences between a locked, pre-registered plan and the run actually
+    made, each with the researcher's written reason. Immutable once written; the hashes freeze what was compared."""
+
+    __tablename__ = "deviation_logs"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    planned_plan_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("analysis_plans.id"), index=True)
+    actual_run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("analysis_runs.id"))
+    planned_plan_sha256: Mapped[str] = mapped_column(String(64))
+    actual_plan_sha256: Mapped[str] = mapped_column(String(64))
+    planned_dataset_sha256: Mapped[str] = mapped_column(String(64))
+    actual_dataset_sha256: Mapped[str] = mapped_column(String(64))
+    log_json: Mapped[list] = mapped_column(JSON)  # [{"key", "kind", "detail", "reason"}], as deviation_log.build_log returns
+    created_by: Mapped[str] = mapped_column(String(100))
+
+
+class ExclusionRule(Timestamped, Base):
+    """A case-exclusion rule for one dataset version (M5.7.1, spec 5.8 gate). A rule is proposed, then a human with
+    approve rights approves it; only approved rules can drop rows, and only through a logged cleaning version."""
+
+    __tablename__ = "exclusion_rules"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    dataset_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("dataset_versions.id"), index=True)
+    rule_json: Mapped[dict] = mapped_column(JSON)  # normalised: {"column", "op", "value"?}
+    rule_sha256: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(12))  # "proposed" or "approved"
+    proposed_by: Mapped[str] = mapped_column(String(100))
+    approved_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class QualExcerpt(Timestamped, Base):
+    """A participant-written excerpt kept for qualitative coding (M5.5.2). The text is participant data: it is
+    sent to a model only through the participant-data adapter (local endpoint)."""
+
+    __tablename__ = "qual_excerpts"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    text: Mapped[str] = mapped_column(Text)
+    created_by: Mapped[str] = mapped_column(String(100))
+
+
+class QualSuggestion(Timestamped, Base):
+    """A model's proposed code for one excerpt (M5.5.2). A suggestion is only a proposal until a person accepts it."""
+
+    __tablename__ = "qual_suggestions"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    excerpt_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("qual_excerpts.id"), index=True)
+    code: Mapped[str] = mapped_column(String(200))
+    is_new: Mapped[bool] = mapped_column(Boolean)
+    rationale: Mapped[str] = mapped_column(Text)
+    # Provenance (X.121). NULL only on rows stored before these columns existed.
+    model_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    prompt_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    status: Mapped[str] = mapped_column(String(12))  # "pending", "accepted" or "rejected"
+    decided_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class QualCode(Timestamped, Base):
+    """One name in the project's qualitative codebook (M5.5.2). `redirect_to` is set once the name has been
+    renamed or merged away: the name itself is kept forever (never reused for a different code) but no longer
+    holds a definition. `app/qual_coding.py` is the single source of truth for the accept/rename/merge rules this
+    table persists; `app/qual_codebook_store.py` is the only writer."""
+
+    __tablename__ = "qual_codes"
+    __table_args__ = (UniqueConstraint("project_id", "name", name="uq_qual_code_project_name"),)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    definition: Mapped[str | None] = mapped_column(Text, nullable=True)
+    redirect_to: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    created_by: Mapped[str] = mapped_column(String(100))
+
+
+class ResearchQuestion(Timestamped, Base):
+    """A human-owned draft question, linked to the curated gaps it addresses (M4.1)."""
+
+    __tablename__ = "research_questions"
+    __table_args__ = (
+        UniqueConstraint("project_id", "text", name="uq_research_question_project_text"),
+        UniqueConstraint("id", "project_id", name="uq_research_question_id_project"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    text: Mapped[str] = mapped_column(Text)
+    type: Mapped[str] = mapped_column(String(30))
+    created_by: Mapped[str] = mapped_column(String(100))
+    gap_links: Mapped[list["ResearchQuestionGap"]] = relationship(back_populates="research_question", cascade="all, delete-orphan")
+    hypotheses: Mapped[list["Hypothesis"]] = relationship(back_populates="research_question", cascade="all, delete-orphan")
+
+
+class ResearchQuestionGap(Base):
+    """Project-scoped link that makes a question's gap provenance auditable."""
+
+    __tablename__ = "research_question_gaps"
+    __table_args__ = (
+        UniqueConstraint("research_question_id", "gap_id", name="uq_research_question_gap"),
+        ForeignKeyConstraint(["research_question_id", "project_id"], ["research_questions.id", "research_questions.project_id"]),
+        ForeignKeyConstraint(["gap_id"], ["gaps.id"]),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    research_question_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    gap_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("gaps.id"), index=True)
+    research_question: Mapped[ResearchQuestion] = relationship(back_populates="gap_links")
+
+
+class Hypothesis(Timestamped, Base):
+    """A human-owned hypothesis with explicitly recorded theoretical and empirical bases."""
+
+    __tablename__ = "hypotheses"
+    __table_args__ = (
+        UniqueConstraint("project_id", "statement", name="uq_hypothesis_project_statement"),
+        ForeignKeyConstraint(["research_question_id", "project_id"], ["research_questions.id", "research_questions.project_id"]),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    research_question_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    statement: Mapped[str] = mapped_column(Text)
+    direction: Mapped[str] = mapped_column(String(30))
+    theoretical_basis: Mapped[str] = mapped_column(Text)
+    empirical_support: Mapped[str] = mapped_column(Text)
+    created_by: Mapped[str] = mapped_column(String(100))
+    research_question: Mapped[ResearchQuestion] = relationship(back_populates="hypotheses")
+
+
+class NoteKind(str, enum.Enum):
+    """How a note was captured (X.31.1). `voice`, `highlight` and `photo` are defined for the data
+    model's sake but not yet accepted by the API: they need attachment storage (M0.10.2, X.31.17/.3/.18)."""
+
+    typed = "typed"
+    voice = "voice"
+    clip = "clip"
+    highlight = "highlight"
+    photo = "photo"
+
+
+class NoteStatus(str, enum.Enum):
+    inbox = "inbox"
+    filed = "filed"
+    archived = "archived"
+
+
+class Note(Timestamped, Base):
+    """A researcher's quick capture: one tap/keystroke, no required project or tag (spec 5.1, X.31.1).
+
+    `body` is always the researcher's own words; text clipped or highlighted from elsewhere lives in
+    `quoted_text` and is never mixed into `body`. `client_id` makes a retried capture from an offline
+    device idempotent: the same (owner, client_id) always resolves to the same note.
+    """
+
+    __tablename__ = "notes"
+    __table_args__ = (UniqueConstraint("owner_id", "client_id", name="uq_note_owner_client"),)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    project_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("projects.id"), index=True)
+    client_id: Mapped[str] = mapped_column(String(64))
+    kind: Mapped[NoteKind] = mapped_column(Enum(NoteKind, name="note_kind"))
+    body: Mapped[str] = mapped_column(Text, default="")
+    quoted_text: Mapped[str | None] = mapped_column(Text)
+    source_url: Mapped[str | None] = mapped_column(String(2000))
+    source_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("sources.id"), index=True)
+    excerpt_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("source_excerpts.id"), index=True)
+    locator: Mapped[str | None] = mapped_column(String(255))
+    status: Mapped[NoteStatus] = mapped_column(Enum(NoteStatus, name="note_status"), default=NoteStatus.inbox, server_default=NoteStatus.inbox.value)
+    ai_locked: Mapped[bool] = mapped_column(default=False, server_default=false())
+    revision: Mapped[int] = mapped_column(default=1, server_default="1")
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    device: Mapped[str | None] = mapped_column(String(40))
+    revisions: Mapped[list["NoteRevision"]] = relationship(back_populates="note", cascade="all, delete-orphan", order_by="NoteRevision.revision")
+    attachments: Mapped[list["NoteAttachment"]] = relationship(back_populates="note", cascade="all, delete-orphan", order_by="NoteAttachment.created_at")
+
+
+class NoteRevision(Base):
+    """One version of a note's text. Append-only (enforced by `note_guard`): editing writes a new row
+    and bumps `Note.revision`/`Note.body`; nothing already written is changed or removed."""
+
+    __tablename__ = "note_revisions"
+    __table_args__ = (UniqueConstraint("note_id", "revision", name="uq_note_revision"),)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    note_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("notes.id"), index=True)
+    revision: Mapped[int]
+    body: Mapped[str] = mapped_column(Text)
+    quoted_text: Mapped[str | None] = mapped_column(Text)
+    edited_by: Mapped[str | None] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    note: Mapped[Note] = relationship(back_populates="revisions")
+
+class NoteAttachment(Timestamped, Base):
+    """A private binary attachment belonging to a quick-capture note."""
+
+    __tablename__ = "note_attachments"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    note_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("notes.id"), index=True)
+    path: Mapped[str] = mapped_column(String(1000), unique=True)
+    media_type: Mapped[str] = mapped_column(String(100))
+    size: Mapped[int]
+    sha256: Mapped[str] = mapped_column(String(64))
+    note: Mapped[Note] = relationship(back_populates="attachments")
+
+
+class AiSuggestion(Base):
+    """One thing an AI proposed for one target (X.46.1). It is never the researcher's own text and is not
+    edited after it is written: what a person did with it lives in the append-only `AiSuggestionEvent` list,
+    and its state is computed from those events (`app/suggestions.py`). `parent_id` links an "ask again"
+    answer to the suggestion it replaces."""
+
+    __tablename__ = "ai_suggestions"
+    __table_args__ = (Index("ix_ai_suggestions_target", "project_id", "target_kind", "target_id"),)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    target_kind: Mapped[str] = mapped_column(String(40))
+    target_id: Mapped[str] = mapped_column(String(64))
+    target_field: Mapped[str | None] = mapped_column(String(60))
+    content: Mapped[str] = mapped_column(Text)
+    confidence: Mapped[float | None] = mapped_column(Float)
+    evidence_json: Mapped[list | None] = mapped_column(JSON)
+    model_id: Mapped[str] = mapped_column(String(255))
+    prompt_version: Mapped[str] = mapped_column(String(100))
+    producing_agent: Mapped[str] = mapped_column(String(60))
+    guidance: Mapped[str | None] = mapped_column(Text)
+    # Workspace side panel (X.31.11): which action made it, and what it was given (a hash and a size, never the text).
+    action: Mapped[str | None] = mapped_column(String(40))
+    input_hash: Mapped[str | None] = mapped_column(String(64))
+    input_chars: Mapped[int | None]
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("ai_suggestions.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    events: Mapped[list["AiSuggestionEvent"]] = relationship(order_by="AiSuggestionEvent.seq")
+
+
+class AiSuggestionEvent(Base):
+    """What a person did with a suggestion. Append-only (enforced by `suggestion_guard`). `final_text` is set
+    only on `edited_and_accepted` (the AI text stays on the suggestion, so both are kept); `result_ref`
+    names the target version an accept or undo wrote, when the target kind writes one."""
+
+    __tablename__ = "ai_suggestion_events"
+    __table_args__ = (UniqueConstraint("suggestion_id", "seq", name="uq_ai_suggestion_event_seq"),)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    suggestion_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("ai_suggestions.id"), index=True)
+    seq: Mapped[int]
+    kind: Mapped[str] = mapped_column(String(30))
+    actor: Mapped[str] = mapped_column(String(100))
+    final_text: Mapped[str | None] = mapped_column(Text)
+    result_ref: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AiItemLock(Base):
+    """"Never for this item" (X.46.3): while a row exists, no AI step may be given this item (project, target kind, target id).
+    Setting and clearing are audited, so the history of the lock lives in the audit log; the row itself is only the current state.
+    A note's lock is `Note.ai_locked`, read through the same check (`app/ai_item_locks.py`)."""
+
+    __tablename__ = "ai_item_locks"
+    __table_args__ = (UniqueConstraint("project_id", "target_kind", "target_id", name="uq_ai_item_lock"),)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    target_kind: Mapped[str] = mapped_column(String(40))
+    target_id: Mapped[str] = mapped_column(String(100))
+    locked_by: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Document(Timestamped, Base):
+    """One manuscript section (X.31.8). The text is never stored here: every save writes a new `DocumentVersion`,
+    and `current_version_id` only points at the latest one. One manuscript per project in V1 is the project's
+    documents ordered by `position`."""
+
+    __tablename__ = "documents"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    title: Mapped[str] = mapped_column(String(300))
+    position: Mapped[int]
+    ai_locked: Mapped[bool] = mapped_column(default=False, server_default=false())
+    current_version_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
+    created_by: Mapped[str] = mapped_column(String(100))
+    versions: Mapped[list["DocumentVersion"]] = relationship(back_populates="document", order_by="DocumentVersion.number")
+
+
+class AuthorshipKind(str, enum.Enum):
+    inserted = "inserted"
+    removed = "removed"
+    changed = "changed"
+    resolved = "resolved"
+    restored = "restored"
+
+
+class SpanOrigin(str, enum.Enum):
+    typed = "typed"
+    dictated = "dictated"
+    pasted = "pasted"
+    imported = "imported"
+    from_note = "from_note"
+    ai_edited = "ai_edited"
+    ai_suggested = "ai_suggested"
+
+
+class DocumentVersion(Base):
+    """One saved state of a document. Append-only (enforced by `ledger_guard`): saving writes the next number and
+    nothing already written is changed or removed, so every autosave is kept (Q21). `content_json` is the
+    ProseMirror document; `content_text` is its plain-text projection; `content_hash` is sha256 of the canonical JSON."""
+
+    __tablename__ = "document_versions"
+    __table_args__ = (
+        UniqueConstraint("document_id", "number", name="uq_document_version_number"),
+        UniqueConstraint("document_id", "client_save_id", name="uq_document_version_client_save"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id"), index=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    number: Mapped[int]
+    parent_number: Mapped[int | None]
+    content_json: Mapped[dict] = mapped_column(JSON)
+    content_text: Mapped[str] = mapped_column(Text)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    saved_by: Mapped[str] = mapped_column(String(100))
+    client_save_id: Mapped[str] = mapped_column(String(64))
+    client_session_id: Mapped[str | None] = mapped_column(String(64))
+    client_saved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    restored_from_number: Mapped[int | None]
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    document: Mapped[Document] = relationship(back_populates="versions")
+class ManuscriptOutput(Timestamped, Base):
+    """Immutable generated front matter tied to the exact saved document version (M6.10.2)."""
+
+    __tablename__ = "manuscript_outputs"
+    __table_args__ = (
+        UniqueConstraint("document_id", "source_version_id", "kind", "created_at", name="uq_manuscript_output_event"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id"), index=True)
+    source_version_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("document_versions.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(32), index=True)
+    content_json: Mapped[dict | list | None] = mapped_column(JSON)
+    content_text: Mapped[str | None] = mapped_column(Text)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    created_by: Mapped[str] = mapped_column(String(100))
+    model_id: Mapped[str | None] = mapped_column(String(255))
+    prompt_version: Mapped[str | None] = mapped_column(String(100))
+class ReviewComment(Timestamped, Base):
+    """Structured, auditable reviewer feedback for a project document (M7.1)."""
+
+    __tablename__ = "review_comments"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id"), index=True)
+    persona: Mapped[str] = mapped_column(String(60))
+    severity: Mapped[str] = mapped_column(String(12))
+    status: Mapped[str] = mapped_column(String(12), default="open", server_default="open")
+    body: Mapped[str] = mapped_column(Text)
+    created_by: Mapped[str] = mapped_column(String(100))
+class ReviewIssue(Timestamped, Base):
+
+
+    """Structured review issue and response metadata (M7.3)."""
+
+    __tablename__ = "review_issues"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id"), index=True)
+    title: Mapped[str] = mapped_column(String(300))
+    severity: Mapped[str] = mapped_column(String(12))
+    status: Mapped[str] = mapped_column(String(12), default="open", server_default="open")
+    assignee: Mapped[str | None] = mapped_column(String(100))
+    response_text: Mapped[str | None] = mapped_column(Text)
+    redline_json: Mapped[dict | None] = mapped_column(JSON)
+    created_by: Mapped[str] = mapped_column(String(100))
+
+class JournalCandidate(Timestamped, Base):
+    """Researcher-supplied journal metadata and official-list provenance (M7.4)."""
+
+    __tablename__ = "journal_candidates"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    name: Mapped[str] = mapped_column(String(300))
+    scope_terms: Mapped[list] = mapped_column(JSON, default=list)
+    indexes: Mapped[list] = mapped_column(JSON, default=list)
+    apc: Mapped[float | None] = mapped_column(Float)
+    review_days: Mapped[int | None] = mapped_column(Integer)
+    source_url: Mapped[str] = mapped_column(String(2000))
+    checked_at: Mapped[str] = mapped_column(String(64))
+    official_predatory: Mapped[bool] = mapped_column(default=False, server_default=false())
+    created_by: Mapped[str] = mapped_column(String(100))
+class Submission(Timestamped, Base):
+    """A project submission and its explicit lifecycle state (M7.5)."""
+
+    __tablename__ = "submissions"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    journal_name: Mapped[str] = mapped_column(String(300))
+    manuscript_url: Mapped[str | None] = mapped_column(String(2000))
+    status: Mapped[str] = mapped_column(String(32), default="draft", server_default="draft")
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    external_id: Mapped[str | None] = mapped_column(String(255))
+    created_by: Mapped[str] = mapped_column(String(100))
+class SubmissionReminder(Timestamped, Base):
+    """A persisted human-facing reminder for a submission (M7.5)."""
+
+    __tablename__ = "submission_reminders"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    submission_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("submissions.id"), index=True)
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    message: Mapped[str] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(String(20), default="pending", server_default="pending")
+    created_by: Mapped[str] = mapped_column(String(100))
+
+
+class ResearchInstitution(Timestamped, Base):
+    """A project's institution, identified by a validated ROR id when known (X.18.3)."""
+
+    __tablename__ = "research_institutions"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    name: Mapped[str] = mapped_column(String(300))
+    ror_id: Mapped[str | None] = mapped_column(String(64))
+    created_by: Mapped[str] = mapped_column(String(100))
+
+
+class ResearchPerson(Timestamped, Base):
+    """A project's author or contributor, identified by a validated ORCID iD when known (X.18.3)."""
+
+    __tablename__ = "research_people"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    name: Mapped[str] = mapped_column(String(300))
+    orcid: Mapped[str | None] = mapped_column(String(19))
+    institution_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("research_institutions.id"), index=True)
+    created_by: Mapped[str] = mapped_column(String(100))
+
+
+
+
+
+
+class AuthorshipEvent(Base):
+    """One change to one authorship span, recorded against the version that made it (X.31.8). Append-only
+    (enforced by `ledger_guard`). It never holds the text itself: that lives in the versions, which are also
+    append-only."""
+
+    __tablename__ = "authorship_events"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id"), index=True)
+    version_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("document_versions.id"), index=True)
+    span_id: Mapped[str] = mapped_column(String(36), index=True)
+    kind: Mapped[AuthorshipKind] = mapped_column(Enum(AuthorshipKind, name="authorship_kind"))
+    origin: Mapped[SpanOrigin] = mapped_column(Enum(SpanOrigin, name="span_origin"))
+    paste_status: Mapped[str | None] = mapped_column(String(12))
+    actor: Mapped[str] = mapped_column(String(100))
+    chars_before: Mapped[int]
+    chars_after: Mapped[int]
+    text_hash: Mapped[str] = mapped_column(String(64))
+    suggestion_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("ai_suggestions.id"), index=True)
+    model_id: Mapped[str | None] = mapped_column(String(255))
+    prompt_version: Mapped[str | None] = mapped_column(String(100))
+    note_id: Mapped[uuid.UUID | None]
+    detected_source_id: Mapped[uuid.UUID | None]
+    detected_document_id: Mapped[uuid.UUID | None]
+    cited_source_id: Mapped[uuid.UUID | None]
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SimilarityCheck(Base):
+    """One similarity check of a saved section version against the project's sources (X.31.14). Append-only
+    (enforced by `ledger_guard`): a result is never edited, and a re-check is a new row. `findings_json` holds
+    offsets, kinds, ids and scores only, never the text of the section or of a source."""
+
+    __tablename__ = "similarity_checks"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id"), index=True)
+    version_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("document_versions.id"), index=True)
+    provider: Mapped[str] = mapped_column(String(60))
+    status: Mapped[str] = mapped_column(String(12))
+    requested_by: Mapped[str] = mapped_column(String(100))
+    findings_json: Mapped[list] = mapped_column(JSON)
+    summary_json: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class OwnPaperLookup(Base):
+    """The outcome of one DOI-only/title-only own-paper lookup (M2.14.1), resolved through the enabled
+    lookup connectors by the `own_paper_lookup` task. Written once, by the task, with a terminal status
+    (`included`, `not_found`, `failed`) - a retry is a new row, never an edit of this one. `source_id` is
+    set only for `included`; the created source and its screening decisions are the normal M2.14 artifacts."""
+
+    __tablename__ = "own_paper_lookups"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    task_id: Mapped[uuid.UUID] = mapped_column(index=True, unique=True)
+    doi: Mapped[str | None] = mapped_column(String(255))
+    title: Mapped[str | None] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(String(12))
+    source_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("sources.id"))
+    matched_connector: Mapped[str | None] = mapped_column(String(60))
+    detail: Mapped[str | None] = mapped_column(Text)
+    requested_by: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ProvenanceReport(Base):
+    """A frozen writing provenance report (X.31.12). Append-only (enforced by `ledger_guard`): a report is never
+    edited, and a regenerated report is a new row. Its Artifact (`kind="provenance_report"`) goes stale when a
+    covered section is saved again. `report_json` always holds the full computed report (counts, ids and
+    timestamps, never manuscript or source text) — `included_sections` (X.31.24) is what the researcher chose to
+    show when this report was made; reads/exports narrow to it, `report_json` itself is never narrowed."""
+
+    __tablename__ = "provenance_reports"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    scope: Mapped[str] = mapped_column(String(12))
+    document_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("documents.id"), index=True)
+    covered_versions: Mapped[list] = mapped_column(JSON)
+    report_json: Mapped[dict] = mapped_column(JSON)
+    statement_text: Mapped[str] = mapped_column(Text)
+    statement_template: Mapped[str] = mapped_column(String(60))
+    report_hash: Mapped[str] = mapped_column(String(64))
+    generated_by: Mapped[str] = mapped_column(String(100))
+    # Literal, not imported from app.provenance_report.REPORT_SECTIONS: this module stays free of that import,
+    # and the two are expected to agree (test_provenance_report.py checks app.provenance_report.REPORT_SECTIONS
+    # matches this default).
+    included_sections: Mapped[list] = mapped_column(
+        JSON, default=lambda: ["produced", "ai", "pasted", "statement", "limits"],
+        server_default='["produced", "ai", "pasted", "statement", "limits"]',
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SectionApproval(Base):
+    """One person's approval of a manuscript section's current text, with the AI-involvement level frozen at
+    that moment (G10, spec 5.11: "Human gate: Scholar approves each section; AI-involvement level is recorded
+    per section."). Append-only (enforced by `ledger_guard`): approving again after a change writes a new row;
+    nothing already written is changed or removed. `ai_share_pct`/`ai_shares` are copied from the section's
+    current, non-stale provenance report (`app/provenance_report.py`) at approval time, never recomputed later.
+    Its Artifact (`kind="section_approval"`) goes stale when the section is saved again."""
+
+    __tablename__ = "section_approvals"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id"), index=True)
+    version_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("document_versions.id"))
+    version_number: Mapped[int]
+    report_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("provenance_reports.id"))
+    ai_share_pct: Mapped[float] = mapped_column(Float)
+    ai_shares: Mapped[dict] = mapped_column(JSON)
+    approved_by: Mapped[str] = mapped_column(String(100))
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class InterpretationFinding(Base):
+    """One computed entry in the findings-to-literature map (M6.9, spec 5.10 and 8): one analysis run's
+    named numeric finding compared against prior literature values reported by this project's
+    human-verified extractions (M3.5's evidence table). `app.interpretation.classify` makes the
+    comparison; nothing here ever asks a model whether a finding agrees with the literature
+    (research-integrity rule: AI never silently decides substantive correctness). Append-only (enforced
+    by `ledger_guard`): regenerating the map writes a new `batch_id` with the next `generation` rather
+    than editing anything, and `app.interpretation_map.current_batch` reads only the highest-`generation`
+    batch for a project. `generation` (not `created_at`) decides "latest": `now()` is fixed at transaction
+    start, so two batches generated in one transaction could otherwise tie, the same reason
+    `AiSuggestionEvent` orders by `seq`, not a timestamp."""
+
+    __tablename__ = "interpretation_findings"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    batch_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    generation: Mapped[int] = mapped_column(Integer, index=True)
+    analysis_run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("analysis_runs.id"), index=True)
+    output_key: Mapped[str] = mapped_column(String(200))
+    output_path: Mapped[str] = mapped_column(String(500))
+    value: Mapped[float | None] = mapped_column(Float)
+    classification: Mapped[str] = mapped_column(String(10))  # "agree" | "disagree" | "unclear"
+    literature_source_ids: Mapped[list] = mapped_column(JSON)
+    literature_extraction_ids: Mapped[list] = mapped_column(JSON)
+    rationale: Mapped[str] = mapped_column(Text)
+    generated_by: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class InterpretationReview(Base):
+    """One person's confirmation or dispute of one `InterpretationFinding` row (M6.9, G9). Append-only
+    (enforced by `ledger_guard`): a changed mind writes a new row, never an edit; only the highest-`seq`
+    review for a finding counts (`app.interpretation_map.is_confirmed`), the same `seq`-not-timestamp
+    ordering `AiSuggestionEvent` uses. G9 cannot be approved until every finding in the current batch has
+    a `confirmed` review from a person — an AI-computed classification alone is never enough."""
+
+    __tablename__ = "interpretation_reviews"
+    __table_args__ = (UniqueConstraint("finding_id", "seq", name="uq_interpretation_review_seq"),)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    finding_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("interpretation_findings.id"), index=True)
+    seq: Mapped[int] = mapped_column(Integer)
+    decision: Mapped[str] = mapped_column(String(12))  # "confirmed" | "disputed"
+    note: Mapped[str | None] = mapped_column(Text)
+    reviewed_by: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class ResearchRunStatus(str, enum.Enum):
@@ -381,6 +1580,9 @@ class ResearchRun(Timestamped, Base):
     error_message: Mapped[str | None] = mapped_column(Text)
     provider_model: Mapped[str | None] = mapped_column(String(255))
     prompt_version: Mapped[str | None] = mapped_column(String(100))  # e.g. evidence_synthesis@1
+    confidence: Mapped[float | None] = mapped_column(Float)  # the model's own 0-1 estimate (v4+ prompts)
+    insufficient_evidence: Mapped[bool | None] = mapped_column()  # True: the model abstained
+    insufficient_reason: Mapped[str | None] = mapped_column(Text)  # what evidence is missing
     use_web_retrieval: Mapped[bool] = mapped_column(default=False, server_default=false())
     created_by: Mapped[str | None] = mapped_column(String(100))
     attempt_count: Mapped[int] = mapped_column(default=0)
@@ -411,6 +1613,8 @@ class Task(Timestamped, Base):
     __table_args__ = (
         # Enqueueing the same key twice in a project returns the existing task instead of a second one.
         Index("uq_task_idempotency", "project_id", "idempotency_key", unique=True),
+        # Serves the worker claim query: filter on status, take the oldest by created_at.
+        Index("ix_tasks_claim", "status", "created_at"),
         CheckConstraint("max_attempts >= 1", name="ck_tasks_max_attempts_positive"),
         CheckConstraint("status != 'blocked' OR blocked_by_gate IS NOT NULL", name="ck_tasks_blocked_names_gate"),
     )
@@ -425,6 +1629,8 @@ class Task(Timestamped, Base):
     max_attempts: Mapped[int] = mapped_column(default=3, server_default="3")
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     run_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # retry backoff: not claimable before this
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # set when the current attempt is claimed (X.7.1)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # set when the task completes or fails for good (X.7.1)
     blocked_by_gate: Mapped[GateCode | None] = mapped_column(Enum(GateCode, name="gate_code"))
     idempotency_key: Mapped[str | None] = mapped_column(String(200))
     error: Mapped[str | None] = mapped_column(Text)
@@ -490,6 +1696,107 @@ class AuditEvent(Base):
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
-# Registers the immutable-excerpt and append-only audit guards (ORM events + DB trigger DDL). Keep at the bottom.
+class LlmUsage(Base):
+    """Tokens one model call used (M0.9.1). Tokens are NULL when the provider reported none."""
+
+    __tablename__ = "llm_usage"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(index=True)  # plain value, not an FK: spend history outlives a project
+    run_id: Mapped[uuid.UUID | None] = mapped_column()
+    purpose: Mapped[str] = mapped_column(String(50))  # research_run | prescreen | ...
+    model: Mapped[str] = mapped_column(String(255))
+    prompt_tokens: Mapped[int | None] = mapped_column()
+    completion_tokens: Mapped[int | None] = mapped_column()
+    total_tokens: Mapped[int | None] = mapped_column()
+    # Set while the call is in flight (X.110): the budget the call may use, held until its usage is recorded.
+    reserved_tokens: Mapped[int | None] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SourceEmbedding(Base):
+    """One source's embedding (M3.8.1). Kept per (model, text hash), so changed text or a new model re-embeds.
+
+    The vector is stored as a JSON list of floats; pgvector can replace it
+    when similarity search over many projects is needed.
+    """
+
+    __tablename__ = "source_embeddings"
+    __table_args__ = (UniqueConstraint("source_id", "model", "text_hash", name="uq_source_embedding"),)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    source_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sources.id"), index=True)
+    model: Mapped[str] = mapped_column(String(255))
+    text_hash: Mapped[str] = mapped_column(String(64))  # sha256 of the exact text that was embedded
+    dims: Mapped[int] = mapped_column()
+    vector: Mapped[list] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ClusterRun(Base):
+    """One thematic clustering of a project's sources (spec 5.5.1, M3.8.1). Never edited after it is saved,
+    except the human labels of its clusters. Same embeddings + k + seed give the same clusters."""
+
+    __tablename__ = "cluster_runs"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    model_id: Mapped[str] = mapped_column(String(255))  # embedding model
+    k: Mapped[int] = mapped_column()
+    seed: Mapped[int] = mapped_column()
+    n_sources: Mapped[int] = mapped_column()
+    created_by: Mapped[str] = mapped_column(String(100))  # the person who asked for it
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    clusters: Mapped[list["Cluster"]] = relationship(order_by="Cluster.position", cascade="all, delete-orphan")
+
+
+class Cluster(Base):
+    """One group in a `ClusterRun`. `label` starts as "Cluster N" and only a person changes it (no AI labels)."""
+
+    __tablename__ = "clusters"
+    __table_args__ = (UniqueConstraint("run_id", "position", name="uq_cluster_position"),)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("cluster_runs.id"), index=True)
+    position: Mapped[int] = mapped_column()  # 1-based, largest cluster first
+    label: Mapped[str] = mapped_column(String(200))
+    label_edited_by: Mapped[str | None] = mapped_column(String(100))
+    label_edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    members: Mapped[list["ClusterMember"]] = relationship(order_by="ClusterMember.distance", cascade="all, delete-orphan")
+
+
+class ClusterMember(Base):
+    __tablename__ = "cluster_members"
+    __table_args__ = (UniqueConstraint("cluster_id", "source_id", name="uq_cluster_member"),)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    cluster_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("clusters.id"), index=True)
+    source_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sources.id"), index=True)
+    distance: Mapped[float] = mapped_column(Float)  # cosine distance to the cluster centre (0 = at the centre)
+
+
+class ConnectorBreakerState(Base):
+    """Cross-process circuit breaker state for one connector (M1.3.8).
+
+    `ConnectorHttpClient` (M1.3.2) built its own in-memory breaker, but `connectors/factory.py`
+    builds a fresh client per task/request, so that breaker never actually accumulated failures
+    across separate searches, let alone across the web and worker processes. This row is the
+    shared source of truth instead: `connectors/breaker_store.py::DbBreakerSync` reads/writes
+    it in its own short transaction, independent of the caller's, so a remembered failure
+    survives even if the caller's own transaction later rolls back. `open_until` is wall-clock
+    (`time.time()`) seconds — `None` means the breaker is closed."""
+
+    __tablename__ = "connector_breaker_state"
+    name: Mapped[str] = mapped_column(String(100), primary_key=True)
+    failures: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    open_until: Mapped[float | None] = mapped_column(Float, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+# Registers the immutable-excerpt and append-only audit/note guards (ORM events + DB trigger DDL). Keep at the bottom.
 from app import excerpt_guard  # noqa: E402,F401
 from app import audit_guard  # noqa: E402,F401
+from app import note_guard  # noqa: E402,F401
+from app import suggestion_guard  # noqa: E402,F401
+from app import project_schema_guard  # noqa: E402,F401
+from app import source_gate_guard  # noqa: E402,F401
+from app import claim_guard  # noqa: E402,F401
+from app import ledger_guard  # noqa: E402,F401
+from app import theory_construct_guard  # noqa: E402,F401
+from app import research_question_guard  # noqa: E402,F401

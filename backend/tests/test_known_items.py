@@ -141,7 +141,7 @@ def test_a_capped_search_is_named_as_a_possible_reason(world):
     assert item["status"] == "missing" and "cap" in item["note"]
 
 
-def test_only_the_latest_version_of_a_search_counts(world):
+def test_a_known_item_is_checked_against_only_the_latest_search_version(world):
     c, pid = world
     seed(c, pid, title=LONG, doi="10.1234/a")
     sid = uuid.uuid4()

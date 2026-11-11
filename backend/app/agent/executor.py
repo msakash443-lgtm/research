@@ -5,22 +5,32 @@ import logging
 import secrets
 import re
 import uuid
+from collections.abc import Callable
 from typing import Any
 
 from sqlalchemy import case, select
-from sqlalchemy.orm import selectinload
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session, selectinload
 
 from app import audit
 from app.agent.arc_client import ArcRetrievalClient, ArcRetrievalError
 from app.agent.context import select_agent_context
-from app.agent.llm import LLMConfigurationError, LLMResponseError, OpenAICompatibleLLM
+from app.agent.llm import LLMConfigurationError, LLMResponseError
+from app.ai_controls import AI_OFF_MESSAGE, llm_for_project
+from app.ai_item_locks import CONTEXT_ITEM_KIND, locked_ids, locked_uuids
+from app.output_schemas import EVIDENCE_SYNTHESIS_SCHEMA
 from app.prompt_registry import Prompt, load_prompt
 from app.answer_guard import check_answer
-from app.untrusted_text import clean_untrusted
+from app.untrusted_text import clean_untrusted, _strip_invisible
+from app.task_registry import TaskOwnershipLost
 from app.config import get_settings
+from app.citation_support import quote_matches_source
 from app.database import SessionLocal
 from app.artifacts import register_artifact
 from app.models import (
+    AiInvolvement,
+    Claim,
+    ClaimEvidence,
     Project,
     ProjectStage,
     ResearchContextItem,
@@ -49,70 +59,202 @@ def _compact(text: str, limit: int) -> str:
     return normalized if len(normalized) <= limit else f"{normalized[: limit - 1]}…"
 
 
+def _excerpt_snapshot(excerpt: SourceExcerpt) -> tuple[dict[str, Any], list]:
+    """One stored excerpt as the model may see it, with the cleaning results its flags come from."""
+    body = clean_untrusted(excerpt.content, MAX_EXCERPT_CHARS_PER_SOURCE)
+    locator = clean_untrusted(excerpt.locator, MAX_LOCATOR_CHARS) if excerpt.locator else None
+    snapshot = {"id": str(excerpt.id), "excerpt": body.text, "locator": locator.text if locator else None}
+    found = [body, locator] if locator else [body]
+    return snapshot, found
+
+
 def _source_snapshot(source: Source) -> dict[str, Any]:
     """What the model is shown about one source. Text from outside is cleaned first (untrusted_text.py);
-    the stored excerpt is untouched, and `flags` records what the cleaning found."""
-    excerpt = source.excerpts[-1] if source.excerpts else None
+    the stored excerpts are untouched, and `flags` records what the cleaning found. Every excerpt is kept,
+    oldest first, so a later passage (say, a PDF highlight) never hides an earlier one."""
     title = clean_untrusted(source.title, MAX_TITLE_CHARS)
     url = clean_untrusted(source.url, MAX_URL_CHARS) if source.url else None
-    body = clean_untrusted(excerpt.content, MAX_EXCERPT_CHARS_PER_SOURCE) if excerpt else None
-    locator = clean_untrusted(excerpt.locator, MAX_LOCATOR_CHARS) if excerpt and excerpt.locator else None
-    parts = [part for part in (title, url, body, locator) if part is not None]
+    excerpts = [_excerpt_snapshot(excerpt) for excerpt in source.excerpts]
+    parts = [part for part in (title, url) if part is not None] + [part for _, found in excerpts for part in found]
     return {
         "id": str(source.id),
         "title": title.text,
         "url": url.text if url else None,
         "year": source.year,
         "type": source.source_type,
-        "excerpt": body.text if body else None,
-        "locator": locator.text if locator else None,
+        "excerpts": [snapshot for snapshot, _ in excerpts],
         # The prompt labels these so the answer can flag conclusions that rest on them.
         "automated": source.is_automated,
         "auto_checked": bool(source.metadata_verified and source.verification_method == "automatic"),
-        # Only verified sources may be cited in a generated answer (plan M1.10.3).
         "verified": bool(source.metadata_verified),
+        "quality_flags": list(source.quality_flags or []),
+        "retracted": "retracted" in (source.quality_flags or []),
         # What cleaning removed or noticed (hidden text, chat markup, instruction-like phrases).
         "flags": sorted({flag for part in parts for flag in part.flags}),
     }
 
 
-# A citation group like [S1], [S1, S3], [S2; S4], [S1 and S2] or a range [S1-S3] / [S1–S3].
+# A citation group like [S1], [S1, S3], [S2; S4], [S1 and S2] or a range [S1-S3] / [S1–S3]. Used to turn
+# well-formed groups into links (Obsidian export); the hard block below does not rely on it alone.
 _CITATION_GROUP = re.compile(r"\[\s*(S\d+(?:\s*(?:[,;]|-|–|and)\s*S?\d+)*)\s*\]", re.IGNORECASE)
-_CITATION_PART = re.compile(r"(?:(?P<sep>[,;]|-|–|and)\s*)?S?(?P<n>\d+)", re.IGNORECASE)
+# Fail-closed reading (M1.10.6/M1.10.7): inside any [...], every S# token starts or continues a chain,
+# however it is written ("[S2, p. 4]", "[S1, S2, and S3]", "[S1 & S2]", "[S1/S2]", "[S 2]"); a chain also
+# takes bare numbers and ranges after an S# ("[S1, 2]", "[S1 to S3]"). A page number after "p." is not a
+# source. Bracket contents come from `_bracket_contents` below (handles nesting/unclosed brackets, no
+# length cap — M1.10.7: a cap let an oversized bracket hide its S# token from the reader entirely instead
+# of it being read or at least flagged as unparseable).
+_SEP = r"(?:,\s*and|,\s*or|[,;/&]|\band\b|\bor\b)"
+_RANGE = r"(?:-|–|—|\bto\b|\bthrough\b)"
+_CHAIN = re.compile(rf"(?<![A-Za-z0-9])S\s*\d+(?:\s*(?:{_SEP}|{_RANGE})\s*(?:S\s*)?\d+(?![\d.]))*", re.IGNORECASE)
+_CHAIN_PART = re.compile(rf"\s*(?:(?P<range>{_RANGE})|{_SEP})?\s*(?P<s>S\s*)?(?P<n>\d+)", re.IGNORECASE)
+# M1.10.7: a bracket can still hold an S-then-digit token the chain reader above cannot read (unknown
+# punctuation between them, e.g. "[S.2]"). Rather than silently read that as "no citation", it is flagged
+# as unparseable so the run fails closed instead of possibly letting an unverified citation through. Same
+# word-start boundary as `_CHAIN` so an ordinary word ending in "s" before a number ("Jones 2020") doesn't
+# false-positive — only a standalone "S" (not part of a longer word) counts.
+_SUSPICIOUS_TOKEN = re.compile(r"(?<![A-Za-z0-9])S\W{0,10}\d", re.IGNORECASE)
+
+
+def _bracket_contents(answer: str):
+    starts = []
+    for index, char in enumerate(answer):
+        if char == "[":
+            starts.append(index)
+        elif char == "]" and starts:
+            start = starts.pop()
+            if not starts:
+                yield answer[start + 1 : index]
+    if starts:
+        yield answer[starts[0] + 1 :]
 
 
 def _cited_indices(answer: str) -> set[int]:
-    """Every source number an answer cites with [S#] markers, ranges expanded."""
+    """Every source number an answer cites inside [...], ranges expanded. Errs towards finding a citation:
+    a number read as a source that wasn't meant as one can only block a run, never let one through.
+
+    Invisible Unicode format characters (zero-width spaces, bidi overrides, ...) are stripped before
+    parsing (M1.10.7): they can split a token like "S2" into "S\u200b2", which renders identically but
+    is invisible to the chain reader below. This view is parsing-only; the stored answer is never altered."""
     cited: set[int] = set()
-    for group in _CITATION_GROUP.finditer(answer):
-        previous = None
-        for part in _CITATION_PART.finditer(group.group(1)):
-            number = int(part["n"])
-            if part["sep"] in ("-", "–") and previous is not None:
-                low, high = sorted((previous, number))
-                # Bounded: anything past the run's sources is rejected anyway.
-                cited.update(range(low, min(high, low + MAX_SOURCES + 1) + 1))
-            cited.add(number)
-            previous = number
+    parsing_view, _ = _strip_invisible(answer)
+    for inside in _bracket_contents(parsing_view):
+        for chain in _CHAIN.finditer(inside):
+            previous = None
+            for part in _CHAIN_PART.finditer(chain.group(0)):
+                if not part["s"] and len(part["n"]) == 4:
+                    continue  # "[S2, 2019]": a bare four-digit number is a year, not a source
+                number = int(part["n"])
+                if part["range"] and previous is not None:
+                    low, high = sorted((previous, number))
+                    # Bounded: anything past the run's sources is rejected anyway.
+                    cited.update(range(low, min(high, low + MAX_SOURCES + 1) + 1))
+                cited.add(number)
+                previous = number
     return cited
 
 
+def _unparseable_citation_bracket(answer: str) -> bool:
+    """True if some [...] contains an S-then-digit token `_cited_indices` could not read at all (M1.10.7).
+    Checked on the same invisible-stripped view, with every span the chain reader *did* consume removed
+    first, so this only fires on a genuine leftover (e.g. "[S.2]"), never on a normal citation."""
+    parsing_view, _ = _strip_invisible(answer)
+    for inside in _bracket_contents(parsing_view):
+        remainder = _CHAIN.sub(" ", inside)
+        if _SUSPICIOUS_TOKEN.search(remainder):
+            return True
+    return False
+
+
 def _citation_problem(answer: str, sources: list[dict[str, Any]]) -> tuple[int, str] | None:
-    """The first citation that can't stand: an [S#] with no source behind it in this run, or one whose
-    source hasn't passed citation verification (a person's or the automatic check). None if all are fine.
+    """The first citation that can't stand: an [S#] with no source behind it in this run, one whose source
+    hasn't passed citation verification (a person's or the automatic check), or a bracket that looks like
+    an attempted citation but can't be fully read (M1.10.7). None if all are fine.
 
     Unverifiable citations are blocked, not warned (plan M1.10.3, rule 24)."""
+    if _unparseable_citation_bracket(answer):
+        return 0, "unparseable_citation_bracket"
     for index in sorted(_cited_indices(answer)):
         if not 1 <= index <= len(sources):
             return index, "unknown_citation_index"
+        if sources[index - 1].get("retracted"):
+            return index, "retracted_citation"
         if not sources[index - 1].get("verified"):
             return index, "unverified_citation"
     return None
 
 
+_LINK_STOPWORDS = frozenset({"the", "and", "for", "with", "that", "was", "were", "from", "this", "are", "has", "had", "their", "into"})
+
+
+def _content_words(text: str) -> set[str]:
+    return {word for word in re.findall(r"[a-z0-9]+", text.lower()) if len(word) >= 3 and word not in _LINK_STOPWORDS}
+
+
+def _linked_excerpt_id(sentence: str, snapshot: dict[str, Any]) -> str | None:
+    """The excerpt a cited sentence rests on: the one of the source's excerpts sharing the most words with it.
+    A source with a single excerpt is linked to it outright. With several, a tie or no shared word returns
+    None so the run fails closed rather than linking the claim to the wrong passage."""
+    excerpts = snapshot["excerpts"]
+    if len(excerpts) == 1:
+        return excerpts[0]["id"]
+    words = _content_words(sentence)
+    scores = [(len(words & _content_words(item["excerpt"])), item["id"]) for item in excerpts if item["excerpt"]]
+    best = max((score for score, _ in scores), default=0)
+    winners = [excerpt_id for score, excerpt_id in scores if best > 0 and score == best]
+    return winners[0] if len(winners) == 1 else None
+
+
+class UnstorableAnswer(ValueError):
+    """A cited answer whose claims can't be stored against their excerpts. Asking the model again gives the
+    same answer, so the run fails at once with this reason instead of being retried (X.106)."""
+
+
+def _store_cited_claims(db: Session, run: ResearchRun, answer: str, sources: list[dict[str, Any]]) -> None:
+    """Persist cited statements and the exact excerpt records behind their run-snapshot markers."""
+    parts = [part.strip() for part in re.split(r"(?<=[.!?])\s+|\n+", answer) if part.strip()]
+    sentences: list[str] = []
+    for part in parts:
+        if sentences and part.startswith("[") and _cited_indices(part):
+            sentences[-1] = f"{sentences[-1]} {part}"
+        else:
+            sentences.append(part)
+    created_ids = []
+    for sentence in sentences:
+        indices = sorted(_cited_indices(sentence))
+        if not indices:
+            continue
+        # _citation_problem runs first; fail closed if the evidence changed before persistence.
+        if any(not 1 <= index <= len(sources) for index in indices):
+            raise UnstorableAnswer("A claim cited a source outside the run snapshot")
+        claim = Claim(project_id=run.project_id, run_id=run.id, text=sentence,
+                      verified=False, created_by=audit.AGENT_RESEARCH_RUN)
+        for index in indices:
+            snapshot = sources[index - 1]
+            excerpt_id = _linked_excerpt_id(sentence, snapshot)
+            if excerpt_id is None and len(snapshot["excerpts"]) > 1:
+                raise UnstorableAnswer("A claim could not be tied to one excerpt of its cited source")
+            excerpt = db.get(SourceExcerpt, uuid.UUID(excerpt_id)) if excerpt_id else None
+            source = db.get(Source, uuid.UUID(snapshot["id"]))
+            if (excerpt is None or source is None or str(excerpt.source_id) != snapshot["id"]
+                    or not snapshot.get("verified") or not source.metadata_verified):
+                raise UnstorableAnswer("A claim's source excerpt is missing or unverified")
+            claim.evidence.append(ClaimEvidence(source_id=excerpt.source_id, excerpt_id=excerpt.id,
+                                                quote=excerpt.content,
+                                                quote_matches_source=quote_matches_source(source, excerpt, excerpt.content)))
+        db.add(claim)
+        db.flush()
+        created_ids.append(str(claim.id))
+    if created_ids:
+        audit.record(
+            db, actor=audit.AGENT_RESEARCH_RUN, action="claim.created", project_id=run.project_id,
+            payload={"run_id": str(run.id), "claim_ids": created_ids, "claim_count": len(created_ids)},
+            model_id=run.provider_model, prompt_version=run.prompt_version,
+        )
+
+
 # The exact prompt every research run uses. Changing wording means adding a new version file
 # and moving this pin on purpose; the version is stored with each answer.
-EVIDENCE_SYNTHESIS_PROMPT = ("evidence_synthesis", 3)  # v3 states verification explicitly (M1.10.5)
+EVIDENCE_SYNTHESIS_PROMPT = ("evidence_synthesis", 5)  # v5: retracted sources are never citable
 
 
 def _item_identity_hash(item) -> str:
@@ -126,11 +268,21 @@ def _item_identity_hash(item) -> str:
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:32]
 
 
-def _ingest_arc_sources(db, project: Project, run: ResearchRun, settings) -> dict[str, Any]:
+def _ingest_arc_sources(
+    db: Session,
+    project: Project,
+    run: ResearchRun,
+    settings,
+    ensure_owned: Callable[[Session | None], None] | None = None,
+) -> dict[str, Any]:
     """Save sources found by the ARC retrieval service. Failure never fails the run."""
+    if ensure_owned is not None:
+        ensure_owned(db)
     try:
         retrieved = ArcRetrievalClient(settings).retrieve(run.question)
     except ArcRetrievalError as exc:
+        if ensure_owned is not None:
+            ensure_owned(db)
         logger.warning("ARC retrieval failed for run %s: %s", run.id, exc)
         audit.record(
             db, actor=audit.AGENT_ARC_RETRIEVAL, action="retrieval.failed", project_id=project.id,
@@ -139,6 +291,8 @@ def _ingest_arc_sources(db, project: Project, run: ResearchRun, settings) -> dic
         db.commit()
         return {"status": "failed", "added": 0, "error": str(exc)}
 
+    if ensure_owned is not None:
+        ensure_owned(db)
     existing_urls = set(
         db.scalars(select(Source.url).where(Source.project_id == project.id, Source.url.is_not(None))).all()
     )
@@ -156,6 +310,8 @@ def _ingest_arc_sources(db, project: Project, run: ResearchRun, settings) -> dic
     added = len(existing_keys)
     new_sources = 0
     for item in retrieved:
+        if ensure_owned is not None:
+            ensure_owned(db)
         if added >= MAX_ARC_SOURCES_PER_RUN:
             break
         ingest_key = key_prefix + _item_identity_hash(item)
@@ -178,19 +334,25 @@ def _ingest_arc_sources(db, project: Project, run: ResearchRun, settings) -> dic
             metadata_verified=False,
             created_by=audit.AGENT_ARC_RETRIEVAL,
         )
-        db.add(source)
-        db.flush()
-        if item.excerpt:
-            content = _compact(item.excerpt, MAX_EXCERPT_CHARS_PER_SOURCE)
-            db.add(
-                SourceExcerpt(
-                    source_id=source.id,
-                    content=content,
-                    locator=item.locator,
-                    content_hash=excerpt_hash(content),
-                    created_by=audit.AGENT_ARC_RETRIEVAL,
-                )
-            )
+        try:
+            with db.begin_nested():  # savepoint: a concurrent attempt storing the same item loses only this item
+                db.add(source)
+                db.flush()
+                if item.excerpt:
+                    content = _compact(item.excerpt, MAX_EXCERPT_CHARS_PER_SOURCE)
+                    db.add(
+                        SourceExcerpt(
+                            source_id=source.id,
+                            content=content,
+                            locator=item.locator,
+                            content_hash=excerpt_hash(content),
+                            created_by=audit.AGENT_ARC_RETRIEVAL,
+                        )
+                    )
+        except IntegrityError:
+            existing_keys.add(ingest_key)
+            added += 1  # the other attempt's row counts toward the cap
+            continue
         if item.url:
             existing_urls.add(item.url)
         if item.doi:
@@ -199,6 +361,8 @@ def _ingest_arc_sources(db, project: Project, run: ResearchRun, settings) -> dic
         added += 1
         new_sources += 1
     if new_sources:
+        if ensure_owned is not None:
+            ensure_owned(db)
         audit.record(
             db, actor=audit.AGENT_ARC_RETRIEVAL, action="sources.retrieved", project_id=project.id,
             payload={"run_id": str(run.id), "added": new_sources, "retrieved": len(retrieved), "verified": False},
@@ -237,9 +401,10 @@ def _source_status(source: dict[str, Any], *, explicit_verification: bool = Fals
         status = "automatically retrieved" if explicit_verification else "automatically retrieved, unverified"
     else:
         status = "added by a researcher"
-    if explicit_verification:
-        # v3+: an explicit, uniform signal the model can key off directly (plan M1.10.5) — separate
-        # from the provenance text above, so a human-verified automated source is never contradictory.
+    if source.get("retracted"):
+        status = "RETRACTED — do not cite"
+    elif explicit_verification:
+        # v3+: an explicit, uniform signal the model can key off directly (plan M1.10.5).
         status += (
             " | Verified — may be cited."
             if source.get("verified")
@@ -275,18 +440,36 @@ def _agent_prompts(
         # (screening, extraction, ...) must build its prompt through this path.
         title_c = clean_untrusted(str(source["title"]), MAX_TITLE_CHARS)
         url_c = clean_untrusted(str(source["url"]), MAX_URL_CHARS) if source.get("url") else None
-        locator_c = clean_untrusted(str(source["locator"]), MAX_LOCATOR_CHARS) if source.get("locator") else None
-        excerpt_c = clean_untrusted(str(source["excerpt"]), MAX_EXCERPT_CHARS_PER_SOURCE) if source.get("excerpt") else None
+        # A bare dict with one "excerpt" (no "excerpts" list) is still accepted, as before.
+        excerpts = source.get("excerpts")
+        if excerpts is None:
+            excerpts = [{"excerpt": source["excerpt"], "locator": source.get("locator")}] if source.get("excerpt") else []
+        passages = []
+        for number, item in enumerate(excerpts, start=1):
+            body_c = clean_untrusted(str(item["excerpt"]), MAX_EXCERPT_CHARS_PER_SOURCE)
+            locator_c = clean_untrusted(str(item["locator"]), MAX_LOCATOR_CHARS) if item.get("locator") else None
+            passages.append((number, body_c, locator_c))
+        found = [title_c, url_c] + [part for _, body_c, locator_c in passages for part in (body_c, locator_c)]
         source = {
             **source,
-            "flags": sorted(
-                {*source.get("flags", ()), *(f for c in (title_c, url_c, locator_c, excerpt_c) if c for f in c.flags)}
-            ),
+            "flags": sorted({*source.get("flags", ()), *(f for c in found if c for f in c.flags)}),
         }
+        # One excerpt renders as before (its locator in Details); several are each labelled with their locator.
+        single = len(passages) == 1
         details = "; ".join(
-            str(value) for value in (source.get("year"), url_c.text if url_c else None, locator_c.text if locator_c else None) if value
+            str(value)
+            for value in (source.get("year"), url_c.text if url_c else None, passages[0][2].text if single and passages[0][2] else None)
+            if value
         )
-        excerpt = excerpt_c.text if excerpt_c else "(No excerpt was recorded; do not make factual claims from this source.)"
+        if single:
+            excerpt = passages[0][1].text
+        elif passages:
+            excerpt = "\n".join(
+                f"Passage {number}" + (f" ({locator_c.text})" if locator_c else "") + f": {body_c.text}"
+                for number, body_c, locator_c in passages
+            )
+        else:
+            excerpt = "(No excerpt was recorded; do not make factual claims from this source.)"
         if prompt.source_block is not None:
             source_parts.append(
                 prompt.render_source(
@@ -308,10 +491,15 @@ def _agent_prompts(
     return prompt.system, user
 
 
-def execute_research_run(run_id: str | uuid.UUID) -> None:
+def execute_research_run(
+    run_id: str | uuid.UUID,
+    ensure_owned: Callable[[Session | None], None] | None = None,
+) -> None:
     """Run one durable research task. Safe to call from the worker or inline in local development."""
     db = SessionLocal()
     try:
+        if ensure_owned is not None:
+            ensure_owned(db)
         run_key = uuid.UUID(str(run_id))
         run = db.get(ResearchRun, run_key)
         if run is None or run.status not in {ResearchRunStatus.queued, ResearchRunStatus.running}:
@@ -320,6 +508,8 @@ def execute_research_run(run_id: str | uuid.UUID) -> None:
         run.status = ResearchRunStatus.running
         run.started_at = run.started_at or utcnow()
         run.attempt_count += 1
+        if ensure_owned is not None:
+            ensure_owned(db)
         db.commit()
 
         project = db.get(Project, run.project_id)
@@ -331,64 +521,118 @@ def execute_research_run(run_id: str | uuid.UUID) -> None:
                 db, actor=audit.AGENT_RESEARCH_RUN, action="research_run.failed", project_id=run.project_id,
                 payload={"run_id": str(run.id), "reason": "project_missing"},
             )
+            if ensure_owned is not None:
+                ensure_owned(db)
             db.commit()
             return
 
         settings = get_settings()
-        web_retrieval = None
-        if run.use_web_retrieval and settings.arc_retrieval_enabled:
-            web_retrieval = _ingest_arc_sources(db, project, run, settings)
+        if project.ai_involvement == AiInvolvement.off:
+            # Off means no project text goes to any AI (X.31.7). Checked here as well as when the run is
+            # requested, because the owner may have switched AI off while this run waited in the queue.
+            run.status = ResearchRunStatus.failed
+            run.answer = None
+            run.error_message = AI_OFF_MESSAGE
+            run.completed_at = utcnow()
+            audit.record(
+                db, actor=audit.AGENT_RESEARCH_RUN, action="research_run.refused_ai_off", project_id=run.project_id,
+                payload={"run_id": str(run.id)},
+            )
+            if ensure_owned is not None:
+                ensure_owned(db)
+            db.commit()
+            return
 
+        web_retrieval = None
+        llm = None
+        llm_configuration_error = None
+        try:
+            llm = llm_for_project(settings, project, purpose="research_run", run_id=run.id)
+            if run.use_web_retrieval and settings.arc_retrieval_enabled:
+                llm.validate_configuration()
+        except LLMConfigurationError as exc:
+            llm_configuration_error = exc
+        if llm_configuration_error is None and run.use_web_retrieval and settings.arc_retrieval_enabled:
+            web_retrieval = _ingest_arc_sources(db, project, run, settings, ensure_owned=ensure_owned)
+
+        # Items set to "never for this item" are left out before anything is built from them (X.46.3).
         context_rows = select_agent_context(
-            db.scalars(select(ResearchContextItem).where(ResearchContextItem.project_id == project.id)).all()
+            db.scalars(select(ResearchContextItem).where(ResearchContextItem.project_id == project.id)).all(),
+            locked_ids=locked_ids(db, project.id, CONTEXT_ITEM_KIND),
         )
         # Researcher-entered (or reviewed) sources take priority over auto-retrieved ones,
         # so a retrieval run can never push manual evidence out of the source cap.
         automated_rank = case((Source.is_automated, 1), else_=0)
         sources = db.scalars(
             select(Source)
-            .where(Source.project_id == project.id, Source.merged_into.is_(None))
+            .where(
+                Source.project_id == project.id, Source.merged_into.is_(None),
+                Source.id.not_in(locked_uuids(db, project.id, "source")),
+            )
             .order_by(automated_rank, Source.created_at.desc())
             .limit(MAX_SOURCES)
             # Eager-load excerpts in one bounded query; no implicit lazy loads in the worker.
             .options(selectinload(Source.excerpts))
         ).all()
 
+        # Recheck immediately before prompt construction so a concurrent lock cannot enter the model input.
+        locked_context = locked_ids(db, project.id, CONTEXT_ITEM_KIND)
+        locked_sources = locked_uuids(db, project.id, "source")
+        context_rows = [item for item in context_rows if str(item.id) not in locked_context]
+        sources = [source for source in sources if source.id not in locked_sources]
         context = [
             {"kind": item.kind.value, "content": item.content, "rationale": item.rationale or ""}
             for item in context_rows
         ]
         source_snapshot = []
         remaining_evidence_chars = MAX_TOTAL_EVIDENCE_CHARS
-        # Manual sources first (oldest first within each group): they get the lowest [S#]
-        # markers and the first claim on the evidence character budget.
         for source in sorted(sources, key=lambda item: (item.is_automated, item.created_at)):
             snapshot = _source_snapshot(source)
-            if snapshot["excerpt"]:
-                snapshot["excerpt"] = snapshot["excerpt"][:remaining_evidence_chars]
-                remaining_evidence_chars -= len(snapshot["excerpt"])
+            kept = []
+            for item in snapshot["excerpts"]:
+                if remaining_evidence_chars <= 0:
+                    break
+                item["excerpt"] = item["excerpt"][:remaining_evidence_chars]
+                remaining_evidence_chars -= len(item["excerpt"])
+                kept.append(item)
+            snapshot["excerpts"] = kept
             source_snapshot.append(snapshot)
+        run.research_plan = build_plan(source_snapshot)
         run.input_snapshot = {"context": context, "sources": source_snapshot}
         if web_retrieval is not None:
             run.input_snapshot["web_retrieval"] = web_retrieval
-        run.research_plan = build_plan(source_snapshot)
-
-        evidence_sources = [source for source in source_snapshot if source["excerpt"]]
-        if not sources:
+        evidence_sources = [source for source in source_snapshot if source["excerpts"]]
+        if llm_configuration_error is not None:
+            run.status = ResearchRunStatus.needs_configuration
+            run.answer = None
+            run.error_message = str(llm_configuration_error)
+        elif not sources:
             run.status = ResearchRunStatus.needs_sources
-            run.answer = "No sources are saved for this project yet. Add primary or official sources and a short evidence excerpt, then run the question again."
+            run.answer = None
+            run.error_message = "No sources are saved for this project yet. Add primary or official sources and a short evidence excerpt, then run the question again."
         elif not evidence_sources:
             run.status = ResearchRunStatus.needs_sources
-            run.answer = "Your project has sources, but no evidence excerpts. Add a short quotation or data note with a page/table locator so the agent can make a verifiable synthesis."
+            run.answer = None
+            run.error_message = "Your project has sources, but no evidence excerpts. Add a short quotation or data note with a page/table locator so the agent can make a verifiable synthesis."
         else:
             # Record the model before calling it, so failed attempts show which model was used.
             prompt = load_prompt(*EVIDENCE_SYNTHESIS_PROMPT)
-            run.provider_model = settings.llm_model
+            run.provider_model = llm.model
             run.prompt_version = prompt.ref
+            # Don't hold a write transaction (e.g. retrieved sources) across the model call: the usage
+            # meter writes in its own session, and that write would wait on our lock.
+            if ensure_owned is not None:
+                ensure_owned(db)
+            db.commit()
             try:
                 nonce = secrets.token_hex(8)
                 system_prompt, user_prompt = _agent_prompts(prompt, run, context, source_snapshot, nonce=nonce)
-                answer = OpenAICompatibleLLM(settings).complete(system_prompt, user_prompt)
+                if ensure_owned is not None:
+                    ensure_owned()
+                reply = llm.complete_json(system_prompt, user_prompt, EVIDENCE_SYNTHESIS_SCHEMA)
+                abstained = bool(reply["insufficient_evidence"]["insufficient"])
+                # Both the answer and an abstention reason are model text: check whichever is stored.
+                answer = reply["insufficient_evidence"]["reason"] if abstained else reply["answer"]
                 leaked = check_answer(answer, system_prompt=system_prompt, nonce=nonce)
                 bad_citation = None if leaked else _citation_problem(answer, source_snapshot)
                 if leaked:
@@ -403,7 +647,7 @@ def execute_research_run(run_id: str | uuid.UUID) -> None:
                         prompt_version=run.prompt_version,
                     )
                 elif bad_citation:
-                    # Unverifiable citations are blocked, not warned (M1.10.3). Don't store the answer.
+                    # Ineligible citations are blocked, not warned. Don't store the answer.
                     index, reason = bad_citation
                     logger.warning("Run %s: model answer rejected (%s: [S%s])", run.id, reason, index)
                     run.status = ResearchRunStatus.failed
@@ -412,6 +656,15 @@ def execute_research_run(run_id: str | uuid.UUID) -> None:
                         run.error_message = (
                             f"The answer cited [S{index}], which doesn't match any source in this run's evidence. "
                             "The citation was rejected rather than guessed."
+                        )
+                    elif reason == "unparseable_citation_bracket":
+                        run.error_message = (
+                            "The answer contains a bracketed reference that looks like a source citation "
+                            "but isn't in a form that could be checked. It was rejected rather than guessed."
+                        )
+                    elif reason == "retracted_citation":
+                        run.error_message = (
+                            f"The answer cited a retracted source ([S{index}]). Retracted sources can't be cited."
                         )
                     else:
                         run.error_message = (
@@ -424,7 +677,13 @@ def execute_research_run(run_id: str | uuid.UUID) -> None:
                         model_id=run.provider_model, prompt_version=run.prompt_version,
                     )
                 else:
-                    run.answer = answer
+                    # An abstention keeps its reason out of `answer`, so `answer` only ever holds an answer.
+                    if not abstained:
+                        _store_cited_claims(db, run, answer, source_snapshot)
+                    run.answer = None if abstained else answer
+                    run.insufficient_evidence = abstained
+                    run.insufficient_reason = answer if abstained else None
+                    run.confidence = float(reply["confidence"])
                     run.status = ResearchRunStatus.completed
                     # A finished synthesis is an artifact: re-entering an earlier stage later marks it stale.
                     register_artifact(
@@ -438,7 +697,15 @@ def execute_research_run(run_id: str | uuid.UUID) -> None:
                 run.status = ResearchRunStatus.failed
                 run.answer = None
                 run.error_message = str(exc)
-
+            except UnstorableAnswer:
+                raise
+            except Exception as exc:
+                # Provider adapters must not leak transport/adapter exceptions into the generic
+                # task-failure path: preserve the failed run and its AI provenance.
+                logger.exception("LLM execution failed for run %s", run.id)
+                run.status = ResearchRunStatus.failed
+                run.answer = None
+                run.error_message = "The configured LLM service could not be reached."
         run.completed_at = utcnow()
         audit.record(
             db, actor=audit.AGENT_RESEARCH_RUN, action="research_run.finished", project_id=run.project_id,
@@ -446,23 +713,77 @@ def execute_research_run(run_id: str | uuid.UUID) -> None:
             model_id=run.provider_model,
             prompt_version=run.prompt_version,
         )
+        if ensure_owned is not None:
+            ensure_owned(db)
         db.commit()
-    except Exception:
+    except TaskOwnershipLost:
+        db.rollback()
+        raise
+    except UnstorableAnswer as exc:
+        # The model's citations can't be tied to stored excerpts. Asking again would repeat the answer,
+        # so the run fails at once with the reason and the task completes (X.106).
         db.rollback()
         try:
+            if ensure_owned is not None:
+                ensure_owned(db)
             run = db.get(ResearchRun, run_key)
             if run is not None:
                 run.status = ResearchRunStatus.failed
-                run.error_message = "The research run failed unexpectedly. Check the server logs; no source content was lost."
+                run.answer = None
+                run.error_message = (
+                    "The answer could not be stored as claims tied to their source excerpts, so it was rejected "
+                    f"rather than guessed. {exc}"
+                )
                 run.completed_at = utcnow()
                 audit.record(
-                    db, actor=audit.AGENT_RESEARCH_RUN, action="research_run.failed", project_id=run.project_id,
-                    payload={"run_id": str(run.id), "reason": "unexpected_error"},
+                    db, actor=audit.AGENT_RESEARCH_RUN, action="research_run.citation_rejected", project_id=run.project_id,
+                    payload={"run_id": str(run.id), "reason": "unstorable_claim"},
+                    model_id=run.provider_model, prompt_version=run.prompt_version,
+                )
+                db.commit()
+        except TaskOwnershipLost:
+            db.rollback()
+            raise
+    except Exception:
+        db.rollback()
+        try:
+            if ensure_owned is not None:
+                ensure_owned(db)
+            run = db.get(ResearchRun, run_key)
+            if run is not None:
+                if get_settings().run_research_inline:
+                    # Inline mode has no worker to pick up a retry, so the run fails here; the handler
+                    # then ends the task too (task_handlers.handle_research_run).
+                    run.status = ResearchRunStatus.failed
+                    run.completed_at = utcnow()
+                    run.error_message = (
+                        f"The research run failed unexpectedly on attempt {run.attempt_count}. "
+                        "Check the server logs and submit the question again; no source content was lost."
+                    )
+                else:
+                    # The queue retries this attempt with backoff, so the run waits as queued rather than failed.
+                    # If the last attempt fails too, the task's failure hook marks the run failed.
+                    run.status = ResearchRunStatus.queued
+                    run.error_message = (
+                        f"The research run failed unexpectedly on attempt {run.attempt_count} and will be retried. "
+                        "Check the server logs; no source content was lost."
+                    )
+                audit.record(
+                    db, actor=audit.AGENT_RESEARCH_RUN, action="research_run.attempt_failed", project_id=run.project_id,
+                    payload={"run_id": str(run.id), "reason": "unexpected_error", "attempt": run.attempt_count},
                     model_id=run.provider_model,
                     prompt_version=run.prompt_version,
                 )
+                if ensure_owned is not None:
+                    ensure_owned(db)
                 db.commit()
+        except TaskOwnershipLost:
+            db.rollback()
+            raise
         except Exception:
+            # The original error is re-raised below and logged by the task runner; this second one,
+            # from recording the failure, would otherwise be lost (X.145).
+            logger.exception("Could not record the failure of research run %s", run_key)
             db.rollback()
         raise
     finally:

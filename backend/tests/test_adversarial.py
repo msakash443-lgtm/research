@@ -29,6 +29,7 @@ from app.main import app
 from app.models import AuditEvent, SourceExcerpt
 from app.prompt_registry import load_prompt
 from tests.adversarial_fixtures import FIXTURES, IDS, REAL_FINDING
+from tests.llm_replies import chat_reply
 
 BLOCK = re.compile(r"<<<SOURCE \[S(\d+)\] id=([0-9a-f]+)>>>\n(.*?)\n<<<END SOURCE \[S\1\] id=\2>>>", re.DOTALL)
 QUESTION = "A long enough question?"
@@ -151,7 +152,7 @@ def test_the_padding_attack_is_cut_off_by_the_length_cap(fake_llm):
 
     _c, _p, run = _manual_run("adv-pad@example.com", fixture["text"])
 
-    excerpt = run["input_snapshot"]["sources"][0]["excerpt"]
+    excerpt = run["input_snapshot"]["sources"][0]["excerpts"][0]["excerpt"]
     assert len(excerpt) == executor.MAX_EXCERPT_CHARS_PER_SOURCE and excerpt.endswith("…")
     assert "PWNED-21" not in excerpt  # the payload sat beyond the cap
 
@@ -182,7 +183,7 @@ def _system_from(request):
 
 
 def _answer(text):
-    return {"choices": [{"message": {"content": text}}]}
+    return chat_reply(text)
 
 
 @pytest.mark.parametrize(
@@ -205,7 +206,7 @@ def test_an_answer_that_repeats_prompt_internals_is_rejected_not_stored(fake_llm
     with SessionLocal() as db:
         rejected = db.scalars(select(AuditEvent).where(AuditEvent.action == "research_run.answer_rejected")).one()
         everything = repr([(e.action, e.payload_json) for e in db.scalars(select(AuditEvent))])
-    assert rejected.model_id == "fake-model" and rejected.prompt_version == "evidence_synthesis@3"
+    assert rejected.model_id == "fake-model" and rejected.prompt_version == "evidence_synthesis@5"
     assert rejected.payload_json["reason"] in {"text from the system prompt", "an internal source-block id", "the source-block markers"}
     assert "Sure!" not in everything and "secret id" not in everything  # the leaked text is not written anywhere
 

@@ -1,16 +1,32 @@
 export async function request(path, options = {}) {
-  const response = await fetch(path, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    ...options,
-  });
+  let response;
+  try {
+    response = await fetch(path, {
+      headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+      ...options,
+    });
+  } catch {
+    throw new Error("Can't reach the server. Check that it is running and that you are using its address.");
+  }
   if (response.status === 204) return null;
-  const body = await response.json().catch(() => ({}));
+  const text = await response.text().catch(() => "");
+  let body = {};
+  try {
+    body = text ? JSON.parse(text) : {};
+  } catch {}
   if (!response.ok) {
-    throw new Error(
+    const where = `${(options.method || "GET").toUpperCase()} ${path}`;
+    const error = new Error(
       (typeof body.detail === "object" && body.detail?.message) ||
         (typeof body.detail === "string" && body.detail) ||
-        "Something went wrong."
+        (response.status === 400 && text.trim() === "Invalid host header"
+          ? "The server rejected this address (host not allowed). Add it to ALLOWED_HOSTS."
+          : `Something went wrong (HTTP ${response.status}, ${where}). Check the server log for details.`)
     );
+    // Callers that must tell a conflict (409) from a refusal (422) read these; others only use the message.
+    error.status = response.status;
+    error.detail = body.detail;
+    throw error;
   }
   return body;
 }

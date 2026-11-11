@@ -11,7 +11,7 @@ from app.agent.llm import LLMConfigurationError, OpenAICompatibleLLM
 from app.config import get_settings
 from app.database import SessionLocal
 from app.main import app
-from app.models import AuditEvent, Gate, GateCode, GateStatus, Project, ScreeningCriterion, ScreeningDecision, Source
+from app.models import AuditEvent, AutoExcludeAudit, Gate, GateCode, GateStatus, Project, ScreeningCriterion, ScreeningDecision, Source
 from app.prescreen import PrescreenError, build_prompts, load_prescreen_prompt, prescreen_source, run_prescreen
 from app.task_registry import ClaimedTask, PermanentTaskError
 
@@ -30,8 +30,8 @@ class ScriptedLLM(OpenAICompatibleLLM):
         return reply if isinstance(reply, str) else json.dumps(reply)
 
 
-def answer(decision="include", reason=None, confidence=0.9, rationale="It matches the criteria."):
-    return {"decision": decision, "reason_code": reason, "confidence": confidence, "rationale": rationale}
+def answer(decision="include", reason=None, confidence=0.9, rationale="It matches the criteria.", quote="Paper"):
+    return {"decision": decision, "reason_code": reason, "confidence": confidence, "rationale": rationale, "evidence_quote": quote}
 
 
 @pytest.fixture
@@ -161,7 +161,7 @@ def test_flags_are_audited_with_the_model_and_prompt_version(world):
         db.commit()
     run(world, [answer("maybe", None, 0.9)] * 3)
     events = [e for e in world["owner"].get(f"/api/projects/{world['pid']}/audit").json() if e["action"] == "screening.ai_suggested"]
-    assert len(events) == 3 and {e["prompt_version"] for e in events} == {"screening_prescreen@1"} and {e["model_id"] for e in events} == {"test-model"}
+    assert len(events) == 3 and {e["prompt_version"] for e in events} == {"screening_prescreen@2"} and {e["model_id"] for e in events} == {"test-model"}
     assert any("ignore_instructions" in e["payload_json"]["flags"] for e in events)
 
 
@@ -179,7 +179,7 @@ def test_a_rationale_that_repeats_the_prompts_internals_is_rejected():
 
 
 def test_the_prompt_is_pinned_and_the_config_default_is_sane():
-    assert load_prescreen_prompt().ref == "screening_prescreen@1"
+    assert load_prescreen_prompt().ref == "screening_prescreen@2"
     assert 0 <= get_settings().prescreen_min_confidence <= 1
 
 
@@ -210,13 +210,13 @@ def _claimed(pid, monkeypatch):
 
 
 def test_the_handler_writes_suggestions(world, monkeypatch):
-    monkeypatch.setattr(handlers, "OpenAICompatibleLLM", lambda settings: ScriptedLLM([answer("include", "I1", 0.9)] * 3))
+    monkeypatch.setattr(handlers, "llm_for_project", lambda settings, project, **kw: ScriptedLLM([answer("include", "I1", 0.9)] * 3))
     handlers.handle_screening_prescreen(_claimed(world["pid"], monkeypatch))
     assert len(rows(world)) == 3
 
 
 def test_the_handler_fails_the_task_when_some_records_failed(world, monkeypatch):
-    monkeypatch.setattr(handlers, "OpenAICompatibleLLM", lambda settings: ScriptedLLM([answer("include", "I1")] + ["bad"] * 3 + [answer("include", "I1")]))
+    monkeypatch.setattr(handlers, "llm_for_project", lambda settings, project, **kw: ScriptedLLM([answer("include", "I1")] + ["bad"] * 3 + [answer("include", "I1")]))
     with pytest.raises(PermanentTaskError, match="1 record"):
         handlers.handle_screening_prescreen(_claimed(world["pid"], monkeypatch))
     assert len(rows(world)) == 2  # what worked is kept; the failed one is left for a person
@@ -224,10 +224,10 @@ def test_the_handler_fails_the_task_when_some_records_failed(world, monkeypatch)
 
 def test_the_handler_fails_loudly_when_no_model_is_configured(world, monkeypatch):
     class Unconfigured(OpenAICompatibleLLM):
-        def __init__(self, settings):
+        def __init__(self, settings, **kw):
             super().__init__(settings, api_key=None, api_base_url=None, model=None)
 
-    monkeypatch.setattr(handlers, "OpenAICompatibleLLM", Unconfigured)
+    monkeypatch.setattr(handlers, "llm_for_project", lambda settings, project, **kw: Unconfigured(settings))
     with pytest.raises(PermanentTaskError, match="LLM"):
         handlers.handle_screening_prescreen(_claimed(world["pid"], monkeypatch))
     assert rows(world) == []
@@ -238,3 +238,178 @@ def test_the_task_type_is_registered_behind_gate_g2():
 
     assert REQUIRED_GATES["screening_prescreen"] == GateCode.G2
     assert LLMConfigurationError  # imported for the message check above
+
+
+def test_a_sampled_high_confidence_exclude_creates_a_pending_audit(world):
+    pid = world["pid"]
+    with SessionLocal() as db:
+        db.get(Project, uuid.UUID(pid)).ai_autoexclude_enabled = True
+        db.commit()
+    run(world, [answer("exclude", "E1", 0.95)], limit=1, autoexclude_default_threshold=0.9, autoexclude_sample_rate=1.0)
+    with SessionLocal() as db:
+        audits = list(db.scalars(select(AutoExcludeAudit).where(AutoExcludeAudit.project_id == uuid.UUID(pid))))
+    assert len(audits) == 1 and audits[0].status == "pending" and audits[0].confidence == 0.95
+    assert audit_actions(world).count("screening.autoexclude_sampled") == 1
+
+
+def test_only_every_nth_eligible_exclude_is_sampled(world):
+    pid = world["pid"]
+    with SessionLocal() as db:
+        db.get(Project, uuid.UUID(pid)).ai_autoexclude_enabled = True
+        db.commit()
+    run(world, [answer("exclude", "E1", 0.95)] * 2, limit=2, autoexclude_default_threshold=0.9, autoexclude_sample_rate=0.5)
+    with SessionLocal() as db:
+        audits = list(db.scalars(select(AutoExcludeAudit).where(AutoExcludeAudit.project_id == uuid.UUID(pid))))
+    assert len(audits) == 1  # the first eligible exclude was trusted unsampled; the second (every 2nd) was sampled
+
+
+def test_a_low_confidence_exclude_is_never_sampled(world):
+    pid = world["pid"]
+    with SessionLocal() as db:
+        db.get(Project, uuid.UUID(pid)).ai_autoexclude_enabled = True
+        db.commit()
+    run(world, [answer("exclude", "E1", 0.7)], limit=1, autoexclude_default_threshold=0.9, autoexclude_sample_rate=1.0)
+    with SessionLocal() as db:
+        assert db.scalar(select(func.count()).select_from(AutoExcludeAudit).where(AutoExcludeAudit.project_id == uuid.UUID(pid))) == 0
+
+
+def test_a_projects_own_threshold_override_beats_the_passed_default(world):
+    pid = world["pid"]
+    with SessionLocal() as db:
+        project = db.get(Project, uuid.UUID(pid))
+        project.ai_autoexclude_enabled = True
+        project.ai_autoexclude_confidence_threshold = 0.99
+        db.commit()
+    run(world, [answer("exclude", "E1", 0.95)], limit=1, autoexclude_default_threshold=0.5, autoexclude_sample_rate=1.0)
+    with SessionLocal() as db:
+        assert db.scalar(select(func.count()).select_from(AutoExcludeAudit).where(AutoExcludeAudit.project_id == uuid.UUID(pid))) == 0
+
+
+def test_auto_exclude_sampling_is_off_unless_the_project_enables_it(world):
+    run(world, [answer("exclude", "E1", 0.99)], limit=1, autoexclude_default_threshold=0.5, autoexclude_sample_rate=1.0)
+    with SessionLocal() as db:
+        assert db.scalar(select(func.count()).select_from(AutoExcludeAudit).where(AutoExcludeAudit.project_id == uuid.UUID(world["pid"]))) == 0
+
+
+def test_a_crash_before_the_audit_row_leaves_no_unaudited_auto_exclude(world, monkeypatch):
+    pid = world["pid"]
+    with SessionLocal() as db:
+        db.get(Project, uuid.UUID(pid)).ai_autoexclude_enabled = True
+        db.commit()
+
+    def crash(*_args, **_kwargs):
+        raise RuntimeError("simulated crash between the decision and its audit row")
+
+    monkeypatch.setattr("app.ai_quality.due_for_sample", crash)
+    with pytest.raises(RuntimeError):
+        run(world, [answer("exclude", "E1", 0.95)], limit=1, autoexclude_default_threshold=0.9, autoexclude_sample_rate=1.0)
+    with SessionLocal() as db:
+        assert db.scalar(select(func.count()).select_from(ScreeningDecision).where(
+            ScreeningDecision.project_id == uuid.UUID(pid), ScreeningDecision.decided_by == "ai")) == 0
+
+    monkeypatch.undo()
+    run(world, [answer("exclude", "E1", 0.95)], limit=1, autoexclude_default_threshold=0.9, autoexclude_sample_rate=1.0)
+    with SessionLocal() as db:
+        audits = list(db.scalars(select(AutoExcludeAudit).where(AutoExcludeAudit.project_id == uuid.UUID(pid))))
+    assert len(audits) == 1 and audits[0].status == "pending"
+
+
+def test_prescreen_auto_disables_when_ai_human_agreement_is_too_low(world):
+    pid, ids = world["pid"], world["ids"]
+    run(world, [answer("exclude", "E1", 0.9)] * 3, agreement_min_n=3, agreement_min_kappa=0.4)
+    for sid in ids:
+        assert world["owner"].post(f"/api/projects/{pid}/screening/decisions", json={"source_id": sid, "decision": "include"}).status_code == 201
+    run(world, [], agreement_min_n=3, agreement_min_kappa=0.4)  # nothing left to screen; still recomputes agreement
+    with SessionLocal() as db:
+        project = db.get(Project, uuid.UUID(pid))
+        assert project.ai_prescreen_disabled is True and project.ai_prescreen_disabled_reason
+    assert audit_actions(world).count("screening.ai_prescreen_auto_disabled") == 1
+    assert world["owner"].post(f"/api/projects/{pid}/screening/prescreen").status_code == 409
+
+
+def test_prescreen_stays_enabled_with_too_few_comparable_pairs(world):
+    pid, ids = world["pid"], world["ids"]
+    run(world, [answer("exclude", "E1", 0.9)] * 3, agreement_min_n=20, agreement_min_kappa=0.4)
+    for sid in ids:
+        world["owner"].post(f"/api/projects/{pid}/screening/decisions", json={"source_id": sid, "decision": "include"})
+    run(world, [], agreement_min_n=20, agreement_min_kappa=0.4)
+    with SessionLocal() as db:
+        assert db.get(Project, uuid.UUID(pid)).ai_prescreen_disabled is False
+
+
+def test_run_prescreen_refuses_when_already_disabled(world):
+    pid = world["pid"]
+    with SessionLocal() as db:
+        project = db.get(Project, uuid.UUID(pid))
+        project.ai_prescreen_disabled = True
+        project.ai_prescreen_disabled_reason = "Disabled by the project owner."
+        db.commit()
+    with pytest.raises(PrescreenError, match="Disabled by the project owner"):
+        run(world, [])
+    assert rows(world) == []
+
+
+# ---- evidence quote and confidence level (X.77) -------------------------------------------------------------
+
+ABSTRACT = "We surveyed 200 nurses.\nWorkload was linked to burnout in every ward."
+
+
+def _with_abstract(world, abstract=ABSTRACT):
+    with SessionLocal() as db:
+        for source_id in world["ids"]:
+            db.get(Source, uuid.UUID(source_id)).abstract = abstract
+        db.commit()
+
+
+def test_a_quote_is_found_ignoring_case_and_line_breaks_and_returned_as_the_record_spells_it():
+    from app.prescreen import locate_quote
+
+    assert locate_quote("workload was LINKED to burnout", "Paper", ABSTRACT) == ("abstract", "Workload was linked to burnout")
+    assert locate_quote("we surveyed 200 nurses. workload", "Paper", ABSTRACT) == ("abstract", "We surveyed 200 nurses. Workload")  # across the line break
+    assert locate_quote("paper", "Paper 1", None) == ("title", "Paper")
+    assert locate_quote("Workload caused burnout", "Paper", ABSTRACT) is None  # different words
+    assert locate_quote("   ", "Paper", ABSTRACT) is None
+
+
+def test_confidence_levels():
+    from app.prescreen import confidence_level
+
+    assert [confidence_level(c) for c in (0.95, 0.8, 0.79, 0.5, 0.49, 0.0)] == ["high", "high", "medium", "medium", "low", "low"]
+    assert confidence_level(None) is None
+
+
+def test_an_include_or_exclude_without_a_quote_is_rejected_and_a_maybe_may_have_none(world):
+    _with_abstract(world)
+    result, _ = run(world, [answer("include", "I1", quote=None), answer("exclude", "E1", quote="   "), answer("maybe", None, quote=None)])
+    assert (result.suggested, result.failed) == (1, 2)
+    assert [r.decision for r in rows(world)] == ["maybe"]
+
+
+def test_a_quote_that_is_not_in_the_record_is_rejected_not_corrected(world):
+    _with_abstract(world)
+    result, _ = run(world, [answer("include", "I1", quote="Workload caused burnout in every ward."),
+                            answer("include", "I1", quote="Workload was linked to burnout"), answer("maybe", None, quote=None)])
+    assert (result.suggested, result.failed) == (2, 1)
+    failure = next(e for e in world["owner"].get(f"/api/projects/{world['pid']}/audit").json() if e["action"] == "screening.ai_failed")
+    assert "evidence quote is not in the record" in failure["payload_json"]["reason"]
+
+
+def test_the_queue_shows_the_stored_quote_where_it_was_found_and_a_confidence_level(world):
+    _with_abstract(world)
+    by_marker = {"Title: Paper 0\n": answer("include", "I1", 0.9, quote="workload was linked to burnout"),
+                 "Title: Paper 1\n": answer("exclude", "E1", 0.7, quote="Paper"),
+                 "Title: Paper 2\n": answer("maybe", None, 0.4, quote=None)}
+
+    class ByTitle(ScriptedLLM):  # the sources are created together, so the order they are screened in is not fixed
+        def complete(self, system_prompt, user_prompt):
+            return json.dumps(next(reply for marker, reply in by_marker.items() if marker in user_prompt))
+
+    with SessionLocal() as db:
+        run_prescreen(db, db.get(Project, uuid.UUID(world["pid"])), llm=ByTitle([]), min_confidence=0.6, actor="tester")
+
+    queue = world["owner"].get(f"/api/projects/{world['pid']}/screening/queue?stage=title_abstract").json()["items"]
+    by_title = {i["title"]: i["ai_suggestion"] for i in queue}
+    assert by_title["Paper 0"]["evidence_quote"] == "Workload was linked to burnout" and by_title["Paper 0"]["evidence_source"] == "abstract"
+    assert by_title["Paper 0"]["confidence_level"] == "high"
+    assert (by_title["Paper 1"]["evidence_quote"], by_title["Paper 1"]["evidence_source"], by_title["Paper 1"]["confidence_level"]) == ("Paper", "title", "medium")
+    assert "evidence_quote" not in by_title["Paper 2"] and by_title["Paper 2"]["confidence_level"] == "low"

@@ -9,11 +9,13 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app import task_handlers, task_runner
+from gate_helpers import approve_earlier_gates
 from app.config import get_settings
 from app.connectors.base import ConnectorBase, ConnectorError, PaperRecord, SearchPage, SearchRequest
 from app.database import SessionLocal
 from app.main import app
 from app.models import AuditEvent, ProjectMember, ProjectRole, SearchQuery, Task, TaskStatus
+from tests.api_helpers import sign_in_user
 
 BODY = {"database": "openalex", "blocks": [{"label": "a", "terms": ["remote work", "telework"]}, {"label": "b", "terms": ["productivity"]}]}
 
@@ -42,24 +44,19 @@ def setup(monkeypatch):
     FakeConnector.calls = 0
 
 
-def _login(email):
-    client = TestClient(app)
-    uid = client.post("/api/auth/development/login", json={"email": email, "display_name": "S"}).json()["id"]
-    return client, uid
-
-
 @pytest.fixture
 def team():
     tag = uuid.uuid4().hex[:8]
-    owner, owner_id = _login(f"sg-owner-{tag}@example.com")
+    owner, owner_id = sign_in_user(f"sg-owner-{tag}@example.com")
     pid = owner.post("/api/projects", json={"title": "Search gate"}).json()["id"]
-    co, co_id = _login(f"sg-co-{tag}@example.com")
-    sup, sup_id = _login(f"sg-sup-{tag}@example.com")
-    rev, rev_id = _login(f"sg-rev-{tag}@example.com")
+    co, co_id = sign_in_user(f"sg-co-{tag}@example.com")
+    sup, sup_id = sign_in_user(f"sg-sup-{tag}@example.com")
+    rev, rev_id = sign_in_user(f"sg-rev-{tag}@example.com")
     with SessionLocal() as db:
         for uid, role in ((co_id, ProjectRole.co_author), (sup_id, ProjectRole.supervisor), (rev_id, ProjectRole.reviewer)):
             db.add(ProjectMember(project_id=uuid.UUID(pid), user_id=uuid.UUID(uid), role=role))
         db.commit()
+    approve_earlier_gates(pid, "G2")  # G1; gates go in order (M0.5.10)
     return {"owner": owner, "owner_id": owner_id, "co": co, "sup": sup, "rev": rev, "pid": pid}
 
 
@@ -117,7 +114,7 @@ def test_approval_releases_the_search_which_then_runs_once_and_is_attributed(tea
     (row,) = rows(team["pid"])
     assert str(row.search_id) == queued["search_id"] and row.version == 1 and row.n_results == 3
     assert row.created_by == team["owner_id"]  # the person who asked, not the approver
-    assert row.query_string == '("remote work" OR "telework") AND ("productivity")'
+    assert row.query_string == '(remote work OR telework) AND (productivity)'
     assert FakeConnector.calls == 1
     assert {"search.requested", "task.blocked", "gate.approved", "task.released", "search.run"} <= set(actions(team))
     listing = team["owner"].get(f"/api/projects/{team['pid']}/searches").json()
@@ -207,7 +204,7 @@ def test_roles(team):
     assert queue(team, "rev").status_code == 403
     assert queue(team, "co").status_code == 202
     assert team["rev"].get(f"/api/projects/{team['pid']}/searches").status_code == 200
-    stranger, _ = _login(f"sg-x-{uuid.uuid4().hex[:6]}@example.com")
+    stranger, _ = sign_in_user(f"sg-x-{uuid.uuid4().hex[:6]}@example.com")
     assert stranger.get(f"/api/projects/{team['pid']}/searches").status_code == 404
     assert TestClient(app).post(f"/api/projects/{team['pid']}/searches", json=BODY).status_code == 401
 
@@ -219,3 +216,20 @@ def test_only_the_gated_handler_runs_searches():
     )
     assert users == ["task_handlers.py"]
     assert "requires_gate=GateCode.G2" in (app_dir / "task_handlers.py").read_text(encoding="utf-8")
+
+
+def test_rerun_of_a_semantic_scholar_search_saved_before_bulk_search_is_refused(team, monkeypatch):
+    from app.search_rerun import LEGACY_S2_CAVEAT
+
+    monkeypatch.setattr(get_settings(), "connectors_enabled", ["openalex", "semantic_scholar"])
+    search_id = uuid.uuid4()
+    with SessionLocal() as db:
+        db.add(SearchQuery(project_id=uuid.UUID(team["pid"]), search_id=search_id, database="semantic_scholar",
+                           query_string="remote work telework productivity", filters={}, version=1, exact=False,
+                           caveats=[LEGACY_S2_CAVEAT + ": ranked by similarity."], counts={"retrieved": 0}, results=[]))
+        db.commit()
+    r = team["owner"].post(f"/api/projects/{team['pid']}/searches/{search_id}/rerun")
+    assert r.status_code == 409 and "Start a new search" in r.json()["detail"]
+    with SessionLocal() as db:
+        assert not [t for t in db.scalars(select(Task).where(Task.project_id == uuid.UUID(team["pid"])))
+                    if (t.payload or {}).get("search_id") == str(search_id)]

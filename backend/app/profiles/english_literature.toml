@@ -1,0 +1,18 @@
+# Discipline profile: English literature (chosen by the product owner, plan Q3, 2026-10-09). Projects can override any setting.
+name = "english_literature"
+version = 1
+label = "English literature"
+description = "Literary studies: close reading, historicist and comparative approaches; MLA bibliography and JSTOR."
+
+[settings]
+citation_style = "modern-language-association"
+databases = ["mla_international_bibliography", "jstor", "openalex", "crossref", "semantic_scholar", "core"]
+methods = [
+  "close_reading",
+  "historicist_analysis",
+  "comparative_analysis",
+  "discourse_analysis",
+  "archival_research",
+  "thematic_analysis",
+]
+reporting_guideline = "PRISMA-ScR"

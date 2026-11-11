@@ -6,20 +6,10 @@ from sqlalchemy import select
 from app import task_queue as q
 from app.config import get_settings
 from app.database import SessionLocal
-from app.models import AuditEvent, GateCode, Project, Task, TaskStatus, User
+from app.models import AuditEvent, GateCode, Task, TaskStatus
+from tests.api_helpers import insert_project
 
 NOW = datetime(2026, 10, 3, 12, 0, 0, tzinfo=timezone.utc)
-
-
-def _project():
-    with SessionLocal() as db:
-        user = User(email=f"q-{uuid.uuid4().hex}@example.test")
-        db.add(user)
-        db.flush()
-        project = Project(owner_id=user.id, title="Queue")
-        db.add(project)
-        db.commit()
-        return project.id
 
 
 def _task(project_id, type="demo", **fields):
@@ -47,8 +37,8 @@ def _utc(value):
 
 
 def test_claim_takes_the_oldest_queued_task_and_leases_it():
-    p = _project()
-    # Explicit creation times: SQLite timestamps are one-second resolution, so ties would be broken by random id.
+    p = insert_project("Queue")
+    # Explicit creation times: rows created in one transaction share now(), so ties would be broken by random id.
     first = _task(p, "first", payload={"n": 1}, created_at=NOW - timedelta(minutes=10))
     _task(p, "second", created_at=NOW - timedelta(minutes=5))
 
@@ -61,7 +51,7 @@ def test_claim_takes_the_oldest_queued_task_and_leases_it():
 
 
 def test_a_task_is_never_claimed_twice_and_an_empty_queue_returns_none():
-    p = _project()
+    p = insert_project("Queue")
     only = _task(p)
 
     assert q.claim_next_task(NOW).id == only
@@ -69,7 +59,7 @@ def test_a_task_is_never_claimed_twice_and_an_empty_queue_returns_none():
 
 
 def test_blocked_paused_running_and_finished_tasks_are_not_claimable():
-    p = _project()
+    p = insert_project("Queue")
     _task(p, status=TaskStatus.blocked, blocked_by_gate=GateCode.G2)
     _task(p, status=TaskStatus.paused)
     _task(p, status=TaskStatus.running)
@@ -80,7 +70,7 @@ def test_blocked_paused_running_and_finished_tasks_are_not_claimable():
 
 
 def test_a_task_waiting_out_its_backoff_is_not_claimable_until_due():
-    p = _project()
+    p = insert_project("Queue")
     task_id = _task(p, run_after=NOW + timedelta(seconds=30))
 
     assert q.claim_next_task(NOW) is None
@@ -89,7 +79,7 @@ def test_a_task_waiting_out_its_backoff_is_not_claimable_until_due():
 
 
 def test_heartbeat_extends_the_lease_for_the_current_attempt_only():
-    p = _project()
+    p = insert_project("Queue")
     task_id = _task(p)
     claimed = q.claim_next_task(NOW)
     later = NOW + timedelta(seconds=200)
@@ -101,7 +91,7 @@ def test_heartbeat_extends_the_lease_for_the_current_attempt_only():
 
 
 def test_complete_marks_done_and_clears_the_lease():
-    p = _project()
+    p = insert_project("Queue")
     task_id = _task(p)
     claimed = q.claim_next_task(NOW)
 
@@ -114,7 +104,7 @@ def test_complete_marks_done_and_clears_the_lease():
 
 def test_failure_requeues_with_exponential_capped_backoff_then_fails_loudly():
     settings = get_settings()
-    p = _project()
+    p = insert_project("Queue")
     task_id = _task(p, max_attempts=4)
     delays = []
     for expected_attempt in (1, 2, 3):
@@ -143,7 +133,7 @@ def test_failure_requeues_with_exponential_capped_backoff_then_fails_loudly():
 
 
 def test_long_errors_are_truncated():
-    p = _project()
+    p = insert_project("Queue")
     task_id = _task(p)
     claimed = q.claim_next_task(NOW)
 
@@ -154,7 +144,7 @@ def test_long_errors_are_truncated():
 
 def test_reaper_requeues_an_expired_task_and_fails_one_out_of_attempts():
     settings = get_settings()
-    p = _project()
+    p = insert_project("Queue")
     retry = _task(p, "retry", status=TaskStatus.running, attempts=1, lease_expires_at=NOW - timedelta(seconds=1))
     exhausted = _task(
         p, "exhausted", status=TaskStatus.running, attempts=3, max_attempts=3, lease_expires_at=NOW - timedelta(minutes=5)
@@ -171,7 +161,7 @@ def test_reaper_requeues_an_expired_task_and_fails_one_out_of_attempts():
 
 
 def test_a_stale_worker_cannot_touch_a_task_that_was_reclaimed():
-    p = _project()
+    p = insert_project("Queue")
     task_id = _task(p)
     old = q.claim_next_task(NOW)
     q.reap_expired_tasks(NOW + timedelta(hours=1))  # lease lapsed; requeued
@@ -186,7 +176,7 @@ def test_a_stale_worker_cannot_touch_a_task_that_was_reclaimed():
 
 
 def test_block_pause_and_resume():
-    p = _project()
+    p = insert_project("Queue")
     task_id = _task(p)
 
     assert q.block_task(task_id, GateCode.G2) is True
@@ -202,7 +192,7 @@ def test_block_pause_and_resume():
 
 
 def test_running_tasks_cannot_be_blocked_or_paused():
-    p = _project()
+    p = insert_project("Queue")
     task_id = _task(p)
     q.claim_next_task(NOW)
 
@@ -245,7 +235,7 @@ def _race(monkeypatch, competitor):
 
 
 def test_a_stale_worker_cannot_complete_a_task_reclaimed_mid_write(monkeypatch):
-    project_id = _project()
+    project_id = insert_project("Queue")
     task_id = _task(project_id)
     first = q.claim_next_task(NOW)
     later = NOW + timedelta(seconds=get_settings().task_lease_seconds + 1)
@@ -263,7 +253,7 @@ def test_a_stale_worker_cannot_complete_a_task_reclaimed_mid_write(monkeypatch):
 
 
 def test_pause_or_block_cannot_land_on_a_task_claimed_mid_write(monkeypatch):
-    project_id = _project()
+    project_id = insert_project("Queue")
     for action in (lambda tid: q.pause_task(tid), lambda tid: q.block_task(tid, GateCode.G2)):
         task_id = _task(project_id)
         _race(monkeypatch, lambda: q.claim_next_task(NOW))
@@ -274,12 +264,13 @@ def test_pause_or_block_cannot_land_on_a_task_claimed_mid_write(monkeypatch):
         assert q.complete_task(task_id, task.attempts) is True
 
 
-def test_the_reaper_leaves_a_task_whose_lease_was_renewed_mid_write(monkeypatch):
-    project_id = _project()
+def test_the_reaper_leaves_a_task_whose_lease_was_renewed():
+    """A heartbeat that lands before the reaper looks moves the lease past the reaper's cut-off."""
+    project_id = insert_project("Queue")
     task_id = _task(project_id)
     claim = q.claim_next_task(NOW)
     later = NOW + timedelta(seconds=get_settings().task_lease_seconds + 1)
-    _race(monkeypatch, lambda: q.heartbeat(task_id, claim.attempt, now=later))
+    assert q.heartbeat(task_id, claim.attempt, now=later) is True
 
     assert q.reap_expired_tasks(later) == 0
     task = _get(task_id)
@@ -288,7 +279,7 @@ def test_the_reaper_leaves_a_task_whose_lease_was_renewed_mid_write(monkeypatch)
 
 
 def test_a_failure_report_and_the_reaper_cannot_both_count_an_attempt(monkeypatch):
-    project_id = _project()
+    project_id = insert_project("Queue")
     task_id = _task(project_id)
     claim = q.claim_next_task(NOW)
     later = NOW + timedelta(seconds=get_settings().task_lease_seconds + 1)

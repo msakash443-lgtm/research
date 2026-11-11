@@ -7,13 +7,14 @@ names (ethics/design G7, analysis plan G8, final sign-off G11) need an owner.
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import audit
 from app.models import Gate, GateCode, GateStatus, Project, ProjectRole, ProjectStage, Task, TaskStatus
-
+from app.stage_order import chain as stage_chain, gate_order
+from app.task_registry import REQUIRED_GATES
 OWNER_OR_SUPERVISOR = frozenset({ProjectRole.owner, ProjectRole.supervisor})
 OWNER_ONLY = frozenset({ProjectRole.owner})
 
@@ -42,26 +43,72 @@ def new_gates() -> list[Gate]:
 
 
 def ensure_gates(db: Session, project: Project) -> list[Gate]:
-    """The project's gates in workflow order, creating any that are missing.
-
-    Projects made outside `create_project` (databases built by create_all, direct inserts)
-    have no gate rows yet. The caller commits.
-    """
+    """The project's active gates in workflow order, creating any that are missing."""
+    active_codes = gate_order(GATE_STAGES, project)
     existing = {g.code: g for g in db.scalars(select(Gate).where(Gate.project_id == project.id))}
-    missing = [code for code in GateCode if code not in existing]
+    missing = [code for code in active_codes if code not in existing]
     if missing:
         try:
-            with db.begin_nested():  # savepoint: a concurrent request may insert the same gates
+            with db.begin_nested():
                 db.add_all(Gate(project_id=project.id, code=code) for code in missing)
         except IntegrityError:
-            pass  # the other request won; read its rows below
+            pass
         existing = {g.code: g for g in db.scalars(select(Gate).where(Gate.project_id == project.id))}
-    return [existing[code] for code in GateCode]
+    return [existing[code] for code in active_codes]
 
 
 def gate_is_approved(db: Session, project_id, code: GateCode) -> bool:
     """True only if a person has approved this gate. A missing gate row counts as not approved."""
     return db.scalar(select(Gate.status).where(Gate.project_id == project_id, Gate.code == code)) == GateStatus.approved
+
+
+# ---- ordering and reopening (M0.5.10, Decisions log 2026-10-07) ------------------------------------
+
+
+
+def pending_earlier_gates(gates: list[Gate], code: GateCode, project: Project | None = None) -> list[GateCode]:
+    """Earlier active gates not yet approved."""
+    status = {g.code: g.status for g in gates}
+    order = gate_order(GATE_STAGES, project)
+    return [c for c in order[: order.index(code)] if status.get(c) != GateStatus.approved]
+
+
+def approved_later_gates(gates: list[Gate], code: GateCode, project: Project | None = None) -> list[GateCode]:
+    """Later active gates already approved."""
+    status = {g.code: g.status for g in gates}
+    order = gate_order(GATE_STAGES, project)
+    return [c for c in order[order.index(code) + 1 :] if status.get(c) == GateStatus.approved]
+
+
+def reblock_tasks_for_gate(db: Session, project_id, code: GateCode, actor: str) -> int:
+    """A reopened gate holds its tasks again: queued tasks of a type that needs `code` go back to `blocked`.
+
+    A task already running finishes its attempt (it was released by a then-valid approval); if it is
+    retried, the worker's claim-time gate check blocks it. The caller commits.
+    """
+    types = [task_type for task_type, gate in REQUIRED_GATES.items() if gate == code]
+    if not types:
+        return 0
+    queued_ids = db.scalars(
+        select(Task.id).where(Task.project_id == project_id, Task.status == TaskStatus.queued, Task.type.in_(types))
+    ).all()
+    # Conditional write: a worker may claim a task after it was read above; only a still-queued task is held.
+    blocked_ids = []
+    for task_id in queued_ids:
+        written = db.execute(
+            update(Task)
+            .where(Task.id == task_id, Task.status == TaskStatus.queued)
+            .values(status=TaskStatus.blocked, blocked_by_gate=code)
+            .execution_options(synchronize_session=False)
+        ).rowcount
+        if written == 1:
+            blocked_ids.append(task_id)
+    if blocked_ids:
+        audit.record(
+            db, actor=actor, action="task.blocked", project_id=project_id,
+            payload={"gate": code.value, "blocked": len(blocked_ids), "task_ids": [str(t) for t in blocked_ids], "via": "gate.reopened"},
+        )
+    return len(blocked_ids)
 
 
 def release_tasks_for_gate(db: Session, project_id, code: GateCode, actor: str) -> int:
@@ -123,3 +170,5 @@ GATE_STAGES: dict[GateCode, ProjectStage] = {
     GateCode.G10: ProjectStage.drafted,
     GateCode.G11: ProjectStage.submission_ready,
 }
+
+GATE_ORDER: list[GateCode] = gate_order(GATE_STAGES)

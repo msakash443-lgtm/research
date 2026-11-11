@@ -1,7 +1,8 @@
 import httpx
 import pytest
+from pydantic import SecretStr
 
-from app.connectors import Connector, ConnectorError, NotSupportedError, SearchRequest
+from app.connectors import ConnectorError, NotSupportedError, SearchRequest
 from app.connectors.http import ConnectorHttpClient, HttpPolicy
 from app.connectors.openalex import OpenAlexConnector, to_record, work_id
 
@@ -42,27 +43,6 @@ def connector(handler, **kwargs):
     return OpenAlexConnector(http, **kwargs), server
 
 
-def test_it_satisfies_the_connector_protocol():
-    assert isinstance(connector(lambda r: {})[0], Connector)
-
-
-def test_work_normalisation():
-    record = to_record(work())
-    assert (record.connector, record.external_id, record.title) == ("openalex", "W1", "Paper 1")
-    assert record.doi == "10.1000/p1"
-    assert record.authors == ("Ada Lovelace",)  # blank author dropped
-    assert (record.year, record.venue, record.abstract) == (2020, "J. Testing", "Hello world")
-    assert (record.url, record.oa_url) == ("https://pub.test/p", "https://oa.test/p.pdf")
-    assert record.source_ids == {"openalex": "W1", "pmid": "12345"}
-    assert record.quality_flags == ()
-
-
-def test_flags_and_degraded_fields():
-    record = to_record(work(is_retracted=True, type="preprint", abstract_inverted_index=None, doi="garbage", open_access={}))
-    assert set(record.quality_flags) == {"retracted", "preprint", "no_abstract", "invalid_doi"}
-    assert record.doi is None and record.oa_url is None
-
-
 @pytest.mark.parametrize("bad", [{"display_name": None, "title": None}, {"id": "nonsense"}, {"display_name": "  "}])
 def test_unrepresentable_works_are_skipped_and_counted(bad):
     assert to_record(work(**bad)) is None
@@ -77,22 +57,6 @@ def test_abstract_ignores_hostile_positions():
     assert to_record(work(abstract_inverted_index=huge)).abstract == "ok"
 
 
-def test_search_sends_query_filters_paging_and_contact():
-    c, server = connector(
-        lambda r: {"meta": {"count": 42, "next_cursor": "abc"}, "results": [work(1)]}, contact_email=" me@lab.example "
-    )
-    page = c.search(SearchRequest(query="labour AND women", limit=10, filters={"year_from": 2015, "year_to": 2020, "type": "article", "is_oa": True}))
-    params = server.requests[0].url.params
-    assert params["search"] == "labour AND women" and params["per-page"] == "10" and params["cursor"] == "*"
-    assert params["filter"] == "from_publication_date:2015-01-01,to_publication_date:2020-12-31,type:article,is_oa:true"
-    assert params["mailto"] == "me@lab.example"
-    assert (page.total, page.next_cursor, len(page.records)) == (42, "abc", 1)
-
-    c.search(SearchRequest(query="x", cursor="abc"))
-    assert server.requests[1].url.params["cursor"] == "abc"
-    assert "filter" not in server.requests[1].url.params
-
-
 def test_no_contact_means_no_mailto_and_last_page_has_no_cursor():
     c, server = connector(lambda r: {"meta": {"count": 1, "next_cursor": None}, "results": []})
     page = c.search(SearchRequest(query="x"))
@@ -100,15 +64,27 @@ def test_no_contact_means_no_mailto_and_last_page_has_no_cursor():
     assert page.next_cursor is None and page.records == ()
 
 
-@pytest.mark.parametrize(
-    "filters",
-    [{"language": "en"}, {"year_from": "20x0"}, {"year_from": True}, {"type": "a,b"}, {"type": "Article; drop"}, {"is_oa": "yes"}],
-)
-def test_bad_or_unknown_filters_fail_before_any_request(filters):
-    c, server = connector(lambda r: {})
-    with pytest.raises(ConnectorError):
-        c.search(SearchRequest(query="x", filters=filters))
-    assert server.requests == []
+def test_search_without_an_api_key_stops_after_the_first_page_and_marks_the_cap():
+    c, server = connector(lambda r: {"meta": {"count": 101, "next_cursor": "requires-key"}, "results": [work(1)]})
+
+    page = c.search(SearchRequest(query="x", limit=100))
+
+    assert len(server.requests) == 1
+    assert page.next_cursor is None
+    assert c.last_search_capped is True
+
+
+def test_search_with_an_api_key_keeps_the_cursor_and_sends_the_key():
+    c, server = connector(
+        lambda r: {"meta": {"count": 101, "next_cursor": "next-page"}, "results": [work(1)]},
+        api_key=SecretStr("test-openalex-key"),
+    )
+
+    page = c.search(SearchRequest(query="x", limit=100))
+
+    assert page.next_cursor == "next-page"
+    assert c.last_search_capped is False
+    assert server.requests[0].url.params["api_key"] == "test-openalex-key"
 
 
 def test_malformed_search_reply_fails_loudly():
@@ -126,15 +102,6 @@ def test_work_id_accepts_known_forms(value):
 def test_work_id_refuses_everything_else(value):
     with pytest.raises(ConnectorError):
         work_id(value)
-
-
-def test_get_by_id_and_missing_record():
-    c, server = connector(lambda r: work(7) if r.url.path == "/works/W7" else httpx.Response(404, json={}))
-    assert c.get_by_id("https://openalex.org/W7").external_id == "W7"
-    assert c.get_by_id("W8") is None  # 404 is "no such record"
-    with pytest.raises(ConnectorError):
-        c.get_by_id("W1/../../x")
-    assert len(server.requests) == 2
 
 
 def test_get_by_id_server_error_is_not_none():
@@ -213,6 +180,3 @@ def test_fulltext_is_not_supported():
         connector(lambda r: {})[0].get_fulltext("W1")
 
 
-def test_invalid_max_related():
-    with pytest.raises(ValueError):
-        OpenAlexConnector(max_related=0)

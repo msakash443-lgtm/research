@@ -25,7 +25,7 @@ def test_new_projects_start_at_idea_and_expose_the_stage():
     created = client.post("/api/projects", json={"title": "Staged"}).json()
 
     assert created["stage"] == "idea"
-    assert created["status"] == "active"  # the lifecycle flag is unchanged
+    assert "status" not in created  # the free-text status is retired; `stage` replaces it
     assert client.get(f"/api/projects/{created['id']}").json()["stage"] == "idea"
     assert client.get("/api/projects").json()[0]["stage"] == "idea"
 

@@ -9,6 +9,7 @@ from app.config import get_settings
 from app.database import SessionLocal
 from app.main import app
 from app.models import ContextKind, ResearchContextItem
+from tests.llm_replies import structured
 
 START = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
@@ -84,7 +85,7 @@ def test_context_list_marks_items_left_out_of_runs():
 def test_run_snapshot_keeps_the_research_question(monkeypatch):
     monkeypatch.setattr(get_settings(), "llm_model", "test-model")
     prompts = []
-    monkeypatch.setattr(OpenAICompatibleLLM, "complete", lambda self, system, user: prompts.append(user) or "Answer [S1].")
+    monkeypatch.setattr(OpenAICompatibleLLM, "complete_json", lambda self, system, user, schema, max_attempts=None: prompts.append(user) or structured("Answer [S1]."))
     client = TestClient(app)
     project_id = _project_with_over_cap_context(client)
     added = client.post(
@@ -108,7 +109,7 @@ def test_run_snapshot_keeps_the_research_question(monkeypatch):
 def test_a_saved_idea_is_listed_but_never_sent_in_a_run(monkeypatch):
     monkeypatch.setattr(get_settings(), "llm_model", "test-model")
     prompts = []
-    monkeypatch.setattr(OpenAICompatibleLLM, "complete", lambda self, system, user: prompts.append(user) or "Answer [S1].")
+    monkeypatch.setattr(OpenAICompatibleLLM, "complete_json", lambda self, system, user, schema, max_attempts=None: prompts.append(user) or structured("Answer [S1]."))
     client = TestClient(app)
     assert client.post("/api/auth/development/login", json={"email": "idea@example.com", "display_name": "I"}).status_code == 200
     project_id = client.post("/api/projects", json={"title": "Idea capture"}).json()["id"]

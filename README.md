@@ -17,11 +17,26 @@ An evidence-first research-agent workspace. It is designed for a researcher to k
 
 This is a safe V1 evidence-synthesis agent, not an unrestricted autonomous browser or code executor.
 
-- It does **not** scrape arbitrary URLs, run arbitrary Python/shell code, access Drive/Sheets, accept file uploads, or automatically treat search snippets as verified evidence.
+- It does **not** run arbitrary Python/shell code, access Drive/Sheets, accept file uploads, or automatically treat search results or snippets as verified evidence. Retrieved text is untrusted data until a person verifies it.
 - Add a source and a short excerpt/data note first; the agent uses only that saved evidence plus project context.
 - LLM synthesis is optional. With no `LLM_*` configuration, the UI still saves projects, sources, plans, and runs, but a run reports that synthesis needs configuration instead of fabricating an answer.
 
-That boundary is intentional: web retrieval, uploads, and calculation tools need additional SSRF, prompt-injection, sandbox, storage, and provenance controls before they should be enabled.
+### Opt-in features
+
+Retrieval is off by default. Each feature below stays off until the setting named in the table is set.
+
+| Feature | Turned on by | Notes |
+| --- | --- | --- |
+| ARC web and scholar retrieval | `ARC_RETRIEVAL_ENABLED=true`, `ARC_RETRIEVAL_BASE_URL`, `ARC_RETRIEVAL_TOKEN` | The app calls only the ARC HTTP service. Production requires an `https://` base URL and a token of at least 16 characters. |
+| Open scholarly connectors (`openalex`, `crossref`, `semantic_scholar`, `arxiv`, `unpaywall`, `pubmed`, `opencitations`) | Listed in `CONNECTORS_ENABLED` | Unknown names are refused at production start-up. `CONNECTOR_CONTACT_EMAIL` is optional. |
+| CORE | `core` in `CONNECTORS_ENABLED` and `CORE_API_KEY` | Production refuses to start without the key. |
+| Licensed indexes (`scopus`, `web_of_science`, `ieee_xplore`) | Listed in `CONNECTORS_ENABLED` and their API key | Each needs an institutional licence. Production refuses to start without the key. |
+| Scraping connectors (`google_scholar`) | `CONNECTORS_ALLOW_SCRAPING=true` as well as being listed | Listed in the catalogue only; no connector is built for it yet. |
+| Connector answer cache | `CONNECTOR_CACHE_TTL_SECONDS` above 0 | Off by default, so searches stay live. |
+
+Retrieval runs also have their own daily cap, `RESEARCH_RUN_RETRIEVAL_LIMIT_PER_DAY` (default 5), which is lower than the cap for runs without retrieval.
+
+File uploads and calculation tools are not part of this version. They need storage and sandbox controls first.
 
 ## Architecture
 
@@ -49,7 +64,7 @@ For a private first deployment, run the web service and worker as two processes 
    Copy-Item .env.example .env
    ```
 
-3. Change `POSTGRES_PASSWORD` and `SESSION_SECRET` in `.env` to local-only values.
+3. Change `POSTGRES_PASSWORD` and `SESSION_SECRET` in `.env` to local-only values. Keep `ENVIRONMENT=development`: it is required (no default), must be exactly `development` or `production`, and the app, worker and Alembic refuse to start without it.
 4. Start the web service, worker, and local PostgreSQL:
 
    ```powershell
@@ -58,12 +73,18 @@ For a private first deployment, run the web service and worker as two processes 
 
 5. Open [http://localhost:8000](http://localhost:8000). While `ENVIRONMENT=development`, choose the local development account.
 
-The Docker worker processes queued research runs. For a non-Docker local run, set `RUN_RESEARCH_INLINE=true` and start the API with:
+For a host-installed PostgreSQL server, copy `.env.example` to `.env`, set `DATABASE_URL` to `postgresql+psycopg://<user>:<password>@127.0.0.1:5432/<database>`, set `AUTO_CREATE_SCHEMA=false`, apply migrations, then start the API and worker:
 
 ```powershell
-python -m pip install -r backend/requirements.txt
+.venv\Scripts\python.exe -m alembic -c alembic.ini upgrade head
+.venv\Scripts\python.exe -m alembic -c alembic.ini check
 uvicorn app.main:app --reload --app-dir backend
 ```
+
+SQLite is not supported anywhere, including the tests. See [the local PostgreSQL guide](docs/LOCAL_POSTGRES_MIGRATION.md) for the database setup and for the `TEST_DATABASE_URL` that `pytest` requires.
+
+
+`requirements.txt` is the web app's runtime (the only file the Docker image installs); `requirements-arc.txt` is the vendored ARC retrieval service (`backend/arc_retrieval/`) and `requirements-dev.txt` the test tools.
 
 ### Virtual environments
 
@@ -71,7 +92,7 @@ Two local virtualenvs exist on the dev machine; both are git-ignored (`.venv*/`)
 
 | Venv | Python | Use for |
 |---|---|---|
-| `.venv` (repo root) | 3.12 | This app: `pip install -r backend/requirements.txt`, `pytest -q`, `uvicorn`, Alembic. **Default for all research-main work.** Same version as the production image (`Dockerfile`) and CI (`ci.yml`). |
+| `.venv` (repo root) | 3.12 | This app: `pip install` the three `backend/requirements*.txt` files, `pytest -q`, `uvicorn`, Alembic. **Default for all research-main work.** Same version as the production image (`Dockerfile`) and CI (`ci.yml`). |
 | `<workspace>/.venv-retrieval` | 3.11 | Only the ARC retrieval microservice (`researchclaw-retrieval`, installed from the ARC `retrieval` extra: fastapi, uvicorn, httpx). Don't run research-main tests in it. |
 
 The two are kept separate so ARC's dependencies stay out of this app (ARC is called over HTTP only). Recreate either with `python -m venv <path>` and the install commands above.
@@ -99,13 +120,13 @@ Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` in `.e
 
 ## Database migrations
 
-Development can bootstrap a new schema with `AUTO_CREATE_SCHEMA=true`. A production deployment must set it to `false` and run a versioned migration before starting web/worker services:
+All application environments use PostgreSQL. Set `AUTO_CREATE_SCHEMA=false` and apply the versioned schema before starting web or worker services:
 
 ```powershell
 alembic -c alembic.ini upgrade head
 ```
 
-Do not run test fixtures against a shared or production database. The test configuration always forces an in-memory SQLite database before importing the app.
+Do not run test fixtures against a shared or production database. Test isolation is configured separately from the application runtime.
 
 ## Deploy
 
@@ -118,6 +139,8 @@ pytest -q
 ```
 
 The tests cover account identity reuse, project ownership, dashboard flow, source/excerpt persistence, and research-run safeguards.
+
+The web UI's DOM-free logic has its own tests, run with Node (22 or newer; no packages): `node --test backend/app/web/js/test/*.test.mjs`. `pytest -q` does not run them. So far they cover the screening step's key map, bulk loop and count updates (`web/js/steps/screenLogic.js`); the DOM wiring is still checked by hand in a browser.
 
 ## API overview
 

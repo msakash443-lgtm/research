@@ -66,6 +66,25 @@ _FLAG_PATTERNS = {
 }
 
 
+# Non-English phrasings of the same attacks (French, Spanish, German). Matched on the folded copy.
+_FLAG_PATTERNS["ignore_instructions_multilingual"] = re.compile(
+    r"\b(?:ignorez|oubliez|ignora|olvida|ignoriere|vergiss|missachte)\b.{0,50}?"
+    r"\b(?:instructions?|consignes?|instrucciones|anweisungen|regeln|r.gles|pr.c.dent\w*|anterior\w*|vorherig\w*)",
+    re.IGNORECASE,
+)
+
+# Cyrillic/Greek letters that render like Latin ones; used only to build the matching copy.
+_CONFUSABLES = str.maketrans(
+    "аеорсухіјѕԁԛ" "АВЕКМНОРСТХ" "οαεινρτυ" "ΑΒΕΖΗΙΚΜΝΟΡΤΥΧ",
+    "aeopcyxijsdq" "ABEKMHOPCTX" "oaeinptu" "ABEZHIKMNOPTYX",
+)
+
+
+def _fold_for_matching(text: str) -> str:
+    """NFKC + map look-alike letters to Latin so evasion by homoglyph doesn't hide a phrase. Never stored."""
+    return unicodedata.normalize("NFKC", text).translate(_CONFUSABLES)
+
+
 @dataclass(frozen=True)
 class Cleaned:
     text: str
@@ -93,8 +112,9 @@ def clean_untrusted(text: str, max_chars: int) -> Cleaned:
         flags.add("fence_lookalike")
 
     compact = " ".join(fenced.split())
+    folded = _fold_for_matching(compact)
     for name, pattern in _FLAG_PATTERNS.items():
-        if pattern.search(compact):
+        if pattern.search(compact) or pattern.search(folded):
             flags.add(name)
 
     truncated = len(compact) > max_chars

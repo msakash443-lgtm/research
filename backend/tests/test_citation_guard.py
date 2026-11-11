@@ -18,6 +18,7 @@ from app.config import get_settings
 from app.connectors.base import ConnectorBase, PaperRecord, SearchPage
 from app.main import app
 from app.prompt_registry import load_prompt
+from tests.llm_replies import chat_reply
 
 TITLE = "Remote work and worker productivity: evidence from a field experiment"
 AUTHORS = ["Ada Lovelace", "Grace Hopper"]
@@ -120,6 +121,24 @@ def test_a_known_good_reference_can_be_cited(world, services, fake_llm):
     assert run["status"] == "completed"
     assert run["answer"] == "Fake answer [S1]."
     assert rejections(c, pid) == []
+def test_a_retracted_verified_source_cannot_be_cited(world, services, fake_llm):
+    c, pid = world
+    sid = add_source(c, pid)
+    assert automatic_check(c, pid, sid)["metadata_verified"] is True
+    from app.database import SessionLocal
+    from app.models import Source
+    with SessionLocal() as db:
+        db.get(Source, uuid.UUID(sid)).quality_flags = ["retracted"]
+        db.commit()
+
+    run = research(c, pid)
+
+    assert_blocked(run, rejections(c, pid), 1, "retracted_citation", "cited a retracted source")
+    assert run["input_snapshot"]["sources"][0]["quality_flags"] == ["retracted"]
+    user = json.loads(fake_llm.requests[0].content)["messages"][1]["content"]
+    assert "Status: RETRACTED — do not cite" in user
+
+
 
 
 def test_a_source_verified_by_a_person_can_be_cited(world, fake_llm):
@@ -134,18 +153,64 @@ def test_citing_a_source_the_run_does_not_have_is_blocked(world, fake_llm):
     c, pid = world
     sid = add_source(c, pid)
     assert c.post(f"/api/projects/{pid}/sources/{sid}/verify").status_code == 200
-    fake_llm.handler = lambda request: {"choices": [{"message": {"content": "Productivity rose [S1][S2]."}}]}
+    fake_llm.handler = lambda request: chat_reply("Productivity rose [S1][S2].")
 
     assert_blocked(research(c, pid), rejections(c, pid), 2, "unknown_citation_index", "cited [S2], which doesn't match any source")
 
 
-@pytest.mark.parametrize("citation", ["[S1, S2]", "[S1; S2]", "[S1 and S2]", "[S1-S2]", "[S1–S2]", "[s1, s2]"])
+def test_an_oversized_or_invisible_split_citation_still_blocks_an_unverified_source(world, fake_llm):
+    """M1.10.7: a bracket over the old 300-char cap, or a zero-width space splitting "S" from its digit,
+    must not hide the citation from the parser — both must still be read and, here, blocked."""
+    c, pid = world
+    add_source(c, pid, title="An unverified study", doi="10.1234/one")
+    oversized = "[S1 " + "x" * 310 + "]"
+    fake_llm.handler = lambda request: chat_reply(f"Productivity rose {oversized}.")
+
+    run = research(c, pid)
+
+    assert_blocked(run, rejections(c, pid), 1, "unverified_citation", "cited an unverified source ([S1])")
+
+
+def test_a_zero_width_space_inside_a_citation_marker_still_blocks_an_unverified_source(world, fake_llm):
+    """M1.10.7: "[S\\u200b1]" renders identically to "[S1]" but a naive parser misses it."""
+    c, pid = world
+    add_source(c, pid, title="An unverified study", doi="10.1234/one")
+    fake_llm.handler = lambda request: chat_reply("Productivity rose [S\u200b1].")
+
+    run = research(c, pid)
+
+    assert_blocked(run, rejections(c, pid), 1, "unverified_citation", "cited an unverified source ([S1])")
+
+
+def test_a_bracket_the_parser_cannot_read_fails_the_run_instead_of_being_ignored(world, fake_llm):
+    """M1.10.7: "[S.1]" is neither a recognised citation nor safely ignorable (unlike "[Smith 2020]") —
+    it must fail the run rather than silently being read as "no citation"."""
+    c, pid = world
+    verified = add_source(c, pid, title="A verified study", doi="10.1234/one")
+    assert c.post(f"/api/projects/{pid}/sources/{verified}/verify").status_code == 200
+    fake_llm.handler = lambda request: chat_reply("Productivity rose [S.1].")
+
+    run = research(c, pid)
+
+    assert_blocked(run, rejections(c, pid), 0, "unparseable_citation_bracket", "isn't in a form that could be checked")
+
+
+
+@pytest.mark.parametrize(
+    "citation",
+    [
+        "[S1, S2]", "[S1; S2]", "[S1 and S2]", "[S1-S2]", "[S1–S2]", "[s1, s2]",
+        # Forms the first parser missed (M1.10.6): each cites both sources, so one is unverified.
+        "[S1, S2, and S1]", "[S1 & S2]", "[S1/S2]", "[S1 S2]", "[S1 or S2]", "[S1 to S2]", "[S1, 2]",
+        "[S1, p. 4] and [S2, p. 5]", "[S2: p. 4; S1: p. 3]", "[S 1] [S 2]", "[[S1]] [[S2]]",
+    ],
+)
 def test_every_source_in_a_grouped_citation_is_checked(world, fake_llm, citation):
     c, pid = world
     verified = add_source(c, pid, title="A verified study", doi="10.1234/one")
     add_source(c, pid, title="An unverified study", doi="10.1234/two")
     assert c.post(f"/api/projects/{pid}/sources/{verified}/verify").status_code == 200
-    fake_llm.handler = lambda request: {"choices": [{"message": {"content": f"Productivity rose {citation}."}}]}
+    fake_llm.handler = lambda request: chat_reply(f"Productivity rose {citation}.")
 
     run = research(c, pid)
 
@@ -174,7 +239,7 @@ def test_the_prompt_tells_the_model_which_sources_it_may_cite(world, fake_llm):
     assert "Verified — may be cited." in blocks["A verified study"]
     assert "NOT VERIFIED — do not cite this source." in blocks["An unverified study"]
     assert "Verified — may be cited." not in blocks["An unverified study"]
-    assert run["prompt_version"] == "evidence_synthesis@3"
+    assert run["prompt_version"] == "evidence_synthesis@5"
 
 
 def test_older_prompt_versions_render_without_the_citation_marker():
@@ -184,3 +249,81 @@ def test_older_prompt_versions_render_without_the_citation_marker():
     _, user = executor._agent_prompts(load_prompt("evidence_synthesis", 2), SimpleNamespace(question="Q?"), [], [source])
 
     assert "Status: added by a researcher\n" in user and "may be cited" not in user
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("[S1, S2, and S3]", {1, 2, 3}),
+        ("[S1, S2, S3, and S4]", {1, 2, 3, 4}),
+        ("[S2, p. 4]", {2}),
+        ("[S2, pp. 4-9]", {2}),
+        ("[S3, p. 12; S5]", {3, 5}),
+        ("[S1 to S3]", {1, 2, 3}),
+        ("[S1 through S3]", {1, 2, 3}),
+        ("[S1-3]", {1, 2, 3}),
+        ("[S1 and 3]", {1, 3}),
+        ("[S 2]", {2}),
+        ("[S2, 2019]", {2}),  # a bare four-digit number is a year
+        ("[Smith and Jones 2020]", set()),
+        ("[CS2 model]", set()),
+        # M1.10.7: a bracket with no length cap and a zero-width space stripped before parsing — both
+        # used to hide the citation from the reader entirely instead of it being read.
+        ("[S1 " + "x" * 310 + "]", {1}),
+        ("[S\u200b1]", {1}),
+    ],
+)
+def test_the_citation_reader_finds_every_source_number_however_it_is_written(text, expected):
+    from app.agent.executor import _cited_indices
+
+    assert _cited_indices(text) == expected
+
+
+def test_a_range_is_bounded_and_past_the_sources_it_is_rejected():
+    from app.agent.executor import MAX_SOURCES, _cited_indices, _citation_problem
+
+    assert max(_cited_indices("[S1-S999999]")) == 999999 and len(_cited_indices("[S1-S999999]")) <= MAX_SOURCES + 3
+    assert _citation_problem("[S1 to S9]", [{"verified": True}] * 3) == (4, "unknown_citation_index")
+
+
+def test_the_citation_reader_does_not_ignore_long_bracketed_citation_groups():
+    from app.agent.executor import _cited_indices
+
+    citation = "[S1, " + ("additional citation detail " * 14) + ", S2]"
+    assert _cited_indices(citation) == {1, 2}
+
+
+@pytest.mark.parametrize(
+    "citation, expected",
+    [("[S1 [S2]]", {1, 2}), ("[S1 [S2]", {1, 2}), ("[S1 [S2 [S3]]]", {1, 2, 3})],
+)
+def test_the_citation_reader_checks_source_markers_inside_nested_or_unclosed_brackets(citation, expected):
+    from app.agent.executor import _cited_indices, _citation_problem
+
+    assert _cited_indices(citation) == expected
+    sources = [{"verified": index != 1} for index in range(1, max(expected) + 1)]
+    assert _citation_problem(citation, sources) == (1, "unverified_citation")
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        pytest.param("[S.1]", True, id="punctuation-dot-between-s-and-digit"),
+        pytest.param("[S:1]", True, id="punctuation-colon-between-s-and-digit"),
+        pytest.param("[S*1]", True, id="punctuation-asterisk-between-s-and-digit"),
+        pytest.param("[Smith and Jones 2020]", False, id="ordinary-author-year-bracket"),
+        pytest.param("[CS2 model]", False, id="cs2-model-is-not-a-citation"),
+        pytest.param("[see discussion, section 2]", False, id="prose-bracket-is-not-a-citation"),
+        pytest.param("[S1, S2]", False, id="fully-readable-citation-list"),
+        pytest.param("[S1 to S3]", False, id="fully-readable-citation-range"),
+        pytest.param("no brackets S2 here", False, id="no-brackets-at-all"),
+        pytest.param("[S_1]", False, id="underscore-is-a-word-char-not-a-separator"),
+    ],
+)
+def test_unparseable_citation_bracket_flags_only_tokens_the_reader_cannot_parse(text, expected):
+    """M1.10.7: punctuation between "S" and its digit isn't a recognised separator, so it must be flagged
+    rather than silently read as "no citation" (a run can still be rejected even with no known index);
+    the fallback must not fire on text M1.10.6 deliberately treats as not-a-citation, or on a normal,
+    fully-readable citation."""
+    from app.agent.executor import _unparseable_citation_bracket
+
+    assert _unparseable_citation_bracket(text) is expected

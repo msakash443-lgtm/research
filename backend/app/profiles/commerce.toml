@@ -1,0 +1,18 @@
+# Discipline profile: Commerce (chosen by the product owner, plan Q3, 2026-10-09). Projects can override any setting.
+name = "commerce"
+version = 1
+label = "Commerce"
+description = "Accounting, finance and marketing research: event studies, panel and survey methods; business databases."
+
+[settings]
+citation_style = "apa"
+databases = ["openalex", "crossref", "semantic_scholar", "scopus", "business_source_complete", "ssrn", "repec"]
+methods = [
+  "event_study",
+  "panel_fixed_effects",
+  "survey_study",
+  "lab_experiment",
+  "content_analysis",
+  "case_study",
+]
+reporting_guideline = "PRISMA-2020"

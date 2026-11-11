@@ -1,0 +1,7 @@
+# Vendored ARC retrieval service (backend/arc_retrieval/) only; the web app never imports these (X.141).
+# Not installed in the web image. Licence/terms: PyMuPDF is AGPL-3.0 and scholarly scrapes Google Scholar
+# (see docs/security-privacy-review.md) - owner decision needed before any hosted deployment.
+crawl4ai==0.9.4
+scholarly==1.7.11
+tavily-python==0.8.5
+PyMuPDF==1.28.2

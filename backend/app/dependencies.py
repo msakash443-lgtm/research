@@ -10,7 +10,8 @@ from app.models import Project, ProjectMember, ProjectRole, User
 
 
 def session_user(request: Request, db: Session) -> User | None:
-    """The signed-in user, or None. A session pointing at a missing user is cleared."""
+    """The signed-in user, or None. A session pointing at a missing user, or issued before the user's
+    session epoch was last bumped ("sign out everywhere"), is cleared. Cookies with no epoch count as 0."""
     session_user_id = request.session.get("user_id")
     if not session_user_id:
         return None
@@ -18,8 +19,9 @@ def session_user(request: Request, db: Session) -> User | None:
         user = db.get(User, uuid.UUID(session_user_id))
     except (TypeError, ValueError):
         user = None
-    if user is None:
+    if user is None or user.erased_at is not None or request.session.get("session_epoch", 0) != user.session_epoch:
         request.session.clear()
+        return None
     return user
 
 
@@ -37,7 +39,7 @@ def current_user(
     development = get_settings().environment == "development"
     if development and x_user_id is not None:
         user = db.get(User, x_user_id)
-        if user is not None:
+        if user is not None and user.erased_at is None:
             return user
 
     if had_session:
@@ -64,11 +66,23 @@ def project_role(db: Session, project: Project, user: User) -> ProjectRole | Non
     )
 
 
-def project_access(allowed: frozenset[ProjectRole] = READ_ROLES):
+def refuse_if_archived(project: Project) -> None:
+    """For write routes that check the role themselves instead of through `project_access`."""
+    if project.archived_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Project is archived and read-only; unarchive it to make changes",
+        )
+
+
+def project_access(allowed: frozenset[ProjectRole] = READ_ROLES, *, allow_archived: bool = False):
     """Dependency factory: load the project if the caller holds one of `allowed` roles.
 
     Non-members get 404 (the project's existence is not revealed); members whose role is
     not allowed get 403. A project's `owner_id` counts as owner even without a member row.
+    `allowed == READ_ROLES` is a plain read and is always let through; any narrower `allowed`
+    is a write and is refused with 409 on an archived project unless `allow_archived=True`
+    (the archive/unarchive/delete routes themselves, which must work on an archived project).
     """
 
     def dependency(
@@ -80,6 +94,8 @@ def project_access(allowed: frozenset[ProjectRole] = READ_ROLES):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
         if role not in allowed:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Your role cannot do this on this project")
+        if not allow_archived and allowed != READ_ROLES:
+            refuse_if_archived(project)
         return project
 
     return dependency

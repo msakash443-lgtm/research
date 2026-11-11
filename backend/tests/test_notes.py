@@ -1,0 +1,397 @@
+import uuid
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import select
+
+from app.database import SessionLocal
+from app.main import app
+from app.config import get_settings
+from app.object_storage import get_object_store
+from app.models import AuditEvent, Source, SourceExcerpt
+from tests.api_helpers import sign_in
+
+
+def test_capture_is_saved_with_author_time_and_kind():
+    client = sign_in("capture1@example.com")
+
+    response = client.post("/api/notes", json={"client_id": "c1", "kind": "typed", "body": "Does remote work widen the wage gap?"})
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["kind"] == "typed"
+    assert body["status"] == "inbox"
+    assert body["body"] == "Does remote work widen the wage gap?"
+    assert body["project_id"] is None
+    assert body["revision"] == 1
+    assert body["captured_at"]
+    assert body["owner_id"]
+
+
+def test_capture_requires_authentication():
+    anonymous = TestClient(app)
+    response = anonymous.post("/api/notes", json={"client_id": "c1", "kind": "typed", "body": "x"})
+    assert response.status_code == 401
+
+
+def test_capture_is_audited():
+    client = sign_in("capture2@example.com")
+    note_id = client.post("/api/notes", json={"client_id": "c1", "kind": "typed", "body": "An idea"}).json()["id"]
+
+    with SessionLocal() as db:
+        events = db.scalars(select(AuditEvent).where(AuditEvent.action == "note.created")).all()
+        assert any(event.payload_json.get("note_id") == note_id for event in events)
+
+
+def test_reposting_the_same_client_id_returns_the_same_note_not_a_duplicate():
+    client = sign_in("idem1@example.com")
+    payload = {"client_id": "retry-1", "kind": "typed", "body": "Saved once"}
+
+    first = client.post("/api/notes", json=payload)
+    second = client.post("/api/notes", json=payload)
+
+    assert first.status_code == 201
+    assert second.status_code == 200
+    assert first.json()["id"] == second.json()["id"]
+    assert len(client.get("/api/notes").json()) == 1
+
+def test_reposting_the_same_client_id_with_different_body_is_a_409_conflict():
+    client = sign_in("idem-conflict@example.com")
+    first = client.post("/api/notes", json={"client_id": "retry-2", "kind": "typed", "body": "Saved once"})
+    assert first.status_code == 201
+
+    second = client.post("/api/notes", json={"client_id": "retry-2", "kind": "typed", "body": "Saved differently offline"})
+
+    assert second.status_code == 409
+    detail = second.json()["detail"]
+    assert detail["code"] == "note_conflict"
+    assert detail["current"]["id"] == first.json()["id"]
+    assert detail["current"]["body"] == "Saved once"
+    assert len(client.get("/api/notes").json()) == 1
+
+
+def test_reposting_the_same_client_id_with_identical_content_stays_200():
+    client = sign_in("idem-identical@example.com")
+    payload = {"client_id": "retry-3", "kind": "clip", "quoted_text": "same quote", "body": "same comment"}
+    first = client.post("/api/notes", json=payload)
+    assert first.status_code == 201
+
+    second = client.post("/api/notes", json=payload)
+
+    assert second.status_code == 200
+    assert second.json()["id"] == first.json()["id"]
+
+
+
+def test_losing_a_race_on_the_same_client_id_returns_the_winners_note(monkeypatch):
+    # Two submits of one capture both pass the "already saved?" lookup; the second insert then hits
+    # the unique (owner, client_id) index and must return the first note, not a 500.
+    from sqlalchemy import false
+
+    from app.routers import notes as notes_router
+
+    client = sign_in("idem-race@example.com")
+    payload = {"client_id": "race-1", "kind": "typed", "body": "Saved once"}
+    first = client.post("/api/notes", json=payload)
+
+    real_select, calls = notes_router.select, []
+
+    def select_missing_first_lookup(*args):
+        calls.append(args)
+        query = real_select(*args)
+        return query.where(false()) if len(calls) == 1 else query
+
+    monkeypatch.setattr(notes_router, "select", select_missing_first_lookup)
+    second = client.post("/api/notes", json=payload)
+
+    assert first.status_code == 201
+    assert second.status_code == 200 and second.json()["id"] == first.json()["id"]
+    monkeypatch.undo()
+    assert len(client.get("/api/notes").json()) == 1
+
+def test_a_different_users_client_id_is_a_different_note():
+    a, b = sign_in("idem2a@example.com"), sign_in("idem2b@example.com")
+    payload = {"client_id": "shared-id", "kind": "typed", "body": "mine"}
+
+    note_a = a.post("/api/notes", json=payload).json()
+    note_b = b.post("/api/notes", json=payload).json()
+
+    assert note_a["id"] != note_b["id"]
+
+
+def test_typed_note_requires_body():
+    client = sign_in("validate1@example.com")
+    response = client.post("/api/notes", json={"client_id": "c1", "kind": "typed", "body": "   "})
+    assert response.status_code == 422
+
+
+def test_clip_note_requires_quoted_text_or_link():
+    client = sign_in("validate2@example.com")
+
+    bare = client.post("/api/notes", json={"client_id": "c1", "kind": "clip"})
+    assert bare.status_code == 422
+
+    with_link = client.post("/api/notes", json={"client_id": "c2", "kind": "clip", "source_url": "https://example.com/article"})
+    assert with_link.status_code == 201
+    assert with_link.json()["body"] == ""
+
+    with_quote = client.post("/api/notes", json={"client_id": "c3", "kind": "clip", "quoted_text": "a clipped sentence"})
+    assert with_quote.status_code == 201
+
+
+def test_quoted_text_is_kept_separate_from_body():
+    client = sign_in("validate3@example.com")
+    response = client.post(
+        "/api/notes",
+        json={"client_id": "c1", "kind": "clip", "body": "my own comment", "quoted_text": "their exact words", "source_url": "https://example.com"},
+    )
+    body = response.json()
+    assert body["body"] == "my own comment"
+    assert body["quoted_text"] == "their exact words"
+
+
+def test_voice_highlight_and_photo_kinds_are_not_available_yet():
+    client = sign_in("validate4@example.com")
+    for kind in ("voice", "highlight", "photo"):
+        response = client.post("/api/notes", json={"client_id": f"c-{kind}", "kind": kind, "body": "x"})
+        assert response.status_code == 422
+
+
+def test_list_is_newest_first_and_can_filter_by_status():
+    client = sign_in("list1@example.com")
+    first = client.post("/api/notes", json={"client_id": "c1", "kind": "typed", "body": "first", "captured_at": "2026-01-01T00:00:00Z"}).json()
+    second = client.post("/api/notes", json={"client_id": "c2", "kind": "typed", "body": "second", "captured_at": "2026-01-02T00:00:00Z"}).json()
+    client.post(f"/api/notes/{first['id']}/archive")
+
+    notes = client.get("/api/notes").json()
+    assert [note["id"] for note in notes] == [second["id"], first["id"]]
+
+    inbox_only = client.get("/api/notes", params={"status": "inbox"}).json()
+    assert [note["id"] for note in inbox_only] == [second["id"]]
+
+
+def test_a_user_only_sees_their_own_notes():
+    owner = sign_in("priv1@example.com")
+    intruder = sign_in("priv2@example.com")
+    note_id = owner.post("/api/notes", json={"client_id": "c1", "kind": "typed", "body": "private"}).json()["id"]
+
+    assert intruder.get(f"/api/notes/{note_id}").status_code == 404
+    assert intruder.get(f"/api/notes/{note_id}/revisions").status_code == 404
+    assert intruder.patch(f"/api/notes/{note_id}", json={"base_revision": 1, "body": "tampered"}).status_code == 404
+    assert intruder.post(f"/api/notes/{note_id}/archive").status_code == 404
+    assert intruder.post(f"/api/notes/{note_id}/lock", json={"ai_locked": True}).status_code == 404
+    assert intruder.get("/api/notes").json() == []
+    assert owner.get(f"/api/notes/{uuid.uuid4()}").status_code == 404
+
+
+def test_editing_writes_a_new_revision_and_keeps_the_old_one():
+    client = sign_in("edit1@example.com")
+    note_id = client.post("/api/notes", json={"client_id": "c1", "kind": "typed", "body": "first draft"}).json()["id"]
+
+    response = client.patch(f"/api/notes/{note_id}", json={"base_revision": 1, "body": "second draft"})
+
+    assert response.status_code == 200
+    assert response.json()["body"] == "second draft"
+    assert response.json()["revision"] == 2
+    revisions = client.get(f"/api/notes/{note_id}/revisions").json()
+    assert [r["body"] for r in revisions] == ["first draft", "second draft"]
+    assert revisions[0]["revision"] == 1 and revisions[1]["revision"] == 2
+
+
+def test_editing_with_a_stale_revision_is_refused_and_shows_the_current_copy():
+    client = sign_in("edit2@example.com")
+    note_id = client.post("/api/notes", json={"client_id": "c1", "kind": "typed", "body": "v1"}).json()["id"]
+    client.patch(f"/api/notes/{note_id}", json={"base_revision": 1, "body": "v2"})
+
+    response = client.patch(f"/api/notes/{note_id}", json={"base_revision": 1, "body": "stale edit"})
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "note_conflict"
+    assert detail["current"]["body"] == "v2"
+    assert detail["current"]["revision"] == 2
+    # Nothing was written for the rejected edit.
+    assert [r["body"] for r in client.get(f"/api/notes/{note_id}/revisions").json()] == ["v1", "v2"]
+
+
+def test_archive_sets_status_and_is_audited():
+    client = sign_in("archive1@example.com")
+    note_id = client.post("/api/notes", json={"client_id": "c1", "kind": "typed", "body": "done"}).json()["id"]
+
+    response = client.post(f"/api/notes/{note_id}/archive")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "archived"
+    with SessionLocal() as db:
+        assert db.scalar(select(AuditEvent).where(AuditEvent.action == "note.archived")) is not None
+
+
+def test_lock_toggles_ai_locked_and_is_audited():
+    client = sign_in("lock1@example.com")
+    note_id = client.post("/api/notes", json={"client_id": "c1", "kind": "typed", "body": "sensitive"}).json()["id"]
+    assert client.get(f"/api/notes/{note_id}").json()["ai_locked"] is False
+
+    locked = client.post(f"/api/notes/{note_id}/lock", json={"ai_locked": True})
+    assert locked.status_code == 200
+    assert locked.json()["ai_locked"] is True
+
+    unlocked = client.post(f"/api/notes/{note_id}/lock", json={"ai_locked": False})
+    assert unlocked.json()["ai_locked"] is False
+    with SessionLocal() as db:
+        assert db.scalar(select(AuditEvent).where(AuditEvent.action == "note.locked")) is not None
+
+
+def test_capture_can_be_locked_from_the_start():
+    client = sign_in("lock2@example.com")
+    note = client.post("/api/notes", json={"client_id": "c1", "kind": "typed", "body": "secret", "ai_locked": True}).json()
+    assert note["ai_locked"] is True
+
+def test_highlight_capture_creates_source_excerpt_and_keeps_comment_separate():
+
+    client = sign_in("highlight@example.com")
+    project_id = client.post("/api/projects", json={"title": "Highlights"}).json()["id"]
+    source_id = client.post(
+        f"/api/projects/{project_id}/sources",
+        json={"title": "Stored paper", "evidence_excerpt": "existing"},
+    ).json()["id"]
+    with SessionLocal() as db:
+        source = db.get(Source, uuid.UUID(source_id))
+        source.fulltext_path = "sources/paper.pdf"
+        db.commit()
+
+    response = client.post(
+        "/api/notes/highlight",
+        json={
+            "client_id": "highlight-1",
+            "source_id": source_id,
+            "quoted_text": "The highlighted passage.",
+            "body": "My comment about the passage.",
+            "locator": "p. 4",
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    note = response.json()
+    assert note["kind"] == "highlight"
+    assert note["body"] == "My comment about the passage."
+    assert note["quoted_text"] == "The highlighted passage."
+    assert note["source_id"] == source_id
+    assert note["excerpt_id"]
+    with SessionLocal() as db:
+        excerpt = db.scalar(select(SourceExcerpt).where(SourceExcerpt.id == uuid.UUID(note["excerpt_id"])))
+        assert excerpt.content == note["quoted_text"]
+        assert excerpt.locator == "p. 4"
+
+
+def test_highlight_capture_refuses_sources_without_stored_pdf():
+    client = sign_in("highlight-no-pdf@example.com")
+    project_id = client.post("/api/projects", json={"title": "No PDF"}).json()["id"]
+    source_id = client.post(f"/api/projects/{project_id}/sources", json={"title": "No PDF"}).json()["id"]
+    response = client.post(
+        "/api/notes/highlight",
+        json={"client_id": "highlight-2", "source_id": source_id, "quoted_text": "passage"},
+    )
+    assert response.status_code == 409
+
+
+@pytest.mark.parametrize(
+    "kind,email,payload,content_type,extension",
+    [
+        pytest.param(
+            "photo",
+            "photo@example.com",
+            b"\x89PNG\r\n\x1a\nimage-bytes",
+            "image/png",
+            "photo.png",
+            id="photo-capture-stores-attachment-without-ocr",
+        ),
+        pytest.param(
+            "voice",
+            "voice@example.com",
+            b"RIFF\x00\x00\x00\x00WAVE audio-bytes",
+            "audio/wav",
+            "voice.wav",
+            id="voice-capture-stores-audio-without-transcription",
+        ),
+    ],
+)
+def test_binary_capture_stores_the_attachment_without_any_automatic_processing(kind, email, payload, content_type, extension):
+    client = sign_in(email)
+    response = client.post(
+        f"/api/notes/{kind}?client_id={kind}-1",
+        content=payload,
+        headers={"content-type": content_type},
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["kind"] == kind
+    assert body["body"] == ""
+    assert len(body["attachments"]) == 1
+    attachment = body["attachments"][0]
+    assert attachment["media_type"] == content_type
+    assert attachment["size"] == len(payload)
+    assert get_object_store(get_settings()).get(f"notes/{body['owner_id']}/{body['id']}/{extension}") == payload
+
+
+def test_voice_notes_carry_no_transcript_field_and_no_transcript_column():
+    # M5.7.4 (Q15): audio only, no transcript and no speech-to-text service for now.
+    from app.models import Note
+
+    client = sign_in("voice-notranscript@example.com")
+    response = client.post(
+        "/api/notes/voice?client_id=voice-notranscript",
+        content=b"RIFF\x00\x00\x00\x00WAVE audio-bytes",
+        headers={"content-type": "audio/wav"},
+    )
+    assert response.status_code == 201, response.text
+    assert not any("transcript" in key for key in response.json())
+    assert not any("transcript" in column.name for column in Note.__table__.columns)
+
+
+def test_highlight_capture_concurrent_retry_returns_existing_note(monkeypatch):
+    from app.routers import notes as notes_router
+
+    client = sign_in("highlight-race@example.com")
+    project_id = client.post("/api/projects", json={"title": "Race"}).json()["id"]
+    source_id = client.post(f"/api/projects/{project_id}/sources", json={"title": "Race paper"}).json()["id"]
+    with SessionLocal() as db:
+        db.get(Source, uuid.UUID(source_id)).fulltext_path = "sources/race.pdf"
+        db.commit()
+    payload = {"client_id": "highlight-race", "source_id": source_id, "quoted_text": "passage", "body": "mine"}
+    first = client.post("/api/notes/highlight", json=payload)
+    assert first.status_code == 201
+
+    # Simulate the race: the pre-check misses (the other request has not committed yet), so the insert collides.
+    real = notes_router._existing_note
+    calls = {"n": 0}
+
+    def racing(db, user, client_id):
+        calls["n"] += 1
+        return None if calls["n"] == 1 else real(db, user, client_id)
+
+    monkeypatch.setattr(notes_router, "_existing_note", racing)
+    second = client.post("/api/notes/highlight", json=payload)
+
+    assert second.status_code == 200, second.text
+    assert second.json()["id"] == first.json()["id"]
+
+
+def test_voice_and_photo_uploads_over_the_default_body_cap_are_accepted():
+    # The 1 MiB default cap is for JSON requests; raw media uploads get object_storage_max_bytes (X.31.17).
+    client = sign_in("bigmedia@example.com")
+    over_default = b"\0" * (get_settings().max_request_body_bytes + 1024)
+
+    voice = client.post("/api/notes/voice?client_id=big-voice", content=over_default, headers={"content-type": "audio/wav"})
+    photo = client.post("/api/notes/photo?client_id=big-photo", content=over_default, headers={"content-type": "image/png"})
+
+    assert voice.status_code == 201, voice.text
+    assert photo.status_code == 201, photo.text
+
+
+def test_ordinary_json_requests_keep_the_default_body_cap():
+    client = sign_in("bigjson@example.com")
+    too_big = "x" * (get_settings().max_request_body_bytes + 1024)
+
+    response = client.post("/api/notes", json={"client_id": "big-json", "kind": "typed", "body": too_big})
+
+    assert response.status_code == 413

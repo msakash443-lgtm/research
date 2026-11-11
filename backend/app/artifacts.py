@@ -18,6 +18,7 @@ from __future__ import annotations
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -26,7 +27,7 @@ from app import audit
 from app.gates import GATE_STAGES, ensure_gates
 from app.models import Artifact, ArtifactEdge, ArtifactStatus, GateCode, GateStatus, Project, ProjectStage, utcnow
 
-STAGE_ORDER = list(ProjectStage)
+from app.stage_order import StageNotInChain, chain as stage_chain, require_stage
 
 
 class ArtifactError(ValueError):
@@ -37,13 +38,12 @@ class StageError(ArtifactError):
     """The requested stage change isn't allowed."""
 
 
-def stage_index(stage: ProjectStage) -> int:
-    return STAGE_ORDER.index(stage)
+def stage_index(stage: ProjectStage, project: Project | None = None) -> int:
+    return stage_chain(project).index(stage)
 
 
 def gate_for_stage(stage: ProjectStage) -> GateCode | None:
     return next((code for code, gated in GATE_STAGES.items() if gated == stage), None)
-
 
 # ---- registering ------------------------------------------------------------------------------
 
@@ -88,7 +88,16 @@ def register_artifact(
     actor: str,
     depends_on: tuple[Artifact, ...] = (),
 ) -> Artifact:
-    """Record that a result exists. Idempotent per (project, kind, ref_id). The caller commits."""
+    project = db.get(Project, project_id)
+    if project is not None:
+        try:
+            require_stage(project, stage)
+        except StageNotInChain:
+            audit.record(
+                db, actor=actor, action="stage.not_in_chain", project_id=project_id,
+                payload={"stage": stage.value, "kind": kind, "ref_id": str(ref_id) if ref_id is not None else ""},
+            )
+            raise
     ref = str(ref_id) if ref_id is not None else ""
     artifact = db.scalar(select(Artifact).where(Artifact.project_id == project_id, Artifact.kind == kind, Artifact.ref_id == ref))
     if artifact is None:
@@ -126,17 +135,22 @@ class Reentry:
 
 
 def reenter_stage(db: Session, project: Project, target: ProjectStage, *, actor: str, reason: str) -> Reentry:
-    """Send the project back to an earlier stage. The caller commits (everything happens in one transaction)."""
+    """Reopen `target` (the current stage or an earlier one) for revision. The caller commits (one transaction).
+
+    Everything produced at `target` or later, and anything built from it, goes stale, and the gates of those
+    stages (the target's own included) return to pending, so a person must redo the work and approve again
+    (decided with the owner 2026-10-12; before, the target kept its gate and artifacts).
+    """
     current = project.stage
-    if stage_index(target) >= stage_index(current):
-        raise StageError(f"Re-entry must go back to an earlier stage; the project is already at '{current.value}'")
-    cutoff = stage_index(target)
+    if stage_index(target, project) > stage_index(current, project):
+        raise StageError(f"Re-entry must go to the current stage or an earlier one; the project is at '{current.value}'")
+    cutoff = stage_index(target, project)
     result = Reentry(current, target, reason)
     note = f"Re-entered '{target.value}' from '{current.value}': {reason}"
 
     artifacts = db.scalars(select(Artifact).where(Artifact.project_id == project.id)).all()
     by_id = {a.id: a for a in artifacts}
-    later = {a.id for a in artifacts if stage_index(a.stage) > cutoff}
+    later = {a.id for a in artifacts if stage_index(a.stage, project) >= cutoff}
     for artifact_id in later:
         artifact = by_id[artifact_id]
         if artifact.status == ArtifactStatus.current:
@@ -151,7 +165,7 @@ def reenter_stage(db: Session, project: Project, target: ProjectStage, *, actor:
 
     # The approvals belonging to stages we are going back over are void: a person must decide again.
     for gate in ensure_gates(db, project):
-        if stage_index(GATE_STAGES[gate.code]) > cutoff and gate.status != GateStatus.pending:
+        if stage_index(GATE_STAGES[gate.code], project) >= cutoff and gate.status != GateStatus.pending:
             audit.record(
                 db, actor=actor, action="gate.reset", project_id=project.id,
                 payload={"gate": gate.code.value, "previous_status": gate.status.value, "previous_decided_by": gate.decided_by,
@@ -163,7 +177,7 @@ def reenter_stage(db: Session, project: Project, target: ProjectStage, *, actor:
             gate.note = None
             result.gates_reset.append(gate.code)
 
-    result.stages_to_redo = [(s, gate_for_stage(s)) for s in STAGE_ORDER if cutoff < stage_index(s) <= stage_index(current)]
+    result.stages_to_redo = [(s, gate_for_stage(s)) for s in stage_chain(project) if cutoff <= stage_index(s, project) <= stage_index(current, project)]
     project.stage = target
     project.touch()
     audit.record(
@@ -173,6 +187,41 @@ def reenter_stage(db: Session, project: Project, target: ProjectStage, *, actor:
     )
     db.flush()
     return result
+
+
+def _utc_seconds(value: datetime) -> datetime:
+    """`value` in UTC, to the second. `created_at` comes from the database clock, `stale_at` from Python
+    with microseconds; compare them on equal terms."""
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).replace(microsecond=0)
+
+
+def unreplaced_stale(db: Session, project: Project, up_to: ProjectStage) -> list[Artifact]:
+    """Stale results of `up_to` or an earlier stage that nothing has replaced yet (plan M0.5.9).
+
+    A stale artifact counts as replaced once a *current* artifact of the same kind, produced at the same
+    stage, was registered no earlier than it went stale (Decisions log 2026-10-07). Regenerating the same
+    record (`refresh_artifact`) makes it current, so it is not listed at all.
+    """
+    limit = stage_index(up_to, project)
+    artifacts = db.scalars(select(Artifact).where(Artifact.project_id == project.id)).all()
+    relevant = [a for a in artifacts if stage_index(a.stage, project) <= limit]
+    current = [a for a in relevant if a.status == ArtifactStatus.current]
+    blocking = []
+    for artifact in relevant:
+        if artifact.status != ArtifactStatus.stale:
+            continue
+        went_stale = _utc_seconds(artifact.stale_at) if artifact.stale_at else None
+        replaced = any(
+            other.kind == artifact.kind
+            and other.stage == artifact.stage
+            and (went_stale is None or _utc_seconds(other.created_at) >= went_stale)
+            for other in current
+        )
+        if not replaced:
+            blocking.append(artifact)
+    return sorted(blocking, key=lambda a: (stage_index(a.stage, project), a.kind, a.ref_id))
 
 
 def rerun_path(db: Session, project: Project) -> list[dict]:
@@ -186,7 +235,7 @@ def rerun_path(db: Session, project: Project) -> list[dict]:
     ).all()
     gates = {g.code: g for g in ensure_gates(db, project)}
     steps = []
-    for stage in STAGE_ORDER:
+    for stage in stage_chain(project):
         members = sorted((a for a in stale if a.stage == stage), key=lambda a: (a.kind, a.ref_id))
         if not members:
             continue

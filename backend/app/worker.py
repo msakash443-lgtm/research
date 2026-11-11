@@ -4,102 +4,28 @@ Run this as a separate process in Docker/production. It claims tasks from the ta
 (app.task_queue) and runs the registered handler for each (app.task_handlers). It does
 not execute arbitrary user code or visit user-supplied URLs.
 
-`claim_next_run` and `reap_stale_runs` below are the pre-queue way of running research
-runs. The loop no longer calls them (runs are tasks now); they are kept only until the
-queue port has been reviewed, then removed (plan M0.6.6).
+Research runs are tasks like any other; the old run-level claim/reaper was removed (plan M0.6.6).
 """
 
 from __future__ import annotations
 
 import logging
-import time
-from datetime import datetime, timedelta
+import signal
+import threading
+from typing import Callable
 
-from sqlalchemy import select
-
-from app import audit
 from app.config import get_settings
 from app.database import SessionLocal
-from app.models import ResearchRun, ResearchRunStatus, utcnow
 from app.gates import release_tasks_for_approved_gates
+from app.models import utcnow
+from app.query_alerts import sweep_due_alerts
+from app.privacy_profile import effective_privacy
+from app.retention import purge_expired_run_snapshots
 from app.task_queue import reap_expired_tasks
+from app.logging_config import configure_logging
 from app.task_runner import run_one_task
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger(__name__)
-
-
-def claim_next_run() -> str | None:
-    db = SessionLocal()
-    try:
-        statement = (
-            select(ResearchRun)
-            .where(ResearchRun.status == ResearchRunStatus.queued)
-            .order_by(ResearchRun.created_at.asc())
-            .limit(1)
-            .with_for_update(skip_locked=True)
-        )
-        run = db.scalar(statement)
-        if run is None:
-            return None
-        run.status = ResearchRunStatus.running
-        run.started_at = utcnow()
-        db.commit()
-        return str(run.id)
-    except Exception:
-        db.rollback()
-        logger.exception("Unable to claim a research run")
-        return None
-    finally:
-        db.close()
-
-
-def reap_stale_runs(now: datetime | None = None) -> int:
-    """Recover runs left `running` by a crashed worker.
-
-    A run whose lease (`research_run_lease_seconds` since `started_at`) has expired is
-    requeued, or marked failed once `research_run_max_attempts` is reached. Failing loudly
-    keeps a poisoned run from looping forever.
-    """
-    settings = get_settings()
-    now = now or utcnow()
-    cutoff = now - timedelta(seconds=settings.research_run_lease_seconds)
-    db = SessionLocal()
-    try:
-        stale = db.scalars(
-            select(ResearchRun)
-            .where(ResearchRun.status == ResearchRunStatus.running, ResearchRun.started_at < cutoff)
-            .with_for_update(skip_locked=True)
-        ).all()
-        for run in stale:
-            if run.attempt_count >= settings.research_run_max_attempts:
-                run.status = ResearchRunStatus.failed
-                run.error_message = (
-                    f"The run stopped responding and was abandoned after {run.attempt_count} attempts. "
-                    "Check the worker logs, then submit the question again."
-                )
-                run.completed_at = now
-                audit.record(
-                    db, actor=audit.SYSTEM_WORKER, action="research_run.abandoned", project_id=run.project_id,
-                    payload={"run_id": str(run.id), "attempts": run.attempt_count},
-                )
-                logger.warning("Research run %s failed after %s attempts", run.id, run.attempt_count)
-            else:
-                run.status = ResearchRunStatus.queued
-                run.started_at = None
-                audit.record(
-                    db, actor=audit.SYSTEM_WORKER, action="research_run.requeued", project_id=run.project_id,
-                    payload={"run_id": str(run.id), "attempts": run.attempt_count},
-                )
-                logger.warning("Requeued stale research run %s (attempt %s)", run.id, run.attempt_count)
-        db.commit()
-        return len(stale)
-    except Exception:
-        db.rollback()
-        logger.exception("Unable to reap stale research runs")
-        return 0
-    finally:
-        db.close()
 
 
 def release_gated_tasks() -> int:
@@ -117,15 +43,88 @@ def release_gated_tasks() -> int:
         db.close()
 
 
-def run_forever() -> None:
+def sweep_due_query_alerts() -> int:
+    """Enqueue due alert re-runs (one task per due slot; idempotent per slot) — plan M1.12."""
+    db = SessionLocal()
+    try:
+        enqueued = sweep_due_alerts(db)
+        db.commit()
+        return enqueued
+    except Exception:
+        db.rollback()
+        logger.exception("Unable to sweep due query alerts")
+        return 0
+    finally:
+        db.close()
+
+def sweep_run_snapshot_retention() -> int:
+    """Clear expired research-run input snapshots (X.4.7.4). No-op while the setting is unset."""
+    days = effective_privacy(get_settings())["run_snapshot_retention_days"]
+    if days is None:
+        return 0
+    db = SessionLocal()
+    try:
+        cleared = purge_expired_run_snapshots(db, utcnow(), days)
+        db.commit()
+        return cleared
+    except Exception:
+        db.rollback()
+        logger.exception("Unable to purge expired run snapshots")
+        return 0
+    finally:
+        db.close()
+
+
+def _install_shutdown_handlers(stop: threading.Event) -> None:
+    """A SIGTERM (deploy, `docker stop`) or SIGINT ends the loop once the task in hand finishes."""
+
+    def request_stop(signum, frame):
+        logger.info("Stop requested (signal %s); finishing the current task", signum)
+        stop.set()
+
+    signal.signal(signal.SIGTERM, request_stop)
+    signal.signal(signal.SIGINT, request_stop)
+
+
+def _run_step(name: str, step: Callable[[], object]) -> object:
+    """Run one step of a worker pass. A failure is logged and returns None, so a broken sweep
+    cannot stop the steps after it (in particular the task claim) from running."""
+    try:
+        return step()
+    except Exception:
+        logger.exception("Worker step %r failed; continuing", name)
+        return None
+
+
+def _reaper_loop(stop: threading.Event, interval: float) -> None:
+    """Reap tasks whose lease has lapsed, on a thread of its own (X.115). The claim loop blocks while a
+    handler runs, so a hung handler would otherwise stop the reaping and leave its task `running` for ever."""
+    while not stop.is_set():
+        _run_step("reap expired tasks", reap_expired_tasks)
+        stop.wait(interval)
+
+
+def run_forever(stop: threading.Event | None = None) -> None:
+    """Claim and run tasks until `stop` is set. Each step of a pass is isolated: a database error
+    is logged, the step is retried on the next pass, and the worker process never ends."""
+    stop = stop if stop is not None else threading.Event()
     settings = get_settings()
     logger.info("Worker started")
-    while True:
-        reap_expired_tasks()
-        release_gated_tasks()
-        if not run_one_task():
-            time.sleep(settings.research_worker_poll_seconds)
+    reaper = threading.Thread(target=_reaper_loop, args=(stop, settings.research_worker_poll_seconds), name="task-reaper", daemon=True)
+    reaper.start()
+    while not stop.is_set():
+        _run_step("release gated tasks", release_gated_tasks)
+        _run_step("sweep due query alerts", sweep_due_query_alerts)
+        _run_step("sweep run snapshot retention", sweep_run_snapshot_retention)
+        ran = _run_step("run one task", run_one_task)
+        if not ran:
+            stop.wait(settings.research_worker_poll_seconds)
+    reaper.join()
+    logger.info("Worker stopped")
 
 
 if __name__ == "__main__":
-    run_forever()
+    configure_logging()
+    stop_event = threading.Event()
+    _install_shutdown_handlers(stop_event)
+    run_forever(stop_event)

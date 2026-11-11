@@ -2,7 +2,7 @@ import uuid
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select
+from sqlalchemy import false, func, select
 from sqlalchemy.exc import IntegrityError
 
 from app import task_queue as q
@@ -12,17 +12,7 @@ from app.config import get_settings
 from app.database import SessionLocal
 from app.main import app
 from app.models import AuditEvent, Project, ResearchRun, ResearchRunStatus, Source, SourceExcerpt, Task, User
-
-
-def _project():
-    with SessionLocal() as db:
-        user = User(email=f"idem-{uuid.uuid4().hex}@example.test")
-        db.add(user)
-        db.flush()
-        project = Project(owner_id=user.id, title="Idem")
-        db.add(project)
-        db.commit()
-        return project.id
+from tests.api_helpers import insert_project
 
 
 def _count(model, **where):
@@ -36,7 +26,7 @@ def _count(model, **where):
 # ---- tasks -------------------------------------------------------------------------------
 
 def test_enqueueing_the_same_key_twice_returns_the_same_task():
-    p = _project()
+    p = insert_project("Idem")
     with SessionLocal() as db:
         first = q.enqueue_task(db, p, "demo", {"n": 1}, idempotency_key="job-1")
         db.commit()
@@ -50,7 +40,7 @@ def test_enqueueing_the_same_key_twice_returns_the_same_task():
 
 
 def test_keys_are_scoped_to_the_project_and_optional():
-    a, b = _project(), _project()
+    a, b = insert_project("Idem"), insert_project("Idem")
     with SessionLocal() as db:
         t1 = q.enqueue_task(db, a, "demo", idempotency_key="same")
         t2 = q.enqueue_task(db, b, "demo", idempotency_key="same")
@@ -62,7 +52,7 @@ def test_keys_are_scoped_to_the_project_and_optional():
 
 
 def test_a_duplicate_enqueue_does_not_repeat_the_audit_event():
-    p = _project()
+    p = insert_project("Idem")
     registered = q.REQUIRED_GATES  # a gated type writes a task.blocked event when first enqueued
     from app import task_registry as registry
     from app.models import GateCode
@@ -85,7 +75,7 @@ def test_a_duplicate_enqueue_does_not_repeat_the_audit_event():
 
 def test_the_database_itself_rejects_a_duplicate_key():
     """Backstop for a true race between two requests that both passed the lookup."""
-    p = _project()
+    p = insert_project("Idem")
     with SessionLocal() as db:
         db.add(Task(project_id=p, type="demo", idempotency_key="dup"))
         db.commit()
@@ -94,8 +84,31 @@ def test_the_database_itself_rejects_a_duplicate_key():
             db.commit()
 
 
+def test_an_enqueue_race_returns_the_task_that_won_without_poisoning_the_transaction(monkeypatch):
+    p = insert_project("Idem")
+    with SessionLocal() as db:
+        winner = Task(project_id=p, type="demo", idempotency_key="racing-key")
+        db.add(winner)
+        db.commit()
+
+        scalar = db.scalar
+        lookups = 0
+
+        def hide_the_first_lookup(statement, *args, **kwargs):
+            nonlocal lookups
+            lookups += 1
+            return None if lookups == 1 else scalar(statement, *args, **kwargs)
+
+        monkeypatch.setattr(db, "scalar", hide_the_first_lookup)
+        task = q.enqueue_task(db, p, "demo", idempotency_key="racing-key")
+        db.commit()
+
+    assert task.id == winner.id
+    assert _count(Task, project_id=p) == 1
+
+
 def test_a_research_run_is_enqueued_once_even_if_asked_twice():
-    p = _project()
+    p = insert_project("Idem")
     run_id = uuid.uuid4()
     with SessionLocal() as db:
         for _ in range(2):
@@ -154,7 +167,7 @@ def _new_run(project_id):
 
 
 def test_retrying_the_same_run_does_not_insert_items_twice_even_without_url_or_doi(arc):
-    p = _project()
+    p = insert_project("Idem")
     run = _new_run(p)
 
     first = _ingest(p, run)
@@ -168,7 +181,7 @@ def test_retrying_the_same_run_does_not_insert_items_twice_even_without_url_or_d
 
 
 def test_a_retry_that_gets_a_reordered_or_extended_result_adds_only_the_new_item(arc):
-    p = _project()
+    p = insert_project("Idem")
     run = _new_run(p)
     _ingest(p, run)
     arc["items"] = list(reversed(_items())) + [
@@ -182,7 +195,7 @@ def test_a_retry_that_gets_a_reordered_or_extended_result_adds_only_the_new_item
 
 def test_the_per_run_cap_counts_what_the_run_already_stored(arc, monkeypatch):
     monkeypatch.setattr(executor, "MAX_ARC_SOURCES_PER_RUN", 2)
-    p = _project()
+    p = insert_project("Idem")
     run = _new_run(p)
 
     assert _ingest(p, run)["added"] == 2
@@ -191,7 +204,7 @@ def test_the_per_run_cap_counts_what_the_run_already_stored(arc, monkeypatch):
 
 
 def test_a_different_run_may_add_a_title_only_paper_again_but_url_and_doi_items_stay_deduplicated(arc):
-    p = _project()
+    p = insert_project("Idem")
     _ingest(p, _new_run(p))
 
     second = _ingest(p, _new_run(p))
@@ -202,7 +215,7 @@ def test_a_different_run_may_add_a_title_only_paper_again_but_url_and_doi_items_
 
 
 def test_the_database_rejects_two_sources_with_the_same_ingest_key_but_allows_many_without(arc):
-    p = _project()
+    p = insert_project("Idem")
     with SessionLocal() as db:
         db.add_all([Source(project_id=p, title=f"Manual {i}") for i in range(3)])  # NULL keys never collide
         db.add(Source(project_id=p, title="Auto", ingest_key="arc:r:1"))
@@ -212,9 +225,34 @@ def test_the_database_rejects_two_sources_with_the_same_ingest_key_but_allows_ma
             db.commit()
 
 
+def test_an_arc_ingest_race_skips_the_item_another_worker_stored(monkeypatch, arc):
+    p = insert_project("Idem")
+    run = _new_run(p)
+    key = f"arc:{run}:{executor._item_identity_hash(_items()[0])}"
+    with SessionLocal() as db:
+        db.add(Source(project_id=p, title="Racing worker", ingest_key=key))
+        db.commit()
+
+        scalars = db.scalars
+        hidden = False
+
+        def hide_the_existing_key(statement, *args, **kwargs):
+            nonlocal hidden
+            if not hidden and "ingest_key" in str(statement):
+                hidden = True
+                return scalars(select(Source.ingest_key).where(false()))
+            return scalars(statement, *args, **kwargs)
+
+        monkeypatch.setattr(db, "scalars", hide_the_existing_key)
+        result = executor._ingest_arc_sources(db, db.get(Project, p), db.get(ResearchRun, run), get_settings())
+
+    assert result == {"status": "completed", "added": 2, "retrieved": 3}
+    assert _count(Source, project_id=p) == 3
+
+
 def test_a_run_resumed_after_a_crash_does_not_duplicate_retrieved_sources(arc, fake_llm):
     """The whole point: execute, 'crash' before completion, execute again, no double insert."""
-    p = _project()
+    p = insert_project("Idem")
     run = _new_run(p)
     with SessionLocal() as db:
         db_run = db.get(ResearchRun, run)
@@ -233,3 +271,55 @@ def test_a_run_resumed_after_a_crash_does_not_duplicate_retrieved_sources(arc, f
     with SessionLocal() as db:
         actions = [e.action for e in db.scalars(select(AuditEvent).where(AuditEvent.project_id == p))]
     assert actions.count("sources.retrieved") == 1  # the retry stored nothing, so it records nothing
+
+
+# ---- true concurrent races (M0.6.10) -------------------------------------------------------
+
+def test_losing_a_true_enqueue_race_returns_the_winners_task_instead_of_an_error():
+    p = insert_project("Idem")
+    with SessionLocal() as winner:
+        won = q.enqueue_task(winner, p, "demo", idempotency_key="race:1")
+        winner.commit()
+        won_id = won.id
+
+    with SessionLocal() as loser:
+        real_scalar = loser.scalar
+        calls = []
+
+        def stale_first_check(*args, **kwargs):
+            calls.append(1)
+            return None if len(calls) == 1 else real_scalar(*args, **kwargs)  # the SELECT ran before the winner committed
+
+        loser.scalar = stale_first_check
+        got = q.enqueue_task(loser, p, "demo", idempotency_key="race:1")
+        loser.commit()
+        assert got.id == won_id
+    assert _count(Task, project_id=p) == 1
+
+
+def test_losing_an_ingest_race_skips_that_item_and_keeps_the_rest(arc):
+    p = insert_project("Idem")
+    run = _new_run(p)
+    items = _items()
+    with SessionLocal() as other:  # a concurrent attempt already stored item 0 under the same key
+        other.add(Source(project_id=p, title="Web page", ingest_key=f"arc:{run}:{executor._item_identity_hash(items[0])}"))
+        other.commit()
+
+    with SessionLocal() as db:
+        real_scalars = db.scalars
+        hidden = []
+
+        def stale_keys(statement, *args, **kwargs):
+            # Hide the already-stored key from the ingest_key lookup only, whatever order the lookups run in.
+            if "ingest_key LIKE" in str(statement):
+                hidden.append(1)
+                return type('Empty', (), {'all': lambda self: []})()
+            return real_scalars(statement, *args, **kwargs)
+
+        db.scalars = stale_keys
+        result = executor._ingest_arc_sources(db, db.get(Project, p), db.get(ResearchRun, run), get_settings())
+        db.commit()
+
+    assert hidden, "the stale ingest_key lookup never ran, so the race path was not exercised"
+    assert result["added"] == 2  # only what this call stored; the raced item is the other attempt's
+    assert _count(Source, project_id=p) == 3

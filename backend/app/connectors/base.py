@@ -14,6 +14,7 @@ A connector turns one external service (OpenAlex, Crossref, ...) into `PaperReco
 
 from __future__ import annotations
 
+import re
 from typing import Any, Protocol, runtime_checkable
 from urllib.parse import urlsplit
 
@@ -22,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.doi import normalize_doi
 
 MAX_PAGE_SIZE = 200
+_PARAGRAPH_BREAK = re.compile(r"\r?\n[ \t\r]*\n\s*")  # a blank line, possibly holding spaces
 
 
 class ConnectorError(RuntimeError):
@@ -41,6 +43,37 @@ def _http_url(value: str | None) -> str | None:
     return value
 
 
+def citation_count(value: Any) -> int | None:
+    """A service's times-cited figure, or None when it is missing or malformed (unknown is not 0)."""
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def language_code(value: Any) -> str | None:
+    """A service's language as a lower-case two-letter ISO 639-1 code, or None when missing or not that shape."""
+    code = value.strip().lower() if isinstance(value, str) else ""
+    return code if len(code) == 2 and code.isalpha() else None
+
+
+def clean_text(value: Any, limit: int) -> str | None:
+    """A string with whitespace runs collapsed to one space, cut to `limit`; None when blank or not a string."""
+    return " ".join(value.split())[:limit] or None if isinstance(value, str) and value.strip() else None
+
+
+def clean_abstract(value: Any, limit: int) -> str | None:
+    """Abstract text with its paragraph breaks kept (plan §3): paragraphs are split on blank lines and
+    rejoined with one blank line; a line break inside a paragraph is only wrapping, so it becomes a space."""
+    if not isinstance(value, str):
+        return None
+    paragraphs = (" ".join(part.split()) for part in _PARAGRAPH_BREAK.split(value))
+    return "\n\n".join(p for p in paragraphs if p)[:limit].rstrip() or None
+
+
+def clean_link(value: Any) -> str | None:
+    """`clean_text` of an http(s) link; None for any other scheme or a non-link."""
+    text = clean_text(value, 2000)
+    return text if text and text.lower().startswith(("http://", "https://")) else None
+
+
 class PaperRecord(BaseModel):
     """One work, normalised across connectors (spec section 4 `Paper`, minus system-owned fields)."""
 
@@ -58,6 +91,9 @@ class PaperRecord(BaseModel):
     oa_url: str | None = None
     source_ids: dict[str, str] = Field(default_factory=dict)  # e.g. {"openalex": "W1", "pmid": "9"}
     quality_flags: tuple[str, ...] = ()  # e.g. ("preprint", "retracted")
+    # Times cited, as this service counts it (M2.13). None = the service gave no count; never read it as 0.
+    cited_by_count: int | None = Field(default=None, ge=0)
+    language: str | None = Field(default=None, min_length=2, max_length=2)  # ISO 639-1; None = not reported (X.86)
 
     @field_validator("doi")
     @classmethod

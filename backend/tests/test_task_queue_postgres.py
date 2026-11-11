@@ -1,54 +1,31 @@
-"""Task-queue behaviour on a real PostgreSQL database (plan X.1.1).
+"""Task-queue behaviour with two workers on separate connections (plan X.1.1).
 
-The rest of the suite runs on in-memory SQLite, which ignores `FOR UPDATE SKIP LOCKED` and shares one
-connection between all sessions, so it can't show what production relies on: two workers on separate
-connections racing for the same rows. These tests need `TEST_POSTGRES_URL` (CI sets it; see ci.yml)
-and are skipped without it, e.g.
-
-    TEST_POSTGRES_URL=postgresql+psycopg://user:pass@localhost:5432/dbname pytest -q backend/tests/test_task_queue_postgres.py
-
-The database named there is wiped: use a throwaway one.
+Production relies on `FOR UPDATE SKIP LOCKED` and on workers racing for the same rows from separate
+connections; these tests drive exactly that against the PostgreSQL test database from conftest.py.
 """
 
-import os
 import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import select
 
 from app import task_queue as q
 from app.config import get_settings
-from app.database import Base
+from app.database import SessionLocal
 from app.models import AuditEvent, Project, Task, TaskStatus, User
-
-POSTGRES_URL = os.environ.get("TEST_POSTGRES_URL")
-
-pytestmark = pytest.mark.skipif(
-    not POSTGRES_URL, reason="TEST_POSTGRES_URL not set — these tests need a real Postgres instance (see ci.yml)"
-)
 
 NOW = datetime(2026, 10, 5, 12, 0, 0, tzinfo=timezone.utc)
 
 
 @pytest.fixture
-def pg(monkeypatch):
-    """A sessionmaker on a fresh schema in the Postgres database; the task queue uses it too."""
-    engine = create_engine(POSTGRES_URL, pool_pre_ping=True, pool_size=10)
-    assert engine.dialect.name == "postgresql", "TEST_POSTGRES_URL must point at PostgreSQL"
-    Base.metadata.drop_all(engine)
-    Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine, autocommit=False, autoflush=False, expire_on_commit=False)
-    # task_queue opens its own sessions through this module-level name (the only module in the path that does).
-    monkeypatch.setattr(q, "SessionLocal", Session)
-    yield Session
-    Base.metadata.drop_all(engine)
-    engine.dispose()
+def pg():
+    """The sessionmaker the task queue itself uses, on the per-test database."""
+    return SessionLocal
 
 
-def _project(Session):
+def _project_in(Session):
     with Session() as db:
         user = User(email=f"pg-{uuid.uuid4().hex}@example.test")
         db.add(user)
@@ -78,7 +55,7 @@ def _actions(Session, project_id):
 
 
 def test_two_workers_on_separate_connections_never_claim_the_same_task(pg):
-    task_ids = _tasks(pg, _project(pg), count=50)
+    task_ids = _tasks(pg, _project_in(pg), count=50)
     claimed = {"a": [], "b": []}
     errors = []
     start = threading.Barrier(2, timeout=30)
@@ -110,7 +87,7 @@ def test_two_workers_on_separate_connections_never_claim_the_same_task(pg):
 
 def test_failures_requeue_with_capped_exponential_backoff_then_fail(pg):
     settings = get_settings()
-    project_id = _project(pg)
+    project_id = _project_in(pg)
     (task_id,) = _tasks(pg, project_id, max_attempts=4)
 
     delays = []
@@ -139,7 +116,7 @@ def test_failures_requeue_with_capped_exponential_backoff_then_fail(pg):
 
 def test_an_expired_lease_is_reaped_and_the_stale_worker_is_locked_out(pg):
     settings = get_settings()
-    project_id = _project(pg)
+    project_id = _project_in(pg)
     retry_id, alive_id = _tasks(pg, project_id, count=2)
     (exhausted_id,) = _tasks(
         pg, project_id, status=TaskStatus.running, attempts=3, max_attempts=3, lease_expires_at=NOW - timedelta(minutes=5)
