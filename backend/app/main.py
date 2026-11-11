@@ -24,7 +24,7 @@ from app.routers import people
 from app.routers import privacy
 from app.routers import observability
 from app.routers import bias_warnings
-from app.routers import analysis_plan, brief, conceptual_model, constructs, datasets, ethics_pack, gaps, idea_brief, instrument, interpretation, meta_analysis, preregistration, qual_coding, research_questions, transcripts
+from app.routers import analysis_plan, brief, conceptual_model, constructs, datasets, ethics_pack, gaps, idea_brief, instrument, interpretation, meta_analysis, objectives, preregistration, qual_coding, research_questions, transcripts
 
 # Production settings (session secret, HTTPS, Postgres, ...) are validated in Settings.
 settings = get_settings()
@@ -126,6 +126,7 @@ app.include_router(constructs.router, prefix="/api")
 app.include_router(conceptual_model.router, prefix="/api")
 app.include_router(gaps.router, prefix="/api")
 app.include_router(research_questions.router, prefix="/api")
+app.include_router(objectives.router, prefix="/api")
 app.include_router(brief.router, prefix="/api")
 app.include_router(idea_brief.router, prefix="/api")
 app.include_router(evidence_matrix.router, prefix="/api")

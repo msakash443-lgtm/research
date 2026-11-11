@@ -1,34 +1,20 @@
 import json
 import uuid
-from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 import sqlalchemy as sa
 from alembic import command
-from alembic.config import Config
 
 from app import research_types, stage_order
 from app.database import SessionLocal
 from app.gates import GATE_STAGES
 from app.models import Project, User
 
-_MIGRATIONS = Path(__file__).resolve().parents[1] / "migrations"
 
-
-def _migrator(tmp_path, monkeypatch):
-    url = f"sqlite:///{(tmp_path / 'migrate.db').as_posix()}"
-    # env.py reads the URL from get_settings(); leave the shared settings cache untouched.
-    monkeypatch.setattr("app.config.get_settings", lambda: SimpleNamespace(database_url=url))
-    config = Config()
-    config.set_main_option("script_location", str(_MIGRATIONS))
-    return config, sa.create_engine(url)
-
-
-def _plans(engine) -> dict[str, tuple[str, dict]]:
+def _plans(engine) -> dict[uuid.UUID, tuple[str, dict]]:
     with engine.connect() as connection:
         rows = connection.execute(sa.text("SELECT id, research_type, stage_plan_json FROM projects")).all()
-    return {id_: (name, json.loads(plan)) for id_, name, plan in rows}
+    return {id_: (name, plan) for id_, name, plan in rows}
 
 
 def _assert_todays_full_journey(plan: dict) -> None:
@@ -41,10 +27,10 @@ def _assert_todays_full_journey(plan: dict) -> None:
     assert [step.gate for step in research_type.stages] == [gate_of_stage.get(stage) for stage in stage_order.chain()]
 
 
-def test_upgrade_backfills_every_existing_project_to_the_full_journey(tmp_path, monkeypatch):
-    config, engine = _migrator(tmp_path, monkeypatch)
+def test_upgrade_backfills_every_existing_project_to_the_full_journey(migrator):
+    config, engine = migrator
     command.upgrade(config, "20261015_0065")
-    owner, first, second = uuid.uuid4().hex, uuid.uuid4().hex, uuid.uuid4().hex
+    owner, first, second = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     with engine.begin() as connection:
         connection.execute(sa.text("INSERT INTO users (id, email) VALUES (:id, 'owner@example.test')"), {"id": owner})
         for project_id, stage in ((first, "idea"), (second, "screened")):
@@ -72,24 +58,24 @@ def test_upgrade_backfills_every_existing_project_to_the_full_journey(tmp_path, 
 
     command.upgrade(config, "20261015_0066")
     assert all(name == "full_journey" for name, _ in _plans(engine).values())
-    engine.dispose()
 
 
-def test_downgrade_refuses_while_a_project_is_on_another_research_type(tmp_path, monkeypatch):
+def test_downgrade_refuses_while_a_project_is_on_another_research_type(migrator):
     """Dropping the columns would silently put that project back on the full journey."""
-    config, engine = _migrator(tmp_path, monkeypatch)
+    config, engine = migrator
     command.upgrade(config, "20261015_0066")
     review = research_types.load_research_type("literature_review").model_dump(mode="json")
+    owner, project = uuid.uuid4(), uuid.uuid4()
     with engine.begin() as connection:
-        connection.execute(sa.text("INSERT INTO users (id, email) VALUES ('u1', 'owner@example.test')"))
+        connection.execute(sa.text("INSERT INTO users (id, email) VALUES (:id, 'owner@example.test')"), {"id": owner})
         connection.execute(sa.text(
             "INSERT INTO projects (id, owner_id, title, research_type, stage_plan_json) "
-            "VALUES ('p1', 'u1', 'Review', 'literature_review', :plan)"), {"plan": json.dumps(review)})
+            "VALUES (:id, :owner, 'Review', 'literature_review', :plan)"),
+            {"id": project, "owner": owner, "plan": json.dumps(review)})
 
     with pytest.raises(RuntimeError, match="research type other than full_journey"):
         command.downgrade(config, "20261015_0065")
     assert "research_type" in {column["name"] for column in sa.inspect(engine).get_columns("projects")}
-    engine.dispose()
 
 
 def test_a_new_project_gets_a_snapshot_of_the_research_type_it_names():

@@ -23,8 +23,8 @@ def _count_if(condition):
 def _window(column, since, until):
     """Conditions keeping `column` in [since, until): `since` inclusive, `until` exclusive; a bound left None is open.
 
-    On SQLite (dev and tests) times compare as text, so a row stamped by the `server_default` (whole seconds, no fraction)
-    at exactly `since` falls outside the window. Postgres compares `timestamptz` values and keeps it.
+    Bounds are compared as `timestamptz` values, so a row stamped by the `server_default` at exactly `since`
+    stays inside the window.
     """
     conditions = []
     if since is not None:

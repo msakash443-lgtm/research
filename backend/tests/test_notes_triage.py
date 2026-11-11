@@ -7,23 +7,13 @@ and only the author may change it. Promotion creates a research context item tha
 import uuid
 from datetime import datetime, timezone
 
-from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.agent.context import select_agent_context
 from app.database import SessionLocal
 from app.main import app
 from app.models import AiItemLock, AuditEvent, ContextKind, ResearchContextItem
-
-
-def _login(email):
-    client = TestClient(app)
-    user_id = client.post("/api/auth/development/login", json={"email": email, "display_name": "T"}).json()["id"]
-    return client, user_id
-
-
-def _project(client, title="Gender wage inequality"):
-    return client.post("/api/projects", json={"title": title}).json()["id"]
+from tests.api_helpers import create_project, sign_in_user
 
 
 def _capture(client, body="Does remote work widen the gap?", ai_locked=False):
@@ -43,29 +33,29 @@ def _promote(client, note_id, kind, content, **extra):
 
 def _invite(owner, project_id, email, role):
     # The invitee must have signed in once so that the account exists.
-    _login(email)
+    sign_in_user(email)
     response = owner.post(f"/api/projects/{project_id}/members", json={"email": email, "role": role})
     assert response.status_code == 201, response.text
 
 
 def test_unfiled_note_is_invisible_to_everyone_but_its_author():
-    author, _ = _login("triage-private-author@example.com")
+    author, _ = sign_in_user("triage-private-author@example.com")
     note_id = _capture(author)
-    project_id = _project(author)
+    project_id = create_project(author, "Gender wage inequality")
     _invite(author, project_id, "triage-private-reader@example.com", "reviewer")
-    reader, _ = _login("triage-private-reader@example.com")
+    reader, _ = sign_in_user("triage-private-reader@example.com")
 
     assert reader.get(f"/api/notes/{note_id}").status_code == 404
     assert reader.get(f"/api/notes/{note_id}/revisions").status_code == 404
 
 
 def test_filed_note_is_readable_by_project_members_but_not_editable():
-    author, _ = _login("triage-read-author@example.com")
-    project_id = _project(author)
+    author, _ = sign_in_user("triage-read-author@example.com")
+    project_id = create_project(author, "Gender wage inequality")
     note_id = _capture(author)
     assert _file(author, note_id, project_id).status_code == 200
     _invite(author, project_id, "triage-read-reviewer@example.com", "reviewer")
-    reviewer, _ = _login("triage-read-reviewer@example.com")
+    reviewer, _ = sign_in_user("triage-read-reviewer@example.com")
 
     assert reviewer.get(f"/api/notes/{note_id}").status_code == 200
     assert reviewer.get(f"/api/notes/{note_id}/revisions").status_code == 200
@@ -77,10 +67,10 @@ def test_filed_note_is_readable_by_project_members_but_not_editable():
 
 
 def test_filing_needs_a_write_role_on_the_project():
-    owner, _ = _login("triage-file-owner@example.com")
-    project_id = _project(owner)
+    owner, _ = sign_in_user("triage-file-owner@example.com")
+    project_id = create_project(owner, "Gender wage inequality")
     _invite(owner, project_id, "triage-file-reviewer@example.com", "reviewer")
-    reviewer, _ = _login("triage-file-reviewer@example.com")
+    reviewer, _ = sign_in_user("triage-file-reviewer@example.com")
     note_id = _capture(reviewer)
 
     response = _file(reviewer, note_id, project_id)
@@ -90,8 +80,8 @@ def test_filing_needs_a_write_role_on_the_project():
 
 
 def test_filing_moves_the_note_out_of_the_inbox_and_is_audited():
-    client, _ = _login("triage-file-audit@example.com")
-    project_id = _project(client)
+    client, _ = sign_in_user("triage-file-audit@example.com")
+    project_id = create_project(client, "Gender wage inequality")
     note_id = _capture(client)
 
     response = _file(client, note_id, project_id)
@@ -105,7 +95,7 @@ def test_filing_moves_the_note_out_of_the_inbox_and_is_audited():
 
 
 def test_promotion_needs_the_note_to_be_filed_first():
-    client, _ = _login("triage-unfiled@example.com")
+    client, _ = sign_in_user("triage-unfiled@example.com")
     note_id = _capture(client)
 
     response = _promote(client, note_id, "hypothesis", "Remote work widens the gap")
@@ -115,8 +105,8 @@ def test_promotion_needs_the_note_to_be_filed_first():
 
 
 def test_promotion_creates_a_context_item_linked_to_the_note():
-    client, _ = _login("triage-promote@example.com")
-    project_id = _project(client)
+    client, _ = sign_in_user("triage-promote@example.com")
+    project_id = create_project(client, "Gender wage inequality")
     note_id = _capture(client)
     _file(client, note_id, project_id)
 
@@ -134,8 +124,8 @@ def test_promotion_creates_a_context_item_linked_to_the_note():
 
 
 def test_promotion_accepts_only_the_triage_kinds():
-    client, _ = _login("triage-kinds@example.com")
-    project_id = _project(client)
+    client, _ = sign_in_user("triage-kinds@example.com")
+    project_id = create_project(client, "Gender wage inequality")
     note_id = _capture(client)
     _file(client, note_id, project_id)
 
@@ -145,8 +135,8 @@ def test_promotion_accepts_only_the_triage_kinds():
 
 
 def test_a_decision_can_point_at_the_item_it_concerns_in_the_same_project():
-    client, _ = _login("triage-related@example.com")
-    project_id = _project(client)
+    client, _ = sign_in_user("triage-related@example.com")
+    project_id = create_project(client, "Gender wage inequality")
     note_id = _capture(client)
     _file(client, note_id, project_id)
     hypothesis_id = _promote(client, note_id, "hypothesis", "H2: care burden explains the gap").json()["id"]
@@ -158,9 +148,9 @@ def test_a_decision_can_point_at_the_item_it_concerns_in_the_same_project():
 
 
 def test_a_related_item_from_another_project_is_refused():
-    client, _ = _login("triage-cross@example.com")
-    project_id = _project(client, "First")
-    other_project = _project(client, "Second")
+    client, _ = sign_in_user("triage-cross@example.com")
+    project_id = create_project(client, "First")
+    other_project = create_project(client, "Second")
     note_id = _capture(client)
     _file(client, note_id, project_id)
     foreign_item = client.post(f"/api/projects/{other_project}/context", json={"kind": "hypothesis", "content": "Elsewhere"}).json()["id"]
@@ -171,8 +161,8 @@ def test_a_related_item_from_another_project_is_refused():
 
 
 def test_decision_log_is_the_decision_filter_on_the_context_list():
-    client, _ = _login("triage-log@example.com")
-    project_id = _project(client)
+    client, _ = sign_in_user("triage-log@example.com")
+    project_id = create_project(client, "Gender wage inequality")
     note_id = _capture(client)
     _file(client, note_id, project_id)
     _promote(client, note_id, "hypothesis", "H1")
@@ -184,8 +174,8 @@ def test_decision_log_is_the_decision_filter_on_the_context_list():
 
 
 def test_promoting_a_locked_note_locks_the_new_item_too():
-    client, _ = _login("triage-lock@example.com")
-    project_id = _project(client)
+    client, _ = sign_in_user("triage-lock@example.com")
+    project_id = create_project(client, "Gender wage inequality")
     note_id = _capture(client, ai_locked=True)
     _file(client, note_id, project_id)
     item_id = _promote(client, note_id, "idea", "Locked idea").json()["id"]
@@ -198,8 +188,8 @@ def test_promoting_a_locked_note_locks_the_new_item_too():
 
 
 def test_promoting_an_unlocked_note_does_not_lock_the_item():
-    client, _ = _login("triage-unlocked@example.com")
-    project_id = _project(client)
+    client, _ = sign_in_user("triage-unlocked@example.com")
+    project_id = create_project(client, "Gender wage inequality")
     note_id = _capture(client)
     _file(client, note_id, project_id)
     item_id = _promote(client, note_id, "idea", "Open idea").json()["id"]
@@ -222,10 +212,10 @@ def test_gap_claim_and_memo_items_are_never_given_to_the_agent():
 
 
 def test_suggestions_are_for_the_author_and_only_name_projects_they_belong_to():
-    author, _ = _login("triage-sugg-author@example.com")
-    project_id = _project(author, "Gender wage inequality")
-    stranger, _ = _login("triage-sugg-stranger@example.com")
-    _project(stranger, "Gender wage inequality archive")
+    author, _ = sign_in_user("triage-sugg-author@example.com")
+    project_id = create_project(author, "Gender wage inequality")
+    stranger, _ = sign_in_user("triage-sugg-stranger@example.com")
+    create_project(stranger, "Gender wage inequality archive")
     note_id = _capture(author, "Remote work and the gender wage gap")
 
     response = author.get(f"/api/notes/{note_id}/suggestions")

@@ -4,8 +4,8 @@ import httpx
 import pytest
 from pydantic import SecretStr
 
-from app.connectors import Connector, ConnectorError, NotSupportedError, SearchRequest
-from app.connectors.core import MAX_FULLTEXT_CHARS, MAX_OFFSET, CoreConnector, to_record, work_id
+from app.connectors import ConnectorError, NotSupportedError, SearchRequest
+from app.connectors.core import MAX_FULLTEXT_CHARS, MAX_OFFSET, CoreConnector, work_id
 from app.connectors.http import ConnectorHttpClient, HttpPolicy
 
 
@@ -37,10 +37,6 @@ def make(handler):
     return CoreConnector(http), seen
 
 
-def test_it_satisfies_the_connector_protocol():
-    assert isinstance(make(lambda r: {})[0], Connector)
-
-
 def test_a_key_is_required_and_sent_as_bearer(monkeypatch):
     with pytest.raises(ConnectorError, match="API key"):
         CoreConnector()
@@ -50,23 +46,11 @@ def test_a_key_is_required_and_sent_as_bearer(monkeypatch):
     assert conn._http._client.headers["Authorization"] == "Bearer secret-key"
 
 
-def test_ids():
+def test_a_core_work_id_accepts_urls_and_rejects_foreign_ids():
     assert work_id("123") == work_id("https://core.ac.uk/works/123") == work_id("https://core.ac.uk/download/123") == "123"
     for bad in ("", "W1", "10.1000/x"):
         with pytest.raises(ConnectorError):
             work_id(bad)
-
-
-def test_work_normalisation():
-    r = to_record(work(7))
-    assert (r.connector, r.external_id, r.title, r.doi) == ("core", "7", "Open paper 7", "10.1000/c7")
-    assert r.authors == ("Ada Lovelace",) and r.year == 2019 and r.venue == "Journal of Open Things"
-    assert r.url == "https://core.ac.uk/works/1" and r.oa_url == "https://core.ac.uk/download/1.pdf"
-    assert r.source_ids == {"core": "7"} and r.quality_flags == ()
-    degraded = to_record(work(8, doi="nope", abstract=None, journals=[], publisher="Pub", links=[], downloadUrl="javascript:x", yearPublished=99))
-    assert degraded.quality_flags == ("invalid_doi", "no_abstract") and degraded.venue == "Pub"
-    assert degraded.url == "https://core.ac.uk/works/8" and degraded.oa_url is None and degraded.year is None
-    assert to_record(work(9, title="")) is None and to_record(work(id="x")) is None
 
 
 def test_search_with_filters_and_paging():

@@ -4,7 +4,7 @@ Revision ID: 20261003_0014
 Revises: 20261003_0013
 Create Date: 2026-10-03
 
-Unique *indexes* (not constraints) so SQLite needs no table rebuild. NULLs never collide, so
+Unique *indexes* (not constraints). NULLs never collide, so
 tasks without a key and sources people add by hand are unaffected.
 """
 

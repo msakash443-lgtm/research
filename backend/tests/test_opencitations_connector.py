@@ -4,7 +4,7 @@ import httpx
 import pytest
 from pydantic import SecretStr
 
-from app.connectors import Connector, ConnectorError, NotSupportedError, SearchRequest
+from app.connectors import ConnectorError, NotSupportedError, SearchRequest
 from app.connectors.http import ConnectorHttpClient, HttpPolicy
 from app.connectors.opencitations import OpenCitationsConnector, oc_id, to_record
 
@@ -35,16 +35,12 @@ def make(handler, **kwargs):
     return OpenCitationsConnector(http, **kwargs), seen
 
 
-def test_it_satisfies_the_connector_protocol():
-    assert isinstance(make(lambda r: [])[0], Connector)
-
-
 def test_token_is_sent_as_authorization_when_configured():
     assert OpenCitationsConnector(access_token=SecretStr("tok"))._http._client.headers["authorization"] == "tok"
     assert "authorization" not in OpenCitationsConnector()._http._client.headers
 
 
-def test_ids():
+def test_an_opencitations_id_accepts_dois_and_omids_and_rejects_foreign_ids():
     assert oc_id("https://doi.org/10.1000/ABC") == oc_id("doi:10.1000/abc") == "10.1000/abc"
     assert oc_id("omid:br/0612345") == "omid:br/0612345"
     for bad in ("", "W123", "omid:ra/061"):

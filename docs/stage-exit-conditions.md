@@ -11,7 +11,9 @@
 
 A condition belongs to a **transition** — "leave stage A → enter stage B". It is checked when
 someone asks to move forward (`POST /stage/advance`) and, for gated stages, shown next to the
-gate's approve control on that stage's own screen.
+gate's approve control on that stage's own screen. A rule is keyed on the stage it guards (X.177):
+"→ B" rules apply whenever B is entered, and "A →" rules whenever A is left, so the check does not
+depend on which stage comes before B in a research type's chain.
 
 **Levels:**
 - **Required** — protects evidence, ethics or authorship. No role, the background worker, or the
@@ -52,7 +54,7 @@ steps in parallel, navigating back to any earlier screen, and the owner's re-ent
 | ID | Leave → enter | Condition | Level (once built) | Machine check | Today | One-click fix |
 |---|---|---|---|---|---|---|
 | EC-1.1 | idea → scoped | G1 approved | Required | EC-0.1 with G1 | built | Scope: approve G1 |
-| EC-1.2 | idea → scoped | At least one research question or objective written | Recommended | count of `ResearchContextItem.kind in (question, objective)` ≥ 1 | built | Scope: "Add question" |
+| EC-1.2 | idea → scoped | At least one research question or objective written | Recommended | count of live `ResearchContextItem.kind in (question, objective)` plus live `ResearchObjective` rows ≥ 1 | built | Scope: "Add question" |
 | EC-1.3 | idea → scoped | Captured ideas not yet promoted | Information | count of `ResearchContextItem.kind == idea` | built | Scope: show ideas |
 | EC-2.1 | scoped → search_planned | G2 approved | Required | EC-0.1 with G2 | built | Criteria: approve G2 (on-screen after X.41.2) |
 | EC-2.2 | scoped → search_planned | Criteria framework chosen and no criteria problems | Recommended | `criteria.problems(project.criteria_framework, criteria) == []` | built | Criteria: edit criteria |
@@ -82,12 +84,12 @@ steps in parallel, navigating back to any earlier screen, and the owner's re-ent
 | EC-8.2 | gaps_selected → framework | At least one research question is linked to a selected gap (FINER novelty/relevance) | Required | `ResearchQuestion.gap_links` non-empty for at least one project `ResearchQuestion` (M4.1) | built | Approvals: G6 refuses while unmet |
 | EC-8.3 | gaps_selected → framework | At least one conceptual-model path has a recorded measure for every construct it uses | Required | `ConceptualPath` + `Construct.measures` (M4.2) | built | Approvals: G6 refuses while unmet |
 | EC-9.1 | framework → design_approved | G7 approved by the owner (ethics; for a no-participants research type, a "no human participants" confirmation) | Required | EC-0.1 with G7 | built (gate only) | Approvals |
-| EC-10.1 | design_approved → data_collected | Data collection may only use a local model if participant data is sensitive | Required | M0.8.4 switch + Q4 | not built (M5.1, Q4 open) | — |
-| EC-11.1 | data_collected → plan_locked | G8 approved by the owner (analysis plan locked) | Required | EC-0.1 with G8 | built (gate only) | Approvals |
-| EC-11.2 | data_collected → plan_locked | Raw dataset stored immutably with a hash | Required | M5.1 | not built | — |
-| EC-12.1 | plan_locked → analyzed | G9 approved | Required | EC-0.1 with G9 | built (gate only) | Approvals |
-| EC-12.2 | plan_locked → analyzed | Every analysis run executed after the plan was locked | Required | `AnalysisRun.created_at > G8.decided_at` (M5.3) | built | Approvals: G9 refuses while unmet |
-| EC-12.3 | plan_locked → analyzed | The findings-to-literature map exists and every finding is confirmed by a person | Required | `interpretation_map.g9_readiness` (M6.9): current `InterpretationFinding` batch non-empty, every row has a `confirmed` `InterpretationReview` | built | Approvals: G9 refuses while unmet |
+| EC-10.1 | → data_collected | Data collection may only use a local model if participant data is sensitive | Required | M0.8.4 switch + Q4 | not built (M5.1, Q4 open) | — |
+| EC-11.1 | → plan_locked | G8 approved by the owner (analysis plan locked) | Required | EC-0.1 with G8 | built (gate only) | Approvals |
+| EC-11.2 | data_collected → (any) | Raw dataset stored immutably with a hash | Required | M5.1 | not built | — |
+| EC-12.1 | → analyzed | G9 approved | Required | EC-0.1 with G9 | built (gate only) | Approvals |
+| EC-12.2 | → analyzed | Every analysis run executed after the plan was locked | Required | `AnalysisRun.created_at > G8.decided_at` (M5.3) | built | Approvals: G9 refuses while unmet |
+| EC-12.3 | → analyzed | The findings-to-literature map exists and every finding is confirmed by a person | Required | `interpretation_map.g9_readiness` (M6.9): current `InterpretationFinding` batch non-empty, every row has a `confirmed` `InterpretationReview` | built | Approvals: G9 refuses while unmet |
 | EC-13.1 | analyzed → drafted | G10 approved | Required | EC-0.1 with G10 | built (gate only) | Approvals |
 | EC-13.2 | analyzed → drafted | Every number in the draft links to an analysis run | Required | `manuscript_guard.section_report` (`number_citation.check_section`) over every saved `Document`, filtered to `unknown_run`/`unresolved_number` | built | Write: link-check |
 | EC-13.3 | analyzed → drafted | Every citation in the draft is a verified reference | Required | `manuscript_guard.section_report` (`claim_linker.check_section`) over every saved `Document`, filtered to `unknown_source`/`unverified_citation` | built | Write: link-check |

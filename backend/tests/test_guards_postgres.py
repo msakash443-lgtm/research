@@ -1,16 +1,8 @@
-"""Append-only triggers and the gate row lock on a real PostgreSQL database (plan X.44).
+"""Append-only triggers and the gate row lock on PostgreSQL (plan X.44).
 
-On SQLite the triggers are SQLite syntax and every session shares one connection, so the suite can't show
-that the PostgreSQL trigger functions refuse a write or that `FOR UPDATE` serialises two requests. These
-tests need `TEST_POSTGRES_URL` (CI sets it; see ci.yml) and are skipped without it, e.g.
-
-    TEST_POSTGRES_URL=postgresql+psycopg://user:pass@localhost:5432/dbname pytest -q -n 0 backend/tests/test_guards_postgres.py
-
-The database named there is wiped: use a throwaway one. Run with `-n 0` (see test_task_queue_postgres.py).
 Writes here go through raw SQL, which skips the ORM guards, so only the database triggers can refuse them.
 """
 
-import os
 import threading
 import time
 import uuid
@@ -18,12 +10,11 @@ from datetime import datetime, timezone
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import create_engine, select, text
+from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy.orm import sessionmaker
 
-from app import audit_guard, excerpt_guard, note_guard  # noqa: F401  (importing registers the trigger DDL)
-from app.database import Base
+from app import audit_guard, excerpt_guard, note_guard
+from app.database import SessionLocal, engine as app_engine
 from app.models import (
     AuditEvent, Gate, GateCode, GateStatus, Note, NoteKind, NoteRevision, Project, Source, SourceExcerpt, User,
     excerpt_hash,
@@ -31,24 +22,11 @@ from app.models import (
 from app.routers.gates import decide_gate, reopen_gate
 from app.schemas import GateReopen
 
-POSTGRES_URL = os.environ.get("TEST_POSTGRES_URL")
-
-pytestmark = pytest.mark.skipif(
-    not POSTGRES_URL, reason="TEST_POSTGRES_URL not set — these tests need a real Postgres instance (see ci.yml)"
-)
-
 
 @pytest.fixture
 def pg():
-    """An engine and sessionmaker on a fresh schema in the Postgres database."""
-    engine = create_engine(POSTGRES_URL, pool_pre_ping=True, pool_size=10)
-    assert engine.dialect.name == "postgresql", "TEST_POSTGRES_URL must point at PostgreSQL"
-    Base.metadata.drop_all(engine)
-    Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine, autocommit=False, autoflush=False, expire_on_commit=False)
-    yield engine, Session
-    Base.metadata.drop_all(engine)
-    engine.dispose()
+    """The app's engine and sessionmaker on the per-test database."""
+    return app_engine, SessionLocal
 
 
 def _user_and_project(Session):
@@ -176,7 +154,7 @@ def _statuses(Session, project_id):
         return {g.code: g.status for g in db.scalars(select(Gate).where(Gate.project_id == project_id))}
 
 
-def _run(fn, Session, user_id, project_id):
+def _run_in_thread(fn, Session, user_id, project_id):
     """Run `fn` in a thread; the result is ('ok', value) or ('http', status_code), or ('error', exc)."""
     outcome = []
 
@@ -199,7 +177,7 @@ def test_decide_and_reopen_wait_for_the_project_row_lock(gated, action):
     with Session() as holder:
         holder.refresh(holder.get(Project, project_id), with_for_update=True)  # another request holds the lock
 
-        thread, outcome = _run(action, Session, user_id, project_id)
+        thread, outcome = _run_in_thread(action, Session, user_id, project_id)
         time.sleep(1.5)
         assert thread.is_alive() and not outcome  # blocked on the lock, not racing past it
 
@@ -221,8 +199,8 @@ def test_a_concurrent_decide_and_reopen_never_leave_a_later_gate_approved_over_a
 
     for _ in range(5):
         start.reset()
-        a, a_out = _run(gated_call(_approve_g2), Session, user_id, project_id)
-        b, b_out = _run(gated_call(_reopen_g1), Session, user_id, project_id)
+        a, a_out = _run_in_thread(gated_call(_approve_g2), Session, user_id, project_id)
+        b, b_out = _run_in_thread(gated_call(_reopen_g1), Session, user_id, project_id)
         a.join(timeout=30)
         b.join(timeout=30)
         assert not a.is_alive() and not b.is_alive()
@@ -251,8 +229,8 @@ def test_two_concurrent_approvals_of_one_gate_give_one_winner_and_one_409(gated)
         start.wait()
         return _approve_g2(*args)
 
-    a, a_out = _run(approve, Session, user_id, project_id)
-    b, b_out = _run(approve, Session, user_id, project_id)
+    a, a_out = _run_in_thread(approve, Session, user_id, project_id)
+    b, b_out = _run_in_thread(approve, Session, user_id, project_id)
     a.join(timeout=30)
     b.join(timeout=30)
 

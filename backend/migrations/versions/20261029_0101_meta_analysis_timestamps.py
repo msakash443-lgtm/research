@@ -6,8 +6,7 @@
 value. Reproduced live 2026-10-29 (X.160 walkthrough): inserting a `SearchQuery` row on a
 migrated Postgres database raised `NotNullViolation: null value in column "created_at"`,
 discarding an otherwise-successful search. Uses `batch_alter_table` (unlike
-`20261027_0098_criteria_seed_timestamps`, X.164) so it runs on SQLite too and does not add to
-that scratch-DB verification gap.
+`20261027_0098_criteria_seed_timestamps`, X.164).
 """
 from typing import Sequence, Union
 

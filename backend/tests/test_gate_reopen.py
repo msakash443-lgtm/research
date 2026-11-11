@@ -4,32 +4,25 @@ only before the project has reached the stage the gate completes, and only if no
 import uuid
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app import task_queue as q
 from app import task_registry as registry
 from app.database import SessionLocal
-from app.main import app
 from app.models import AuditEvent, GateCode, Project, ProjectMember, ProjectRole, ProjectStage as S, Task, TaskStatus
+from tests.api_helpers import create_project, sign_in_user
 
 JOB = "reopen_test_job"
-
-
-def _login(email):
-    client = TestClient(app)
-    user_id = client.post("/api/auth/development/login", json={"email": email, "display_name": "R"}).json()["id"]
-    return client, user_id
 
 
 @pytest.fixture
 def team():
     tag = uuid.uuid4().hex[:8]
-    owner, owner_id = _login(f"ro-owner-{tag}@example.com")
-    pid = owner.post("/api/projects", json={"title": "Reopen"}).json()["id"]
+    owner, owner_id = sign_in_user(f"ro-owner-{tag}@example.com")
+    pid = create_project(owner, "Reopen")
     clients, ids = {"owner": owner}, {"owner": owner_id}
     for role in (ProjectRole.supervisor, ProjectRole.co_author, ProjectRole.reviewer):
-        client, uid = _login(f"ro-{role.value}-{tag}@example.com")
+        client, uid = sign_in_user(f"ro-{role.value}-{tag}@example.com")
         with SessionLocal() as db:
             db.add(ProjectMember(project_id=uuid.UUID(pid), user_id=uuid.UUID(uid), role=role))
             db.commit()
@@ -216,7 +209,7 @@ def test_reopening_holds_queued_tasks_again_and_a_fresh_approval_releases_them(t
 
 
 def test_reopening_leaves_tasks_of_other_gates_and_other_projects_alone(team, g2_job):
-    other_owner, _ = _login(f"ro-other-{uuid.uuid4().hex[:6]}@example.com")
+    other_owner, _ = sign_in_user(f"ro-other-{uuid.uuid4().hex[:6]}@example.com")
     other_pid = other_owner.post("/api/projects", json={"title": "Other"}).json()["id"]
     _approve(team, "G1", "G2")
     for code in ("G1", "G2"):
@@ -244,8 +237,8 @@ def test_reopening_leaves_tasks_of_other_gates_and_other_projects_alone(team, g2
 def test_every_gate_change_locks_the_project_before_reading_the_gates(team, monkeypatch, verb, code, setup):
     """Decide and reopen both check *other* gates (ordering / later approvals), so each must hold the
     project row lock before that read; otherwise, on PostgreSQL, a reopen of G1 and an approval of G2
-    can both commit and leave G2 approved behind a pending G1. SQLite ignores FOR UPDATE, so this
-    checks the order of calls rather than racing two connections."""
+    can both commit and leave G2 approved behind a pending G1. This checks the order of calls; the real
+    concurrency is raced in test_guards_postgres.py."""
     from sqlalchemy.orm import Session
 
     from app.routers import gates as gates_router

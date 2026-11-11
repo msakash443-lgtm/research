@@ -1,4 +1,9 @@
-"""Add missing server timestamps to criteria and seed rows."""
+"""Add missing server timestamps to criteria and seed rows.
+
+PostgreSQL-only: `ALTER COLUMN ... SET DEFAULT` is not valid SQLite DDL, so a scratch SQLite chain
+cannot pass this revision. The project runs on PostgreSQL only (X.178), and CI applies
+`upgrade head`, `downgrade base` and `upgrade head` to a PostgreSQL service (X.152).
+"""
 from typing import Sequence, Union
 
 from alembic import op

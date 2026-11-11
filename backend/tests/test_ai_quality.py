@@ -57,19 +57,23 @@ def test_only_trusted_and_confirmed_count_as_excluded():
     assert counts_as_excluded(NOT_ELIGIBLE) is False
 
 
-def test_should_disable_prescreen_needs_enough_pairs_and_a_defined_low_kappa():
-    low_kappa = cohen_kappa([("exclude", "include")] * 25)  # systematic disagreement
-    assert should_disable_prescreen(low_kappa, min_n=20, min_kappa=0.4) is True
-
-
-def test_should_disable_prescreen_ignores_too_few_pairs():
-    low_kappa = cohen_kappa([("exclude", "include")] * 5)
-    assert should_disable_prescreen(low_kappa, min_n=20, min_kappa=0.4) is False
-
-
-def test_should_disable_prescreen_ignores_an_undefined_kappa():
-    one_label = cohen_kappa([("exclude", "exclude")] * 40)  # kappa undefined, not evidence of disagreement
-    assert should_disable_prescreen(one_label, min_n=20, min_kappa=0.4) is False
+@pytest.mark.parametrize(
+    "pairs,expected",
+    [
+        pytest.param(
+            [("exclude", "include")] * 25,
+            True,
+            id="enough-pairs-and-a-defined-low-kappa",
+        ),  # systematic disagreement
+        pytest.param([("exclude", "include")] * 5, False, id="too-few-pairs"),
+        pytest.param(
+            [("exclude", "exclude")] * 40, False, id="undefined-kappa"
+        ),  # kappa undefined, not evidence of disagreement
+    ],
+)
+def test_should_disable_prescreen(pairs, expected):
+    kappa = cohen_kappa(pairs)
+    assert should_disable_prescreen(kappa, min_n=20, min_kappa=0.4) is expected
 
 
 def test_should_disable_prescreen_leaves_good_agreement_alone():

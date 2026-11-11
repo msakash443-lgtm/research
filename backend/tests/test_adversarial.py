@@ -206,7 +206,7 @@ def test_an_answer_that_repeats_prompt_internals_is_rejected_not_stored(fake_llm
     with SessionLocal() as db:
         rejected = db.scalars(select(AuditEvent).where(AuditEvent.action == "research_run.answer_rejected")).one()
         everything = repr([(e.action, e.payload_json) for e in db.scalars(select(AuditEvent))])
-    assert rejected.model_id == "fake-model" and rejected.prompt_version == "evidence_synthesis@4"
+    assert rejected.model_id == "fake-model" and rejected.prompt_version == "evidence_synthesis@5"
     assert rejected.payload_json["reason"] in {"text from the system prompt", "an internal source-block id", "the source-block markers"}
     assert "Sure!" not in everything and "secret id" not in everything  # the leaked text is not written anywhere
 

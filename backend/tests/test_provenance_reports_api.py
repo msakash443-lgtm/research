@@ -8,22 +8,11 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.database import SessionLocal
-from app.main import app
 from app.models import Artifact, ArtifactStatus, AuditEvent, Document, ProvenanceReport
-
-
-def _login(email):
-    client = TestClient(app)
-    user_id = client.post("/api/auth/development/login", json={"email": email, "display_name": "D"}).json()["id"]
-    return client, user_id
-
-
-def _project(client, title="Manuscript"):
-    return client.post("/api/projects", json={"title": title}).json()["id"]
+from tests.api_helpers import create_project, sign_in_user
 
 
 def _document(project_id, owner_id, title="Introduction", position=1):
@@ -56,8 +45,8 @@ def _report(client, project_id, **body):
 
 @pytest.fixture
 def writer():
-    client, user_id = _login("writer.provenance@example.org")
-    project_id = _project(client)
+    client, user_id = sign_in_user("writer.provenance@example.org")
+    project_id = create_project(client, "Manuscript")
     actor = user_id  # the ledger records the bare user id as the actor
     intro = _document(project_id, user_id, "Introduction", 1)
     methods = _document(project_id, user_id, "Methods", 2)
@@ -139,8 +128,8 @@ def test_export_as_markdown_and_json(writer):
     assert as_json.json()["id"] == report_id
 
 def test_a_report_includes_every_section_by_default():
-    client, user_id = _login("sections.default@example.org")
-    project_id = _project(client)
+    client, user_id = sign_in_user("sections.default@example.org")
+    project_id = create_project(client, "Manuscript")
     intro = _document(project_id, user_id, "Introduction", 1)
     assert _save(client, project_id, intro, _doc(_typed("Remote work changed wages.", "s1", user_id)), 0).status_code == 201
 
@@ -156,8 +145,8 @@ def test_a_report_includes_every_section_by_default():
 
 
 def test_excluded_sections_are_omitted_from_json_and_markdown():
-    client, user_id = _login("sections.exclude@example.org")
-    project_id = _project(client)
+    client, user_id = sign_in_user("sections.exclude@example.org")
+    project_id = create_project(client, "Manuscript")
     intro = _document(project_id, user_id, "Introduction", 1)
     assert _save(client, project_id, intro, _doc(_typed("Remote work changed wages.", "s1", user_id)), 0).status_code == 201
 

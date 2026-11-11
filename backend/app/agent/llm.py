@@ -72,6 +72,7 @@ def _transient(exc: Exception) -> bool:
     if isinstance(exc, HTTPStatusError):
         if exc.response.status_code == 429 and _api_error_code(exc.response) in {
             "credit_balance_exhausted",
+            "insufficient_quota",
             "organization_usage_limit_exceeded",
             "organization_spend_limit_exceeded",
             "project_spend_limit_exceeded",
@@ -103,6 +104,10 @@ def _http_error_message(exc: HTTPStatusError) -> str:
         return "The configured LLM API account has no credits remaining. Add API credits, then retry."
     if code in {"organization_usage_limit_exceeded", "organization_spend_limit_exceeded", "project_spend_limit_exceeded"}:
         return "The configured LLM API account has reached a usage or spend limit. Review its API billing limits, then retry."
+    if code == "insufficient_quota":
+        return "The configured LLM API account has run out of quota. Check its billing plan, then retry."
+    if exc.response.status_code in {400, 404, 422}:
+        return "The configured LLM service rejected the request (unknown model, endpoint or parameters). Check the model name and settings, then retry."
     if exc.response.status_code in {401, 403}:
         return "The configured LLM API rejected its credentials or model access. Check the API key and model permissions."
     return "The configured LLM service could not be reached."

@@ -1,6 +1,6 @@
 # Repository Guidelines
 
-> **Read first, any tool or person:** before editing code, read `plan.md` §1 and §1.8, claim one task by hand-editing its line (`[~]`, `owner: @you`, `since: <date>`) and saving `plan.md`, then work. Append one Work Log line at the end. Commits are manual, made by the developer: leave changes in the working tree with a suggested message; never commit/push/stash/reset unless the user asks. This file is the canonical copy; `CLAUDE.md` repeats it for Claude Code.
+> **Read first, any tool or person:** before editing code, read `plan.md` §1 and §1.8, claim one task by hand-editing its line (`[~]`, `owner: @you`, `since: <date>`) and saving `plan.md`, then work. Append one Work Log line at the end. Commits are manual, made by the developer: leave changes in the working tree with a suggested message; never commit/push/stash/reset unless the user asks.
 
 ## Assistant Checklist (every AI coding assistant, every session)
 
@@ -10,6 +10,7 @@
 - **Ask before deleting anything:** files, code, tests, data, migrations or branches, including untracked files (`plan.md` rule 44).
 - **Make one change at a time.** Work on one task and one logical change, and verify it before starting the next (rule 36).
 - **Write a test** for every behaviour change or bug fix. It must fail without the change. For docs-only changes, say that no test applies.
+- **Keep new tests non-duplicate.** Before adding a test, name the behaviour that breaks if it is deleted, and check that no existing test already fails for that behaviour. Reuse `backend/tests/api_helpers.py` (`sign_in`, `create_project`, `create_source`, …) instead of defining `_login`/`_project`/`_source`/`_run` in a test file, and give each test function a name no other test file uses; `test_test_hygiene.py` fails on both.
 - **Run the test**, then the full `pytest -q` from the repo root. Report the real result, including failures and their output (rule 37).
 - **Say when uncertain.** Mark unverified claims as unverified, and ask rather than guess (rule 35).
 - **Clearly say what changed:** files changed, behaviour changed, tests run with their results, and a suggested commit message (rules 42, 45).
@@ -81,6 +82,9 @@ Workspace root also holds: `plan.md` (the living task plan — read before any c
 | `backend/app/web/` | Static UI (`index.html`, `app.js`, `styles.css`), served at `/` and `/assets` |
 | `backend/migrations/versions/` | Alembic migrations, `YYYYMMDD_NNNN_slug.py` |
 | `backend/tests/` | Flat pytest suite, mirrors `app/` module names 1:1 |
+| `backend/arc_retrieval/` | Vendored ARC retrieval service (see its `NOTICE`, `requirements-arc.txt`); app code never imports it |
+| `Dockerfile`, `docker-compose.yml` | Single image (web: `uvicorn`, worker: `python -m app.worker`); compose runs `db` (pgvector/pg16), `web`, `worker` |
+| `.github/workflows/ci.yml` | CI: Python 3.12, full suite on PostgreSQL, Alembic upgrade/check/downgrade, Docker build |
 
 ## Development Commands
 
@@ -92,13 +96,13 @@ Copy-Item .env.example .env
 # edit POSTGRES_PASSWORD and SESSION_SECRET
 docker compose up --build        # → http://localhost:8000
 
-# Local, no Docker (set RUN_RESEARCH_INLINE=true in .env first)
+# Local, no Docker (DATABASE_URL must point at a PostgreSQL server; apply `alembic upgrade head` first; set RUN_RESEARCH_INLINE=true in .env)
 # requirements.txt = web runtime (all the image installs); -arc = vendored ARC service; -dev = test tools
 python -m pip install -r backend/requirements.txt -r backend/requirements-arc.txt -r backend/requirements-dev.txt
 uvicorn app.main:app --reload --app-dir backend
 
 # Tests
-pytest -q                          # Windows-safe serial run: pytest -q -n0 -o addopts=""
+pytest -q                          # needs TEST_DATABASE_URL (see docs/LOCAL_POSTGRES_MIGRATION.md); Windows-safe serial run: pytest -q -n0 -o addopts=""
 
 # Migrations (production / release step)
 alembic -c alembic.ini upgrade head
@@ -119,27 +123,11 @@ No lint/format tooling is configured in the repo (no ruff/black/flake8 config fo
 - **Error handling**: raise `HTTPException` directly. Convention: **404** when a resource doesn't exist *or* the caller has no access (never leak existence); **403** only once membership/identity is confirmed but role is insufficient.
 - **Audit everything that mutates state**: call `audit.record(db, actor=..., action=..., ...)` inside the same transaction as the change — never a separate commit.
 - **Sync, not async**: routers are plain `def` (SQLAlchemy is sync); `async def` is reserved for middleware/`lifespan`.
-- **Settings validation fails loudly**: `config.py::validate_production_settings` (`@model_validator(mode="after")`) raises at startup if production is misconfigured (placeholder secrets, SQLite in prod, `AUTO_CREATE_SCHEMA=true`, non-HTTPS origin, missing OAuth creds, weak ARC token). Follow this pattern for any new required-in-prod setting.
+- **Settings validation fails loudly**: `config.py::validate_production_settings` (`@model_validator(mode="after")`) raises at startup if production is misconfigured (placeholder secrets, `AUTO_CREATE_SCHEMA=true`, non-HTTPS origin, missing OAuth creds, weak ARC token); a non-PostgreSQL `DATABASE_URL` is refused in every environment. Follow this pattern for any new required-in-prod setting.
 - **Feature flags default off**: new capabilities (new connectors, retrieval, uploads) ship as a `Settings` field defaulting `False`/`[]`, validated strictly only when enabled. See `ARC_RETRIEVAL_ENABLED`, `CONNECTORS_ENABLED`, `CONNECTORS_ALLOW_SCRAPING`.
 - **Idempotency / retry-safety**: callers must pass explicit target state rather than relying on an implicit "next step" (e.g. `advance_stage(target)`); task retries rely on lease ownership (`ClaimedTask.ensure_owned`), not pure idempotent handlers.
 - **Fail loudly, no placeholders** (hard rule, see Research-Integrity below): on LLM/retrieval failure, record and stop — never write canned/fake output and mark a step done.
 - **Pure-logic modules stay dependency-free**: `dedupe.py`, `merge.py`, `search_query.py`, `citation_verifier.py`, `doi.py`, etc. take plain data in/out, no DB/HTTP — keep new business logic in this shape where possible, for pure unit testing.
-
-## Important Files
-
-- App entry: `backend/app/main.py`; worker entry: `backend/app/worker.py` (`run_forever()`)
-- Config: `backend/app/config.py` (`Settings`, `.env`-driven, `get_settings()` lru-cached)
-- DB: `backend/app/database.py`, models: `backend/app/models.py`, schemas: `backend/app/schemas.py`
-- AuthZ: `backend/app/dependencies.py`
-- Task queue: `backend/app/task_queue.py` / `task_registry.py` / `task_runner.py` / `task_handlers.py`
-- Agent: `backend/app/agent/executor.py`, `backend/app/agent/llm.py`, `backend/app/agent/arc_client.py`
-- Prompts: `backend/app/prompt_registry.py` + `backend/app/prompts/*.toml`
-- Env template: `backend/../.env.example` (i.e. `research-main/.env.example`)
-- Dependencies: `backend/requirements.txt`
-- Migrations config: `alembic.ini`, env wiring: `backend/migrations/env.py`
-- Docker: `Dockerfile` (single image, two commands: `uvicorn ...` for web, `python -m app.worker` for worker), `docker-compose.yml` (`db` = pgvector/pgvector:pg16, `web`, `worker`)
-- Docs: `README.md`, `docs/DEPLOYMENT.md`
-- CI: `.github/workflows/ci.yml` (Python 3.12; Alembic upgrade/check/downgrade verification; Docker build)
 
 ## Runtime / Tooling Preferences
 
@@ -151,21 +139,21 @@ No lint/format tooling is configured in the repo (no ruff/black/flake8 config fo
   | `<workspace>/.venv-retrieval` | 3.11 | ARC microservice only. Never run research-main tests in it. |
 - Package manager: plain `pip` + `backend/requirements.txt` (pinned versions, e.g. `fastapi==0.115.8`, `sqlalchemy==2.0.38`, `alembic==1.14.1`, `httpx==0.28.1`, `pytest==8.3.4`). No lockfile tool (poetry/uv) in use.
 - Frontend (static UI) logic tests: `node --test backend/app/web/js/test/*.mjs`.
-- DB: SQLAlchemy 2.0 sync engine, Postgres (`psycopg[binary]`) in prod/docker, SQLite in dev/tests.
+- DB: SQLAlchemy 2.0 sync engine, PostgreSQL (`psycopg[binary]`) everywhere: prod, Docker, local dev and tests. SQLite is not supported.
 - Migrations: Alembic, linear chain, naming `YYYYMMDD_NNNN_slug.py`, revision id == filename prefix. `backend/migrations/env.py` reads `DATABASE_URL` from `Settings` at runtime — never hardcode a URL in a migration.
 
 ## Testing & QA
 
 - Framework: **pytest** (`pytest.ini`: `pythonpath = backend`, `testpaths = backend/tests`). No coverage tool/threshold configured — the only quantitative gate is the raw pass count tracked in `plan.md`'s "Test baseline" field (see that field for the current count) and in the Work Log after each session; **never merge a change that lowers this count without explanation.**
 - Run: `pytest -q` from the repo root `research-main/`. `pytest.ini` sets `addopts = -n 8` (xdist), and xdist workers have crashed on this Windows setup. When the parallel run fails with INTERNALERROR/WinError, use the serial form recorded in `plan.md`'s Test baseline: `pytest -q -n0 -o addopts=""`. Slow performance-budget tests are marked `slow`; skip with `-m "not slow"` while iterating.
-- `backend/tests/conftest.py`: sets `DATABASE_URL=sqlite+pysqlite://`, `AUTO_CREATE_SCHEMA=true`, `RUN_RESEARCH_INLINE=true` and `SESSION_SECRET` **before** importing the app, and disables `.env` loading so a developer's real credentials never reach tests. `isolated_database` (autouse) restores a pristine schema snapshot per test via SQLite's `backup()` API. `fake_llm` fakes only the HTTP layer (`httpx.MockTransport`), so the real request-building/parsing code still runs.
-- No shared `TestClient`/DB fixture — each test file defines its own small `_login(email)` / `_project(db)` helpers.
+- `backend/tests/conftest.py`: requires `TEST_DATABASE_URL` (a throwaway PostgreSQL database whose name ends in `_test`, on a server where the role may `CREATE DATABASE`), sets `DATABASE_URL` to a per-worker working database, `AUTO_CREATE_SCHEMA=true`, `RUN_RESEARCH_INLINE=true` and `SESSION_SECRET` **before** importing the app, and disables `.env` loading so a developer's real credentials never reach tests. `isolated_database` (autouse) builds a template database from the models once per process and clones it into the working database before every test. `scratch_database_url` and `migrator` fixtures give Alembic tests an empty database. `PGOPTIONS` sets `lock_timeout=10s`, so a test that blocks on a row lock fails instead of hanging. `fake_llm` fakes only the HTTP layer (`httpx.MockTransport`), so the real request-building/parsing code still runs.
+- Shared setup helpers live in `backend/tests/api_helpers.py` (`sign_in`, `create_project`, `create_source`, `insert_project`, …); `test_test_hygiene.py` fails if a test file redefines `_login`/`_project`/`_source`/`_run` or reuses another file's test function name.
 - Naming: `test_<area>.py` mirrors `app/<area>.py` 1:1; test function names are full descriptive sentences (`test_without_an_approval_the_gated_task_never_runs_however_often_the_worker_looks`).
 - Notable patterns worth reusing:
   - **Role-matrix test** (`test_role_matrix.py`): one `MATRIX` of `(method, path, allowed_roles, success_status)` crossed with every principal type, plus a live coverage guard that fails if a new route lacks a matrix entry.
   - **Connector/LLM tests never hit the network**: `httpx.MockTransport`, same pattern as `fake_llm`.
   - **Adversarial fixture library** (`adversarial_fixtures.py`, no `test_` prefix so it isn't collected): ~21 prompt-injection/hostile-text payloads with `canaries` that must never leak past fencing; consumed by `test_adversarial.py`, `test_arc_fencing.py`, `test_prompt_fencing.py`.
-  - **Migration verification**: CI (`.github/workflows/ci.yml`) runs `alembic -c alembic.ini upgrade head`, `check`, `downgrade base`, `upgrade head`. Postgres-only tests in `test_guards_postgres.py` run only when `TEST_POSTGRES_URL` is set (CI sets it), because SQLite cannot exercise Postgres triggers or `FOR UPDATE`. Per-task manual up/down/up results go in `plan.md`'s Work Log.
+  - **Migration verification**: CI (`.github/workflows/ci.yml`) runs the whole suite on a real PostgreSQL service, then `alembic -c alembic.ini upgrade head`, `check`, `downgrade base`, `upgrade head`. `test_guards_postgres.py` and `test_task_queue_postgres.py` cover Postgres triggers, `FOR UPDATE` and `SKIP LOCKED`. Per-task manual up/down/up results go in `plan.md`'s Work Log.
   - Every migration implements both `upgrade()` and `downgrade()`; destructive ones add a safety check (e.g. refuse to drop a table that still has rows).
 
 ## Research-Integrity Rules (non-negotiable, from `plan.md` §1.6)
@@ -180,14 +168,10 @@ These are enforced in code and must not be relaxed by any change:
 
 ## Workspace Governance (required before any change)
 
-This repo is driven by `plan.md`, the single living task plan — read it before starting work:
-1. Pull/re-read `plan.md` fresh (never act on a cached copy).
-2. Pick the highest-priority unclaimed task whose deps are `[x]`.
-3. **Claim it first** (`[~]`, `owner`, `since: <date>`), save `plan.md`, *then* touch code — a claim is the lock.
-4. Status marks: `[ ]` TODO, `[~]` IN-PROGRESS, `[?]` REVIEW (done, needs independent review), `[!]` BLOCKED, `[x]` DONE (verified), `[-]` DROPPED.
-5. Discovered work goes into `plan.md` as a new task, not into your diff — don't silently expand scope.
-6. `[x]` only after `pytest -q` passes from the repo root `research-main/` and the test baseline hasn't regressed; **no self-review** for P0/P1 — a different agent/developer moves `[?]` → `[x]`.
-7. Append one line to `plan.md`'s Work Log per session.
-8. Follow `plan.md` §1.8 (rules 33–46) for local task choosing, execution and git: the working tree is shared and often dirty, so never revert or clean changes you didn't make, and never commit, push, branch, stash or reset unless the user explicitly asks for that action. Branch work reaches `main` through one reviewed PR per task, following rules 47–56 (rules 47–51 apply only when a branch/PR workflow is used).
-8a. Two developers working directly on `main` from different machines follow `plan.md` §1.10 (rules 66–81): the claim is pushed to `origin/main` before coding, work is split by area, hotspot files and migration numbers are reserved in the Work Log/claim, `git pull --rebase --autostash` before every commit and push, never force-push or rewrite shared history, runtime data and `.env` stay out of git, and a red `main` is P0.
-9. Review other agents' work (`plan.md` §1.9, rules 58–65): before claiming new build work, pick a `[?]` task you did not build (P0/P1 first), add `reviewer: @you — review since: <date>` to its line, re-run its tests and the full `pytest -q`, record findings rather than editing the author's code, set `[x]` only on evidence you obtained yourself, and log the review (task line, Work Log, header). Never review your own work. A different model counts as a different reviewer (plan.md rule 59): a task built by Sonnet may be reviewed by an Opus session and the reverse; same model or an unrecorded model is not independent. Record the building model as `owner: @claude (sonnet)`.
+Full rules: `plan.md` §1 (claiming §1.1–1.3, editing §1.4, local working rules §1.8, review §1.9, two developers on `main` §1.10). Short form:
+- Re-read `plan.md` fresh; claim one unclaimed task whose deps are `[x]` (`[~]`, `owner`, `since`) and save before touching code.
+- Status marks: `[ ]` TODO, `[~]` IN-PROGRESS, `[?]` REVIEW, `[!]` BLOCKED, `[x]` DONE, `[-]` DROPPED.
+- Discovered work becomes a new task line, not part of your diff.
+- `[x]` only after the full `pytest -q` passes without lowering the baseline, set by a different reviewer; a different model family counts (record the builder as `owner: @claude (sonnet)`). Never review your own work.
+- Never revert others' changes; never commit, push, branch, stash or reset unless the user asks for that action.
+- Append one Work Log line per session. Done-task detail and Work Log rows older than the last 25 move to `docs/plan-archive/` via `python scripts/plan_archive.py --write`.

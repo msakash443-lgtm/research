@@ -11,7 +11,7 @@ that runs out of attempts ends `failed` (plan rule 22). Tasks behind a human gat
 `blocked` and are never claimed; releasing them is tied to gate approval (M0.5.4).
 
 On PostgreSQL the claim uses `FOR UPDATE SKIP LOCKED`, so concurrent workers never take
-the same task. SQLite (tests, local dev) ignores that clause.
+the same task.
 
 Every state change is a conditional UPDATE that repeats its precondition (status, attempt
 number, lease) in its WHERE clause and checks the row count, so the database re-checks at

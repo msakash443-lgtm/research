@@ -64,11 +64,10 @@ test("the no-screen stage filter matches today's index-slice-from-\"retrieved\" 
     newBehaviour,
     oldBehaviour.filter((name) => NO_SCREEN_STAGES.has(name))
   );
-  // The three stages that gained a dedicated screen (screen, evidence/verification, write) since the old
-  // "retrieved" anchor was written are the only ones now excluded from the "Later stages" box.
+  // Five stage entries now have dedicated screens: Screening, Evidence/verification, Gaps & questions, and Write.
   assert.deepEqual(
     oldBehaviour.filter((name) => !NO_SCREEN_STAGES.has(name)),
-    ["screened", "extracted", "drafted"]
+    ["screened", "extracted", "gaps_selected", "framework", "drafted"]
   );
 });
 

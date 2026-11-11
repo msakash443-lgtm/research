@@ -6,13 +6,12 @@ from sqlalchemy import select
 from app.database import SessionLocal
 from app.main import app
 from app.models import AuditEvent, ExternalIdentity
+from tests.api_helpers import sign_in_user
 
 
-def _login(email, name="Real Name"):
-    client = TestClient(app)
-    response = client.post("/api/auth/development/login", json={"email": email, "display_name": name})
-    assert response.status_code == 200
-    return client, uuid.UUID(response.json()["id"])
+def _login_uuid(email, name="Real Name"):
+    client, user_id = sign_in_user(email, name)
+    return client, uuid.UUID(user_id)
 
 
 def _capture_note(client, body):
@@ -27,8 +26,8 @@ def test_export_requires_sign_in():
 
 
 def test_export_holds_only_the_signed_in_users_own_data():
-    alice, alice_id = _login("export-alice@example.com", "Alice")
-    bob, _ = _login("export-bob@example.com", "Bob")
+    alice, alice_id = _login_uuid("export-alice@example.com", "Alice")
+    bob, _ = _login_uuid("export-bob@example.com", "Bob")
     db = SessionLocal()
     db.add(ExternalIdentity(user_id=alice_id, provider="google", subject="alice-google-subject"))
     db.commit()
@@ -56,7 +55,7 @@ def test_export_holds_only_the_signed_in_users_own_data():
 
 
 def test_each_export_is_recorded_in_the_audit_log():
-    client, user_id = _login("export-audited@example.com")
+    client, user_id = _login_uuid("export-audited@example.com")
 
     assert client.get("/api/auth/export-my-data").status_code == 200
 

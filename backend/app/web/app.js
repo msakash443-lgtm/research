@@ -1,7 +1,7 @@
-import { $, $$, el, toast, saveOnce, label, formatDate } from "./js/dom.js";
+import { $, $$, el, emptyCard, toast, saveOnce, label, formatDate } from "./js/dom.js";
 import { errorCard } from "./js/steps/common.js";
 import { request, projectApi } from "./js/api.js";
-import { STAGES, STEPS, GROUPS, GUIDES, STEP_IDS, stepStatus, setStageChain, stageLabel, stagesWithoutScreen } from "./js/workflow.js";
+import { STAGES, STEPS, GROUPS, GUIDES, STEP_IDS, SCREEN_STAGE, screenInChain, stepStatus, setStageChain, stageLabel, stagesWithoutScreen } from "./js/workflow.js";
 import { renderMemory } from "./js/memory.js";
 import { aiLevel } from "./js/aiLevels.js";
 import { renderInbox, refreshInboxAfterSync } from "./js/inbox.js";
@@ -21,13 +21,14 @@ import sources from "./js/steps/sources.js";
 import screen from "./js/steps/screen.js";
 import evidence from "./js/steps/evidence.js";
 import verification from "./js/steps/verification.js";
+import gaps from "./js/steps/gaps.js";
 import ask from "./js/steps/ask.js";
 import write from "./js/steps/write.js";
 import approvals from "./js/steps/approvals.js";
 import team from "./js/steps/team.js";
 import activity from "./js/steps/activity.js";
 
-const STEP_MODULES = { overview, guide, scope, criteria, search, results, sources, screen, evidence, verification, ask, write, approvals, team, activity };
+const STEP_MODULES = { overview, guide, scope, criteria, search, results, sources, screen, evidence, verification, gaps, ask, write, approvals, team, activity };
 
 const state = {
   user: null,
@@ -164,11 +165,13 @@ function renderShell() {
   $("#stage-progress-label").textContent = `Stage ${idx + 1} of ${STAGES.length} · ${idx >= 0 ? stageLabel(STAGES[idx]) : label(stageName || "")}`;
   $("#stage-progress").value = idx >= 0 ? idx : 0;
 
+  const chain = state.summary.stage?.chain;
+  const navSteps = STEPS.filter((step) => step.id !== "gaps" || screenInChain(step.id, chain));
   const rail = $("#step-rail");
-  rail.replaceChildren(...STEPS.filter((s) => !s.group).map(stepLink));
+  rail.replaceChildren(...navSteps.filter((step) => !step.group).map(stepLink));
   GROUPS.forEach((group) => {
     rail.append(el("p", { className: "step-group-label", text: group.toUpperCase() }));
-    STEPS.filter((s) => s.group === group).forEach((step) => rail.append(stepLink(step)));
+    navSteps.filter((step) => step.group === group).forEach((step) => rail.append(stepLink(step)));
   });
 
   const laterList = $("#later-stages-list");
@@ -188,7 +191,7 @@ const STEP_DEPENDENCIES = {
   search: ["searches", "gates", "stage"],
   results: ["prisma", "knownItems", "seeds"],
   sources: ["sources"],
-  screen: ["criteria"],
+  gaps: ["stage", "gates"],
   ask: ["runs"],
   approvals: ["stage", "gates", "staleArtifacts"],
   team: ["members"],
@@ -197,6 +200,10 @@ const STEP_DEPENDENCIES = {
 
 async function renderStep(stepId) {
   const step = STEPS.find((s) => s.id === stepId) || STEPS[0];
+  const screenStages = SCREEN_STAGE[step.id];
+  const stageNames = Array.isArray(screenStages) ? screenStages : [screenStages];
+  const chain = state.summary.stage?.chain || [];
+  const requiredStages = stageNames.map((name) => chain.find((item) => item.stage === name)?.label || label(name)).join(" or ");
   $("#step-group").textContent = step.group || "Project";
   $("#step-title").textContent = step.title;
   $("#step-purpose").textContent = GUIDES[stepId]?.what || "";
@@ -204,6 +211,8 @@ async function renderStep(stepId) {
   const failedKey = (STEP_DEPENDENCIES[stepId] || []).find((key) => state.summary.errors?.[key]);
   if (failedKey) {
     body.replaceChildren(errorCard(state.summary.errors[failedKey], refresh));
+  } else if (!screenInChain(step.id, state.summary.stage?.chain)) {
+    body.replaceChildren(emptyCard("Not part of this research type", `This project's research type has no "${requiredStages}" stage, so this screen has no work for it.`));
   } else {
     await STEP_MODULES[stepId].render(body, buildCtx());
   }

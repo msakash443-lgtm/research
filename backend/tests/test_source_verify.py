@@ -3,23 +3,18 @@ import uuid
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests.api_helpers import create_project, sign_in
 
 
-def _login(email):
-    client = TestClient(app)
-    assert client.post("/api/auth/development/login", json={"email": email, "display_name": "V"}).status_code == 200
-    return client
-
-
-def _source(client):
-    project_id = client.post("/api/projects", json={"title": "Verify"}).json()["id"]
+def _project_with_source(client):
+    project_id = create_project(client, "Verify")
     source = client.post(f"/api/projects/{project_id}/sources", json={"title": "Paper", "evidence_excerpt": "text"}).json()
     return project_id, source
 
 
 def test_new_source_is_unverified_and_owner_can_verify():
-    client = _login("v1@example.com")
-    project_id, source = _source(client)
+    client = sign_in("v1@example.com")
+    project_id, source = _project_with_source(client)
     assert source["metadata_verified"] is False
 
     response = client.post(f"/api/projects/{project_id}/sources/{source['id']}/verify")
@@ -31,8 +26,8 @@ def test_new_source_is_unverified_and_owner_can_verify():
 
 
 def test_verify_requires_authentication():
-    client = _login("v2@example.com")
-    project_id, source = _source(client)
+    client = sign_in("v2@example.com")
+    project_id, source = _project_with_source(client)
 
     anonymous = TestClient(app)
     response = anonymous.post(f"/api/projects/{project_id}/sources/{source['id']}/verify")
@@ -42,9 +37,9 @@ def test_verify_requires_authentication():
 
 
 def test_other_users_cannot_verify_and_unknown_source_404s():
-    owner = _login("v3@example.com")
-    project_id, source = _source(owner)
-    intruder = _login("v4@example.com")
+    owner = sign_in("v3@example.com")
+    project_id, source = _project_with_source(owner)
+    intruder = sign_in("v4@example.com")
 
     assert intruder.post(f"/api/projects/{project_id}/sources/{source['id']}/verify").status_code == 404
     assert owner.post(f"/api/projects/{project_id}/sources/{uuid.uuid4()}/verify").status_code == 404

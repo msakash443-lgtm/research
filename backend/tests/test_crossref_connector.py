@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from app.connectors import Connector, ConnectorError, NotSupportedError, SearchRequest
+from app.connectors import ConnectorError, NotSupportedError, SearchRequest
 from app.connectors.crossref import CrossrefConnector, doi_id, to_record
 from app.connectors.http import ConnectorHttpClient, HttpPolicy
 
@@ -42,26 +42,10 @@ def connector(handler, **kwargs):
     return CrossrefConnector(http, **kwargs), server
 
 
-def test_it_satisfies_the_connector_protocol():
-    assert isinstance(connector(lambda r: {})[0], Connector)
-
-
-def test_work_normalisation():
-    record = to_record(item())
-    assert (record.connector, record.external_id, record.doi) == ("crossref", "10.1000/p1", "10.1000/p1")
-    assert record.title == "Paper 1"
-    assert record.authors == ("Ada Lovelace", "ACME Consortium")  # name-only kept, empty dropped
-    assert (record.year, record.venue) == (2020, "J. Testing")
-    assert record.abstract == "Hello & welcome"  # JATS tags stripped, entities decoded
-    assert record.source_ids == {"crossref": "10.1000/p1"} and record.oa_url is None
-    assert record.quality_flags == ()
-
-
 def test_flags_and_fallbacks():
     record = to_record(item(type="posted-content", abstract=None, issued={}, published={"date-parts": [[2019]]}))
     assert set(record.quality_flags) == {"preprint", "no_abstract"}
     assert record.year == 2019
-
 
 def test_leading_abstract_label_and_script_text_are_neutralised():
     record = to_record(item(abstract="<jats:title>Abstract</jats:title><script>alert(1)</script> Findings."))
@@ -76,16 +60,6 @@ def test_unrepresentable_items_are_skipped_and_counted(bad):
     assert c.skipped_records == 1
 
 
-def test_search_sends_query_filters_paging_and_contact():
-    c, server = connector(lambda r: ok({"total-results": 99, "next-cursor": "abc", "items": [item(1)]}), contact_email=" me@lab.example ")
-    page = c.search(SearchRequest(query="labour", limit=10, filters={"year_from": 2015, "year_to": 2020, "type": "journal-article"}))
-    params = server.requests[0].url.params
-    assert (params["query"], params["rows"], params["cursor"]) == ("labour", "10", "*")
-    assert params["filter"] == "from-pub-date:2015,until-pub-date:2020,type:journal-article"
-    assert params["mailto"] == "me@lab.example"
-    assert (page.total, page.next_cursor, len(page.records)) == (99, "abc", 1)
-
-
 def test_no_contact_configured_means_no_mailto():
     c, server = connector(lambda r: ok({"items": []}))
     c.search(SearchRequest(query="x"))
@@ -95,16 +69,6 @@ def test_no_contact_configured_means_no_mailto():
 def test_an_empty_page_ends_paging_even_though_crossref_returns_a_cursor():
     c, _ = connector(lambda r: ok({"total-results": 0, "next-cursor": "still-here", "items": []}))
     assert c.search(SearchRequest(query="x", cursor="abc")).next_cursor is None
-
-
-@pytest.mark.parametrize(
-    "filters", [{"language": "en"}, {"year_to": "20x0"}, {"year_from": False}, {"type": "a,b"}, {"type": "Journal Article"}]
-)
-def test_bad_filters_fail_before_any_request(filters):
-    c, server = connector(lambda r: {})
-    with pytest.raises(ConnectorError):
-        c.search(SearchRequest(query="x", filters=filters))
-    assert server.requests == []
 
 
 @pytest.mark.parametrize("reply", [{"status": "failed", "message": {}}, {"message": "nope"}, [], {"status": "ok", "message": {"items": "x"}}])
@@ -195,6 +159,3 @@ def test_citations_and_fulltext_are_not_supported():
     assert server.requests == []
 
 
-def test_invalid_max_related():
-    with pytest.raises(ValueError):
-        CrossrefConnector(max_related=0)

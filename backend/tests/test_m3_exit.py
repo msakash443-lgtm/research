@@ -10,6 +10,7 @@ from app.connectors.base import ConnectorBase, PaperRecord, SearchPage, SearchRe
 from app.database import SessionLocal
 from app.main import app
 from app.models import Source
+from tests.api_helpers import include_at_full_text
 from app.object_storage import fulltext_key
 from gate_helpers import approve_earlier_gates
 from tests.test_fulltext import make_pdf
@@ -76,13 +77,14 @@ def test_m3_exit_question_search_screen_verified_evidence_and_ranked_gap(monkeyp
             "measures": [{"construct": "productivity", "scale": "Output scale", "reliability": None}],
             "sample": {"n": 100, "population": "knowledge workers", "country": country},
             "method": {"design": "Survey", "analysis": "Regression"},
-            "key_findings": [{"statement": "Remote work improved productivity", "effect_size": None, "p_or_ci": None}],
+            "key_findings": [{"statement": "Remote work improved productivity", "effect_size": None, "p_or_ci": None, "exposure": "remote work", "outcome": "productivity", "population": "knowledge workers", "direction": "positive"}],
         }, "evidence": {
             "measures": {"quote": "Output scale", "page": 1},
             "sample": {"quote": f"100 knowledge workers in {country}", "page": 1},
             "method": {"quote": "Survey regression", "page": 1},
             "key_findings": {"quote": "Remote work improved productivity", "page": 1},
         }}
+        include_at_full_text(project_id, source_id)
         extraction = client.post(f"/api/projects/{project_id}/extractions", json=body)
         assert extraction.status_code == 201, extraction.text
         assert client.post(f"/api/projects/{project_id}/extractions/{extraction.json()['id']}/verify", json={

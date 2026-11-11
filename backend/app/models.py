@@ -1,9 +1,9 @@
 import enum
 import hashlib
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
-from sqlalchemy import event, select, Boolean, CheckConstraint, ForeignKeyConstraint, and_, or_, DateTime, Enum, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, false, func
+from sqlalchemy import event, select, Boolean, CheckConstraint, Date, ForeignKeyConstraint, and_, or_, DateTime, Enum, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, false, func
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -276,6 +276,35 @@ class ResearchContextItem(Timestamped, Base):
     retired_by: Mapped[str | None] = mapped_column(String(100))
     history: Mapped[list[dict] | None] = mapped_column(JSON)
     project: Mapped[Project] = relationship(back_populates="context_items")
+
+
+class ResearchObjective(Timestamped, Base):
+    """What the research is for (spec 5.1, X.193): the statement, how success is judged, and what it delivers.
+    Like a context entry (X.161) it is never deleted: a correction keeps earlier wording in `history`, and a
+    retired objective is hidden from lists but stays here."""
+
+    __tablename__ = "research_objectives"
+    __table_args__ = (
+        # The linked question must belong to the same project (the referenced key is (id, project_id)).
+        ForeignKeyConstraint(
+            ["research_question_id", "project_id"],
+            ["research_questions.id", "research_questions.project_id"],
+            name="fk_research_objective_question_same_project",
+        ),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    research_question_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
+    statement: Mapped[str] = mapped_column(Text)
+    rationale: Mapped[str | None] = mapped_column(Text)
+    measure: Mapped[str | None] = mapped_column(Text)
+    deliverable: Mapped[str | None] = mapped_column(Text)
+    target_date: Mapped[date | None] = mapped_column(Date)
+    created_by: Mapped[str | None] = mapped_column(String(100))
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retired_by: Mapped[str | None] = mapped_column(String(100))
+    history: Mapped[list[dict] | None] = mapped_column(JSON)
+
 
 
 class Source(Timestamped, Base):
@@ -828,6 +857,22 @@ class IdeaBrief(Timestamped, Base):
     feasibility: Mapped[list] = mapped_column(JSON, default=list)
     updated_by: Mapped[str] = mapped_column(String(100))
 
+
+class LandscapeScanRun(Timestamped, Base):
+    """One stored landscape scan (spec 5.1.2, X.189): the query, every connector searched (with per-service
+    counts and failures) and the deduplicated record ids found, so the idea brief can cite a reproducible
+    scan. Holds ids and counts only -- never abstracts or titles from the network response."""
+
+    __tablename__ = "landscape_scan_runs"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    query: Mapped[str] = mapped_column(Text)
+    reviews_since: Mapped[int] = mapped_column(Integer)
+    services: Mapped[list] = mapped_column(JSON)  # [{"service","status","count","total_reported","error"}]
+    record_ids: Mapped[list] = mapped_column(JSON)  # [{"connector","external_id"}], deduplicated
+    sample_size: Mapped[int] = mapped_column(Integer)
+    run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_by: Mapped[str] = mapped_column(String(100))
 
 
 class DatasetVersion(Timestamped, Base):
@@ -1470,9 +1515,9 @@ class InterpretationFinding(Base):
     (research-integrity rule: AI never silently decides substantive correctness). Append-only (enforced
     by `ledger_guard`): regenerating the map writes a new `batch_id` with the next `generation` rather
     than editing anything, and `app.interpretation_map.current_batch` reads only the highest-`generation`
-    batch for a project. `generation` (not `created_at`) decides "latest": a clock with only
-    second resolution (SQLite's `CURRENT_TIMESTAMP`) could otherwise tie two batches generated inside
-    the same second, the same reason `AiSuggestionEvent` orders by `seq`, not a timestamp."""
+    batch for a project. `generation` (not `created_at`) decides "latest": `now()` is fixed at transaction
+    start, so two batches generated in one transaction could otherwise tie, the same reason
+    `AiSuggestionEvent` orders by `seq`, not a timestamp."""
 
     __tablename__ = "interpretation_findings"
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -1671,7 +1716,7 @@ class LlmUsage(Base):
 class SourceEmbedding(Base):
     """One source's embedding (M3.8.1). Kept per (model, text hash), so changed text or a new model re-embeds.
 
-    The vector is stored as a JSON list of floats so SQLite and Postgres both work; pgvector can replace it
+    The vector is stored as a JSON list of floats; pgvector can replace it
     when similarity search over many projects is needed.
     """
 

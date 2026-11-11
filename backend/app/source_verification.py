@@ -80,6 +80,37 @@ def verify_source(db: Session, *, project: Project, source: Source, connectors: 
             )
     if "retracted" in result.flags and "retracted" not in (source.quality_flags or []):
         source.quality_flags = [*(source.quality_flags or []), "retracted"]
+    if "retracted" in result.flags or "retracted" in (source.quality_flags or []):
+        support_rows = db.scalars(
+            select(ClaimEvidence).join(Claim, ClaimEvidence.claim_id == Claim.id).where(
+                Claim.project_id == project.id,
+                ClaimEvidence.source_id == source.id,
+                ClaimEvidence.support_confirmed_by.is_not(None),
+            ).with_for_update(of=ClaimEvidence)
+        ).all()
+        for evidence in support_rows:
+            evidence.support_confirmed_by = None
+            evidence.support_confirmed_at = None
+        if support_rows:
+            audit.record(
+                db, actor=AGENT_VERIFIER, action="citation.support_confirmation_revoked", project_id=project.id,
+                payload={"source_id": str(source.id),
+                         "evidence_ids": [str(evidence.id) for evidence in support_rows],
+                         "evidence_count": len(support_rows), "reason": "source_retracted"},
+            )
+        claim_ids = db.scalars(
+            select(Claim.id).join(ClaimEvidence, ClaimEvidence.claim_id == Claim.id).where(
+                Claim.project_id == project.id, ClaimEvidence.source_id == source.id, Claim.verified.is_(True)
+            ).distinct()
+        ).all()
+        if claim_ids:
+            db.query(Claim).filter(Claim.id.in_(claim_ids)).update(
+                {Claim.verified: False}, synchronize_session=False)
+            audit.record(
+                db, actor=AGENT_VERIFIER, action="claim.verification_revoked", project_id=project.id,
+                payload={"source_id": str(source.id), "claim_ids": [str(claim_id) for claim_id in claim_ids],
+                         "claim_count": len(claim_ids), "reason": "source_retracted"},
+            )
 
     audit.record(
         db, actor=AGENT_VERIFIER, action="source.verification_checked", project_id=project.id,

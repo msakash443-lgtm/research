@@ -197,14 +197,24 @@ def test_typographic_variants_match():
     assert doc.find_quote("The \"so-called\" effect isn­'t new.")  # soft hyphen is invisible
 
 
-def test_ligature_in_the_quote_matches_plain_letters():
-    doc = extract([["the effect was significant"]])
-    assert doc.find_quote("the eﬀect was signiﬁcant")
-
-
-def test_decomposed_accents_match_precomposed():
-    doc = extract([["Café workers in München"]])
-    assert doc.find_quote("Café workers in München")
+@pytest.mark.parametrize(
+    "source,quote",
+    [
+        pytest.param(
+            "the effect was significant",
+            "the eﬀect was signiﬁcant",
+            id="ligature-in-the-quote-matches-plain-letters",
+        ),
+        pytest.param(
+            "Café workers in München",
+            "Café workers in München",
+            id="decomposed-accents-match-precomposed",
+        ),
+    ],
+)
+def test_unicode_normalisation_variants_of_a_letter_match_the_stored_text(source, quote):
+    doc = extract([[source]])
+    assert doc.find_quote(quote)
 
 
 def test_page_and_section_filters():

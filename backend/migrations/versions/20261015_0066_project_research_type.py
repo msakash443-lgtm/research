@@ -10,9 +10,9 @@ either column yet (X.43.3).
 
 Every existing project is backfilled to `full_journey` version 1, today's exact 19-stage chain, so nothing
 about it changes. The snapshot is written out below rather than read from the type file, so this migration
-does the same thing however that file changes later. It is the column's server default: SQLite can only
-add a NOT NULL column with a default, and the default fills existing rows in the same statement, with no
-rebuild of `projects`. The application always writes the column itself (`Project` ORM default).
+does the same thing however that file changes later. It is the column's server default: the default fills
+existing rows in the same statement, with no rebuild of `projects`. The application always writes the
+column itself (`Project` ORM default).
 
 The downgrade refuses while any project is on another research type: dropping the columns would silently
 put that project back on the full journey.

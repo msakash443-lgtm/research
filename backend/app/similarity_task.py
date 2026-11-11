@@ -73,7 +73,7 @@ def run_similarity_check(payload: dict) -> None:
         row = SimilarityCheck(
             project_id=project.id, document_id=document.id, version_id=version.id, provider=provider,
             status="completed", requested_by=actor, findings_json=findings, summary_json=summary,
-            # Set here, not by the database: SQLite's now() has one-second resolution, so two checks in a second tie.
+            # Set here, not by the database: `now()` is fixed at transaction start, so checks written in one transaction would tie.
             created_at=datetime.now(timezone.utc),
         )
         db.add(row)

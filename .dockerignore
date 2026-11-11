@@ -12,11 +12,6 @@ venv/
 .coverage
 htmlcov/
 
-# Local SQLite databases (development and test data)
-**/*.db
-**/*.db-journal
-**/*.sqlite3
-
 # Secrets and local configuration
 .env
 .env.*

@@ -7,23 +7,18 @@ from app.database import SessionLocal
 from app.dependencies import APPROVE_ROLES, MANAGE_ROLES, READ_ROLES, WRITE_ROLES
 from app.main import app
 from app.models import ProjectMember, ProjectRole
-
-
-def _login(email):
-    client = TestClient(app)
-    user_id = client.post("/api/auth/development/login", json={"email": email, "display_name": "U"}).json()["id"]
-    return client, user_id
+from tests.api_helpers import sign_in_user
 
 
 @pytest.fixture
 def project():
-    owner, _ = _login("access-creator@example.com")
+    owner, _ = sign_in_user("access-creator@example.com")
     project_id = owner.post("/api/projects", json={"title": "Shared"}).json()["id"]
     return owner, project_id
 
 
 def _member(project_id, role):
-    client, user_id = _login(f"access-{role.value}@example.com")
+    client, user_id = sign_in_user(f"access-{role.value}@example.com")
     with SessionLocal() as db:
         db.add(ProjectMember(project_id=uuid.UUID(project_id), user_id=uuid.UUID(user_id), role=role))
         db.commit()
@@ -76,7 +71,7 @@ def test_co_author_can_verify_but_reviewer_cannot(project):
 
 def test_non_members_get_404_not_403(project):
     _, project_id = project
-    stranger, _ = _login("access-stranger@example.com")
+    stranger, _ = sign_in_user("access-stranger@example.com")
 
     assert stranger.get(f"/api/projects/{project_id}").status_code == 404
     assert stranger.post(f"/api/projects/{project_id}/sources", json={"title": "S"}).status_code == 404

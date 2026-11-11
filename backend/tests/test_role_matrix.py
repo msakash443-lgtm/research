@@ -35,6 +35,7 @@ from app.models import (
     SeedPaper,
     Source,
 )
+from tests.api_helpers import sign_in_user
 from tests.test_fulltext import make_pdf
 
 UPLOAD_PDF = make_pdf([["Role matrix upload body text."]])
@@ -57,6 +58,10 @@ MATRIX = [
     ("PATCH", "/api/projects/{p}/context/{item_id}", WRITE, 200),
     ("DELETE", "/api/projects/{p}/context/{item_id}", WRITE, 204),
     ("POST", "/api/projects/{p}/context/{item_id}/retire", WRITE, 200),
+    ("GET", "/api/projects/{p}/objectives", ALL, 200),
+    ("POST", "/api/projects/{p}/objectives", WRITE, 201),
+    ("PATCH", "/api/projects/{p}/objectives/{objective_id}", WRITE, 200),
+    ("POST", "/api/projects/{p}/objectives/{objective_id}/retire", WRITE, 200),
     ("GET", "/api/projects/{p}/sources", ALL, 200),
     ("GET", "/api/projects/{p}/sources/by-citations", ALL, 200),
     ("GET", "/api/projects/{p}/prisma/checklist", ALL, 200),
@@ -215,6 +220,7 @@ MATRIX = [
     ("GET", "/api/projects/{p}/coverage-matrix", ALL, 200),
     ("GET", "/api/projects/{p}/bias-warnings", ALL, 200),
     ("GET", "/api/projects/{p}/design/method-recommendation", ALL, 200),
+    ("GET", "/api/projects/{p}/design/methodology-recommendation", ALL, 200),
     ("GET", "/api/projects/{p}/design/sample-size", ALL, 200),
     ("GET", "/api/projects/{p}/design/saturation-guidance", ALL, 200),
     ("GET", "/api/projects/{p}/ethics-pack", ALL, 200),
@@ -267,6 +273,7 @@ MATRIX = [
     ("POST", "/api/projects/{p}/conceptual-model/paths", WRITE, 201),
     ("DELETE", "/api/projects/{p}/conceptual-model/paths/{cp}", WRITE, 204),
     ("GET", "/api/projects/{p}/gaps", ALL, 200),
+    ("GET", "/api/projects/{p}/gaps/candidates", ALL, 200),
     ("POST", "/api/projects/{p}/gaps", WRITE, 201),
     ("PATCH", "/api/projects/{p}/gaps/{gap_id}", WRITE, 200),
     ("GET", "/api/projects/{p}/research-questions", ALL, 200),
@@ -278,6 +285,7 @@ MATRIX = [
     ("GET", "/api/projects/{p}/idea-brief", ALL, 200),
     ("GET", "/api/projects/{p}/idea-brief/semantic-novelty", ALL, 200),
     ("GET", "/api/projects/{p}/idea-brief/landscape-scan", ALL, 200),  # no query in the matrix: empty scan, no search
+    ("POST", "/api/projects/{p}/idea-brief/landscape-scan", WRITE, 201),  # the search is stubbed in `world`, so no network call
     ("PUT", "/api/projects/{p}/idea-brief", WRITE, 200),
     ("GET", "/api/projects/{p}/brief/query", ALL, 200),
     ("GET", "/api/projects/{p}/hypotheses", ALL, 200),
@@ -351,6 +359,8 @@ BODIES = {
     ("POST", "/api/projects/{p}/stage/reenter"): {"stage": "scoped", "reason": "Rework the scope"},
     ("POST", "/api/projects/{p}/context"): {"kind": "question", "content": "Why?"},
     ("PATCH", "/api/projects/{p}/context/{item_id}"): {"content": "A corrected statement"},
+    ("POST", "/api/projects/{p}/objectives"): {"statement": "Matrix objective"},
+    ("PATCH", "/api/projects/{p}/objectives/{objective_id}"): {"statement": "A corrected objective"},
     ("POST", "/api/projects/{p}/sources"): {"title": "A source"},
     ("POST", "/api/projects/{p}/constructs"): {"name": "Trust", "definition": "Definition", "author": "Smith"},
     ("POST", "/api/projects/{p}/theories"): {"name": "Social exchange", "description": "A lens."},
@@ -407,12 +417,6 @@ BODIES = {
 PRINCIPALS = ["owner", "owner_member", "co_author", "supervisor", "reviewer", "stranger", "anonymous"]
 
 
-def _login(email):
-    client = TestClient(app)
-    user_id = client.post("/api/auth/development/login", json={"email": email, "display_name": "M"}).json()["id"]
-    return client, user_id
-
-
 @pytest.fixture
 def world(monkeypatch, fake_llm):
     from app.config import get_settings
@@ -421,6 +425,8 @@ def world(monkeypatch, fake_llm):
     fake_llm.handler = lambda r: {"choices": [{"message": {"content": '{"suggestions": []}'}}]}
 
     monkeypatch.setattr(get_settings(), "connectors_enabled", ["openalex", "unpaywall", "arxiv"])
+    from app.routers import idea_brief  # the landscape POST searches live connectors; the matrix must not touch the network
+    monkeypatch.setattr(idea_brief, "_search_services", lambda names, text, limit: ([], []))
     monkeypatch.setattr(get_settings(), "connector_contact_email", "matrix@example.com")
     monkeypatch.setattr(get_settings(), "obsidian_export_enabled", True)
     monkeypatch.setattr(get_settings(), "zotero_sync_enabled", True)
@@ -429,7 +435,7 @@ def world(monkeypatch, fake_llm):
     monkeypatch.setattr(get_settings(), "zotero_user_id", "12345")
     monkeypatch.setattr(get_settings(), "embedding_model", "test-embedding")  # only POST /clusters checks it; nothing is embedded here
     tag = uuid.uuid4().hex[:8]
-    owner, _ = _login(f"matrix-owner-{tag}@example.com")
+    owner, _ = sign_in_user(f"matrix-owner-{tag}@example.com")
     owner_id = owner.get("/api/auth/me").json()["id"]
     project_id = owner.post("/api/projects", json={"title": "Matrix"}).json()["id"]
     source_id = owner.post(f"/api/projects/{project_id}/sources", json={"title": "Seed", "doi": "10.1234/seed"}).json()["id"]
@@ -456,14 +462,14 @@ def world(monkeypatch, fake_llm):
         db.get(Project, uuid.UUID(project_id)).stage = ProjectStage.search_planned  # next stage (retrieved) has no gate
         db.commit()
 
-    clients = {"owner": owner, "anonymous": TestClient(app), "stranger": _login(f"matrix-stranger-{tag}@example.com")[0]}
+    clients = {"owner": owner, "anonymous": TestClient(app), "stranger": sign_in_user(f"matrix-stranger-{tag}@example.com")[0]}
     for name, role in (
         ("owner_member", ProjectRole.owner),
         ("co_author", ProjectRole.co_author),
         ("supervisor", ProjectRole.supervisor),
         ("reviewer", ProjectRole.reviewer),
     ):
-        client, user_id = _login(f"matrix-{name}-{tag}@example.com")
+        client, user_id = sign_in_user(f"matrix-{name}-{tag}@example.com")
         with SessionLocal() as db:
             db.add(ProjectMember(project_id=uuid.UUID(project_id), user_id=uuid.UUID(user_id), role=role))
             db.commit()
@@ -500,7 +506,7 @@ def world(monkeypatch, fake_llm):
 
     with SessionLocal() as db:  # an unverified extraction to read and edit
         extraction_id = uuid.uuid4()
-        db.add(Extraction(id=extraction_id, project_id=uuid.UUID(project_id), source_id=uuid.UUID(extraction_source_id), schema_version="default@1",
+        db.add(Extraction(id=extraction_id, project_id=uuid.UUID(project_id), source_id=uuid.UUID(extraction_source_id), schema_version="default@2",
                           fields_json={"research_question": "Why?"},
                           evidence_spans={"research_question": {"quote": "We ask why", "page": 1}},
                           extracted_by="human", extractor="seed"))
@@ -526,6 +532,11 @@ def world(monkeypatch, fake_llm):
     ai_source = owner.post(f"/api/projects/{project_id}/sources", json={"title": "AI extraction target"}).json()
     with SessionLocal() as db:
         db.get(Source, uuid.UUID(ai_source["id"])).fulltext_path = fulltext_key(uuid.UUID(project_id), uuid.UUID(ai_source["id"]), "pdf")
+        db.commit()
+    with SessionLocal() as db:  # extraction is limited to final full-text inclusions (X.155/X.202)
+        for included_id in (extraction_source_id, ai_source["id"]):
+            db.add(ScreeningDecision(project_id=uuid.UUID(project_id), source_id=uuid.UUID(included_id), stage="full_text", seq=1,
+                                     decision="include", decided_by="human", decider="matrix-seed"))
         db.commit()
 
     with SessionLocal() as db:  # a project extraction schema to read and edit
@@ -560,8 +571,8 @@ def world(monkeypatch, fake_llm):
         db.commit()
 
     # Targets for the member routes: an uninvited user to add, and a removable reviewer.
-    _login(f"matrix-invitee-{tag}@example.com")
-    _, removable_id = _login(f"matrix-removable-{tag}@example.com")
+    sign_in_user(f"matrix-invitee-{tag}@example.com")
+    _, removable_id = sign_in_user(f"matrix-removable-{tag}@example.com")
     removable_member_id = uuid.uuid4()
     with SessionLocal() as db:
         db.add(ProjectMember(id=removable_member_id, project_id=uuid.UUID(project_id), user_id=uuid.UUID(removable_id), role=ProjectRole.reviewer))
@@ -669,6 +680,12 @@ def _call(world, principal, method, template):
             f"/api/projects/{world['ids']['p']}/context", json={"kind": "question", "content": "Matrix context entry"}
         ).json()
         route_path = template.replace("{item_id}", created["id"])
+    if template in ("/api/projects/{p}/objectives/{objective_id}", "/api/projects/{p}/objectives/{objective_id}/retire"):
+        # A fresh objective per call, so one principal's successful retire can't 409 the next principal.
+        created = world["clients"]["owner"].post(
+            f"/api/projects/{world['ids']['p']}/objectives", json={"statement": "Matrix objective"}
+        ).json()
+        route_path = template.replace("{objective_id}", created["id"])
     if (method, template) == ("POST", "/api/projects/{p}/submissions/{submission_id}/transition"):
         created = world["clients"]["owner"].post(
             f"/api/projects/{world['ids']['p']}/submissions", json={"journal_name": "Matrix transition"}
@@ -689,8 +706,8 @@ def _call(world, principal, method, template):
             "owner_member": ProjectRole.owner, "co_author": ProjectRole.co_author,
             "supervisor": ProjectRole.supervisor, "reviewer": ProjectRole.reviewer,
         }
-        # Fetched before opening the DB session below: a nested TestClient call sharing the same
-        # single StaticPool SQLite connection while this session has a pending transaction corrupts it.
+        # Fetched before opening the DB session below, so the nested TestClient call does not run while this
+        # session holds a pending transaction.
         caller_id = world["clients"][principal].get("/api/auth/me").json().get("id") if principal in role_for else None
         with SessionLocal() as db:
             fresh = Project(owner_id=uuid.UUID(owner_user_id), title="Lifecycle matrix target")
@@ -706,7 +723,7 @@ def _call(world, principal, method, template):
         return world["clients"][principal].request(method, path)
     if method == "GET" and template.endswith("/stage/conditions"):
         path += "?target=scoped"
-    if method == "GET" and template.endswith("/design/method-recommendation"):
+    if method == "GET" and template.endswith(("/design/method-recommendation", "/design/methodology-recommendation")):
         path += "?goal=explore"
     if method == "GET" and template.endswith("/design/sample-size"):
         path += "?test=correlation&r=0.3"
@@ -718,6 +735,8 @@ def _call(world, principal, method, template):
         path += f"?document_id={world['ids']['doc']}"
     if method == "GET" and template == "/api/projects/{p}/sources/own/lookup":
         path += f"?task_id={world['ids']['lo']}"
+    if (method, template) == ("POST", "/api/projects/{p}/idea-brief/landscape-scan"):
+        path += "?query=trust"
     body = BODIES.get((method, template))
     if (method, template) == ("POST", "/api/projects/{p}/journals"):
         body = {"name": "Matrix Journal", "source_url": "https://example.org/journals/matrix", "checked_at": "2026-10-22"}
@@ -819,11 +838,11 @@ def _call(world, principal, method, template):
         # A fresh, already-signed-in invitee per call: a project member can only be invited once,
         # and invite refuses an email with no account.
         invitee_email = f"matrix-invitee-{uuid.uuid4().hex[:8]}@example.com"
-        _login(invitee_email)
+        sign_in_user(invitee_email)
         body = {"email": invitee_email, "role": "reviewer"}
     if (method, template) == ("DELETE", "/api/projects/{p}/members/{u}"):
         # A fresh removable member per call, so a success can't 404 the next principal.
-        _, removable_id = _login(f"matrix-removable-{uuid.uuid4().hex[:8]}@example.com")
+        _, removable_id = sign_in_user(f"matrix-removable-{uuid.uuid4().hex[:8]}@example.com")
         with SessionLocal() as db:
             db.add(ProjectMember(project_id=uuid.UUID(world["ids"]["p"]), user_id=uuid.UUID(removable_id), role=ProjectRole.reviewer))
             db.commit()

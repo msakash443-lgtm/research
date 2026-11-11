@@ -6,7 +6,6 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app import task_queue as q
@@ -15,9 +14,9 @@ from app import task_runner, worker
 from app.agent import executor
 from app.config import get_settings
 from app.database import SessionLocal
-from app.main import app
-from app.models import AuditEvent, Project, ResearchRun, ResearchRunStatus, Task, TaskStatus, User
+from app.models import AuditEvent, ResearchRun, ResearchRunStatus, Task, TaskStatus
 from app.task_registry import ClaimedTask, PermanentTaskError
+from tests.api_helpers import insert_project, sign_in
 
 NOW = datetime(2026, 10, 3, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -35,17 +34,6 @@ def temp_handlers():
     for name in added:
         registry.HANDLERS.pop(name, None)
         registry.FAILURE_HOOKS.pop(name, None)
-
-
-def _project():
-    with SessionLocal() as db:
-        user = User(email=f"r-{uuid.uuid4().hex}@example.test")
-        db.add(user)
-        db.flush()
-        project = Project(owner_id=user.id, title="Runner")
-        db.add(project)
-        db.commit()
-        return project.id
 
 
 def _task(project_id, type, **fields):
@@ -95,7 +83,7 @@ def test_an_empty_queue_returns_false():
 def test_a_successful_handler_completes_the_task(temp_handlers):
     seen = []
     temp_handlers("ok", lambda task: seen.append((task.type, task.payload, task.attempt)))
-    task_id = _task(_project(), "ok", payload={"a": 1})
+    task_id = _task(insert_project("Runner"), "ok", payload={"a": 1})
 
     assert task_runner.run_one_task(NOW) is True
 
@@ -108,7 +96,7 @@ def test_a_failing_handler_is_retried_with_backoff_then_fails(temp_handlers):
         raise RuntimeError("kaput")
 
     temp_handlers("boom", boom)
-    task_id = _task(_project(), "boom", max_attempts=2)
+    task_id = _task(insert_project("Runner"), "boom", max_attempts=2)
 
     task_runner.run_one_task(NOW)
     first = _get(Task, task_id)
@@ -125,7 +113,7 @@ def test_a_permanent_error_fails_immediately_without_retries(temp_handlers):
         raise PermanentTaskError("cannot work")
 
     temp_handlers("hopeless", hopeless)
-    task_id = _task(_project(), "hopeless", max_attempts=5)
+    task_id = _task(insert_project("Runner"), "hopeless", max_attempts=5)
 
     task_runner.run_one_task(NOW)
 
@@ -134,7 +122,7 @@ def test_a_permanent_error_fails_immediately_without_retries(temp_handlers):
 
 
 def test_an_unknown_task_type_fails_loudly_and_is_not_retried():
-    task_id = _task(_project(), "mystery")
+    task_id = _task(insert_project("Runner"), "mystery")
 
     task_runner.run_one_task(NOW)
 
@@ -149,7 +137,7 @@ def test_failure_hook_runs_once_when_a_task_fails_for_good_not_on_retries(temp_h
         raise RuntimeError("x")
 
     temp_handlers("hooked", boom, on_failure=hooked.append)
-    _task(_project(), "hooked", max_attempts=2)
+    _task(insert_project("Runner"), "hooked", max_attempts=2)
 
     task_runner.run_one_task(NOW)
     assert hooked == []
@@ -165,20 +153,20 @@ def test_a_failing_failure_hook_does_not_break_the_queue(temp_handlers):
         raise RuntimeError("hook exploded")
 
     temp_handlers("badhook", boom, on_failure=bad_hook)
-    task_id = _task(_project(), "badhook")
+    task_id = _task(insert_project("Runner"), "badhook")
 
     assert task_runner.run_one_task(NOW) is True
     assert _get(Task, task_id).status == TaskStatus.failed
 
 
 def test_the_lease_is_renewed_while_a_handler_runs():
-    task_id = _task(_project(), "x")
+    task_id = _task(insert_project("Runner"), "x")
     claimed = q.claim_next_task()
     before = _utc(_get(Task, task_id).lease_expires_at)
     stop = threading.Event()
     beat = threading.Thread(target=task_runner._heartbeat_loop, args=(claimed, stop, 0.05))
     beat.start()
-    time.sleep(1.2)  # SQLite stores whole seconds, so wait long enough for a visible change
+    time.sleep(0.3)  # long enough for the 0.05 s heartbeat loop to move the lease
     stop.set()
     beat.join(timeout=2)
 
@@ -254,7 +242,7 @@ def test_a_hung_handler_does_not_stop_its_expired_task_being_reaped(temp_handler
     release = threading.Event()
     hooked = []
     temp_handlers("hangs", lambda task: release.wait(), on_failure=hooked.append)
-    task_id = _task(_project(), "hangs", max_attempts=1)
+    task_id = _task(insert_project("Runner"), "hangs", max_attempts=1)
     stop = threading.Event()
     worker_thread = threading.Thread(target=worker.run_forever, args=(stop,), daemon=True)
     worker_thread.start()
@@ -277,11 +265,6 @@ def test_a_hung_handler_does_not_stop_its_expired_task_being_reaped(temp_handler
 
 # ---- research runs on the queue ----------------------------------------------------------
 
-def _login(email):
-    client = TestClient(app)
-    client.post("/api/auth/development/login", json={"email": email, "display_name": "R"})
-    return client
-
 
 @pytest.fixture
 def queued_mode(monkeypatch):
@@ -298,7 +281,7 @@ def _create_run(client, with_source=True):
 
 
 def test_creating_a_run_queues_a_task_and_the_api_shape_is_unchanged(queued_mode, fake_llm):
-    client = _login("port-api@example.com")
+    client = sign_in("port-api@example.com")
 
     project_id, response = _create_run(client)
 
@@ -316,7 +299,7 @@ def test_creating_a_run_queues_a_task_and_the_api_shape_is_unchanged(queued_mode
 
 
 def test_the_worker_runs_the_queued_run_to_completion(queued_mode, fake_llm):
-    client = _login("port-run@example.com")
+    client = sign_in("port-run@example.com")
     project_id, created = _create_run(client)
 
     assert task_runner.run_one_task() is True
@@ -330,7 +313,7 @@ def test_the_worker_runs_the_queued_run_to_completion(queued_mode, fake_llm):
 
 
 def test_a_run_taken_over_during_the_model_call_does_not_persist_the_stale_answer(queued_mode, fake_llm):
-    client = _login("port-takeover@example.com")
+    client = sign_in("port-takeover@example.com")
     project_id, created = _create_run(client)
     handed_over = {}
 
@@ -357,7 +340,7 @@ def test_a_run_taken_over_during_the_model_call_does_not_persist_the_stale_answe
 
 
 def test_a_run_that_needs_sources_still_finishes_normally_through_the_queue(queued_mode):
-    client = _login("port-nosrc@example.com")
+    client = sign_in("port-nosrc@example.com")
     project_id, _ = _create_run(client, with_source=False)
 
     task_runner.run_one_task()
@@ -369,7 +352,7 @@ def test_a_run_that_needs_sources_still_finishes_normally_through_the_queue(queu
 
 
 def test_a_crashed_worker_is_recovered_by_the_lease_and_the_run_finishes(queued_mode, fake_llm):
-    client = _login("port-crash@example.com")
+    client = sign_in("port-crash@example.com")
     project_id, created = _create_run(client)
     claimed = q.claim_next_task(NOW)  # a worker takes the task...
     assert claimed is not None
@@ -386,7 +369,7 @@ def test_a_crashed_worker_is_recovered_by_the_lease_and_the_run_finishes(queued_
 
 
 def test_a_run_whose_task_is_abandoned_is_marked_failed_not_left_running(queued_mode):
-    client = _login("port-abandon@example.com")
+    client = sign_in("port-abandon@example.com")
     project_id, created = _create_run(client)
     with SessionLocal() as db:
         run = db.get(ResearchRun, uuid.UUID(created.json()["id"]))
@@ -410,7 +393,7 @@ def test_an_unexpected_error_requeues_the_run_for_a_retry_instead_of_failing_it(
         raise RuntimeError("boom inside the executor")
 
     monkeypatch.setattr(executor, "build_plan", explode)
-    client = _login("port-retry-requeue@example.com")
+    client = sign_in("port-retry-requeue@example.com")
     _, created = _create_run(client)
 
     assert task_runner.run_one_task(NOW) is True
@@ -436,7 +419,7 @@ def test_a_retry_completes_the_run_when_the_unexpected_error_was_transient(queue
         return real_build_plan(*args, **kwargs)
 
     monkeypatch.setattr(executor, "build_plan", flaky_once)
-    client = _login("port-retry-ok@example.com")
+    client = sign_in("port-retry-ok@example.com")
     project_id, created = _create_run(client)
 
     assert task_runner.run_one_task(NOW) is True
@@ -452,7 +435,7 @@ def test_an_unexpected_error_that_keeps_happening_fails_the_run_after_the_last_a
         raise RuntimeError("boom every time")
 
     monkeypatch.setattr(executor, "build_plan", explode)
-    client = _login("port-retry-exhaust@example.com")
+    client = sign_in("port-retry-exhaust@example.com")
     project_id, created = _create_run(client)
 
     for day in range(3):  # the default max_attempts is 3; each attempt runs once its backoff has passed
@@ -468,7 +451,7 @@ def test_an_unexpected_error_that_keeps_happening_fails_the_run_after_the_last_a
 
 
 def test_the_abandon_hook_leaves_an_already_finished_run_alone(queued_mode, fake_llm):
-    client = _login("port-done@example.com")
+    client = sign_in("port-done@example.com")
     project_id, created = _create_run(client)
     task_runner.run_one_task()  # completes normally
 
@@ -489,7 +472,7 @@ def _reap_and_reclaim():
 
 
 def test_ensure_owned_passes_for_the_owner_and_raises_once_the_task_is_taken_over():
-    task_id = _task(_project(), "own-check")
+    task_id = _task(insert_project("Runner"), "own-check")
     first = q.claim_next_task(NOW)
     first.ensure_owned()
     with SessionLocal() as db:
@@ -543,9 +526,9 @@ def test_a_task_type_without_its_own_limit_gets_the_default_run_time_cap(temp_ha
     temp_handlers("uncapped", lambda task: None)
     registry.register("capped", max_run_seconds=7)(lambda task: None)
     try:
-        _task(_project(), "uncapped")
+        _task(insert_project("Runner"), "uncapped")
         task_runner.run_one_task(NOW)
-        _task(_project(), "capped")
+        _task(insert_project("Runner"), "capped")
         task_runner.run_one_task(NOW)
     finally:
         registry.HANDLERS.pop("capped", None)
@@ -555,7 +538,7 @@ def test_a_task_type_without_its_own_limit_gets_the_default_run_time_cap(temp_ha
 
 
 def test_a_worker_that_lost_its_task_reports_nothing(temp_handlers):
-    project_id = _project()
+    project_id = insert_project("Runner")
     task_id = _task(project_id, "slow")
     handed_over = {}
 

@@ -48,6 +48,7 @@ from app.models import (
     Project,
     ProjectStage,
     ResearchContextItem,
+    ResearchObjective,
     ResearchQuestion,
     ResearchRun,
     ResearchRunStatus,
@@ -153,12 +154,20 @@ def ec_1_1(db: Session, project: Project) -> Condition:
 
 
 def ec_1_2(db: Session, project: Project) -> Condition:
+    # Objectives live in `research_objectives` (X.193); context items of kind `objective` still count, so an
+    # objective added through the context route is not lost to EC-1.2.
     count = _count(
         db,
         select(ResearchContextItem).where(
             ResearchContextItem.project_id == project.id,
             ResearchContextItem.kind.in_([ContextKind.question, ContextKind.objective]),
             ResearchContextItem.retired_at.is_(None),
+        ),
+    ) + _count(
+        db,
+        select(ResearchObjective).where(
+            ResearchObjective.project_id == project.id,
+            ResearchObjective.retired_at.is_(None),
         ),
     )
     met = count >= 1
@@ -794,12 +803,14 @@ RULES: tuple[Rule, ...] = (
     Rule("EC-8.2", ProjectStage.gaps_selected, ProjectStage.framework, ec_8_2),
     Rule("EC-8.3", ProjectStage.gaps_selected, ProjectStage.framework, ec_8_3),
     Rule("EC-9.1", ProjectStage.framework, ProjectStage.design_approved, ec_9_1),
-    Rule("EC-10.1", ProjectStage.design_approved, ProjectStage.data_collected, ec_10_1),
-    Rule("EC-11.1", ProjectStage.data_collected, ProjectStage.plan_locked, ec_11_1),
-    Rule("EC-11.2", ProjectStage.data_collected, ProjectStage.plan_locked, ec_11_2),
-    Rule("EC-12.1", ProjectStage.plan_locked, ProjectStage.analyzed, ec_12_1),
-    Rule("EC-12.2", ProjectStage.plan_locked, ProjectStage.analyzed, ec_12_2),
-    Rule("EC-12.3", ProjectStage.plan_locked, ProjectStage.analyzed, ec_12_3),
+    # X.177: entry rules guard the stage they lead to (frm None); EC-11.2 guards the stage it leaves.
+    # Keyed this way, the chain can lock the analysis plan (G8) before data collection.
+    Rule("EC-10.1", None, ProjectStage.data_collected, ec_10_1),
+    Rule("EC-11.1", None, ProjectStage.plan_locked, ec_11_1),
+    Rule("EC-11.2", ProjectStage.data_collected, None, ec_11_2),
+    Rule("EC-12.1", None, ProjectStage.analyzed, ec_12_1),
+    Rule("EC-12.2", None, ProjectStage.analyzed, ec_12_2),
+    Rule("EC-12.3", None, ProjectStage.analyzed, ec_12_3),
     Rule("EC-13.1", ProjectStage.analyzed, ProjectStage.drafted, ec_13_1),
     Rule("EC-13.2", ProjectStage.analyzed, ProjectStage.drafted, ec_13_2),
     Rule("EC-13.3", ProjectStage.analyzed, ProjectStage.drafted, ec_13_3),
@@ -820,7 +831,7 @@ def conditions(db: Session, project: Project, target: ProjectStage) -> list[Cond
         if result is not None:
             found.append(result)
     for rule in RULES:
-        if rule.frm != leave:
+        if rule.frm is not None and rule.frm != leave:
             continue
         if rule.to is not None and rule.to != target:
             continue

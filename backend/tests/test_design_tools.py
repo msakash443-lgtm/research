@@ -32,6 +32,9 @@ def test_finite_population_never_exceeds_the_population():
     lambda: dt.correlation(0), lambda: dt.correlation(1), lambda: dt.survey_proportion(0),
     lambda: dt.survey_proportion(0.05, population=0), lambda: dt.sample_size("two_means", {"d": 0.5}, attrition=1),
     lambda: dt.sample_size("two_means", {}), lambda: dt.sample_size("nope", {}),
+    lambda: dt.anova_oneway(0, 3), lambda: dt.anova_oneway(0.25, 1), lambda: dt.anova_oneway(0.25, 3, alpha=0),
+    lambda: dt.regression(0, 3), lambda: dt.regression(0.15, 0), lambda: dt.regression(0.15, 3, power=1),
+    lambda: dt.regression(1e-9, 1), lambda: dt.sample_size("anova_oneway", {"f": 0.25}),
 ])
 def test_bad_inputs_are_refused(call):
     with pytest.raises(ValueError):
@@ -57,6 +60,18 @@ def test_recommender_rules():
     assert dt.recommend_method("describe", accessible_population=False)["cautions"]
     with pytest.raises(ValueError):
         dt.recommend_method("vibes")
+
+def test_recommendation_results_cannot_mutate_later_recommendations():
+    first = dt.recommend_method("explore")
+    first["advantages"].append("not part of the rule")
+    first["disadvantages"].clear()
+    first["threats_to_validity"].clear()
+
+    second = dt.recommend_method("explore")
+
+    assert "not part of the rule" not in second["advantages"]
+    assert second["disadvantages"]
+    assert second["threats_to_validity"]
 
 
 @pytest.fixture
@@ -103,16 +118,6 @@ def test_f_test_sample_size_grows_with_power_and_shrinks_with_effect():
     assert dt.regression(0.15, 3, power=0.9) > dt.regression(0.15, 3)
     assert dt.regression(0.15, 3, alpha=0.01) > dt.regression(0.15, 3)
     assert dt.anova_oneway(0.4, 3) < dt.anova_oneway(0.25, 3)
-
-
-@pytest.mark.parametrize("call", [
-    lambda: dt.anova_oneway(0, 3), lambda: dt.anova_oneway(0.25, 1), lambda: dt.anova_oneway(0.25, 3, alpha=0),
-    lambda: dt.regression(0, 3), lambda: dt.regression(0.15, 0), lambda: dt.regression(0.15, 3, power=1),
-    lambda: dt.regression(1e-9, 1), lambda: dt.sample_size("anova_oneway", {"f": 0.25}),
-])
-def test_bad_f_test_inputs_are_refused(call):
-    with pytest.raises(ValueError):
-        call()
 
 
 def test_api_anova_reports_per_group_and_total(owner_project):

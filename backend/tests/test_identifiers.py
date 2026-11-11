@@ -4,21 +4,38 @@ from app.identifiers import normalize_orcid, normalize_ror
 
 
 @pytest.mark.parametrize(
-    "raw",
+    "raw,expected",
     [
-        "0000-0002-1825-0097",
-        "https://orcid.org/0000-0002-1825-0097",
-        "http://orcid.org/0000-0002-1825-0097",
-        "orcid.org/0000-0002-1825-0097",
-        "  0000-0002-1825-0097  ",
+        pytest.param("0000-0002-1825-0097", "0000-0002-1825-0097", id="bare-form"),
+        pytest.param(
+            "https://orcid.org/0000-0002-1825-0097", "0000-0002-1825-0097", id="https-link-form"
+        ),
+        pytest.param(
+            "http://orcid.org/0000-0002-1825-0097", "0000-0002-1825-0097", id="http-link-form"
+        ),
+        pytest.param(
+            "orcid.org/0000-0002-1825-0097", "0000-0002-1825-0097", id="bare-link-form"
+        ),
+        pytest.param(
+            "  0000-0002-1825-0097  ", "0000-0002-1825-0097", id="surrounding-whitespace"
+        ),
+        pytest.param(
+            "0000-0002-1694-233x", "0000-0002-1694-233X", id="check-digit-x-is-upper-cased"
+        ),
+        pytest.param(
+            "HTTPS://ORCID.ORG/0000-0002-1825-0097",
+            "0000-0002-1825-0097",
+            id="upper-case-link-prefix",
+        ),
+        pytest.param(
+            "https://orcid.org/0000-0002-1825-0097/",
+            "0000-0002-1825-0097",
+            id="trailing-slash-on-link",
+        ),
     ],
 )
-def test_normalize_orcid_accepts_bare_and_link_forms(raw):
-    assert normalize_orcid(raw) == "0000-0002-1825-0097"
-
-
-def test_normalize_orcid_upper_cases_a_check_digit_x():
-    assert normalize_orcid("0000-0002-1694-233x") == "0000-0002-1694-233X"
+def test_normalize_orcid_accepts_valid_forms_and_normalizes_to_canonical(raw, expected):
+    assert normalize_orcid(raw) == expected
 
 
 def test_normalize_orcid_blank_is_none():
@@ -29,68 +46,50 @@ def test_normalize_orcid_blank_is_none():
 @pytest.mark.parametrize(
     "raw",
     [
-        "0000-0002-1825-0098",  # wrong check digit
-        "0000-0002-1825-009",  # too short
-        "0000-0002-1825-00977",  # too long
-        "0000 0002 1825 0097",  # wrong separators
-        "0000-0002-1825-009X",  # X where a digit is required by the checksum
-        "not-an-orcid",
+        pytest.param("0000-0002-1825-0098", id="wrong-check-digit"),
+        pytest.param("0000-0002-1825-009", id="too-short"),
+        pytest.param("0000-0002-1825-00977", id="too-long"),
+        pytest.param("0000 0002 1825 0097", id="wrong-separators"),
+        pytest.param("0000-0002-1825-009X", id="x-where-a-digit-is-required-by-the-checksum"),
+        pytest.param("not-an-orcid", id="not-an-orcid"),
+        pytest.param("٠٠٠٠-٠٠٠٢-١٦٩٤-٢٣٣X", id="arabic-indic-digits"),
+        pytest.param("０００－０００２－１６９４－２３３Ｘ", id="full-width-digits"),
+        pytest.param("0000-0002-1694-23\u0663X", id="one-arabic-indic-digit-in-place"),
+        pytest.param(
+            "httpſ://orcid.org/0000-0002-1825-0097",
+            id="long-s-case-folds-to-s-under-unicode-rules",
+        ),
+        pytest.param(
+            "ORCİD.org/0000-0002-1825-0097", id="dotted-capital-i-case-folds-to-i"
+        ),
     ],
 )
-def test_normalize_orcid_refuses_malformed_or_bad_checksum(raw):
+def test_normalize_orcid_refuses_malformed_or_non_ascii_input(raw):
     with pytest.raises(ValueError):
         normalize_orcid(raw)
 
 
 @pytest.mark.parametrize(
-    "raw",
+    "raw,expected",
     [
-        "٠٠٠٠-٠٠٠٢-١٦٩٤-٢٣٣X",  # Arabic-Indic digits
-        "０００－０００２－１６９４－２３３Ｘ",  # full-width digits
-        "0000-0002-1694-23\u0663X",  # one Arabic-Indic digit in place
+        pytest.param(
+            "https://ror.org/02mhbdp94", "https://ror.org/02mhbdp94", id="full-url-form"
+        ),
+        pytest.param("ror.org/02mhbdp94", "https://ror.org/02mhbdp94", id="bare-link-form"),
+        pytest.param("02mhbdp94", "https://ror.org/02mhbdp94", id="bare-id-form"),
+        pytest.param(
+            "https://ror.org/02MHBDP94/", "https://ror.org/02mhbdp94", id="upper-case-with-trailing-slash"
+        ),
+        pytest.param(
+            "  02mhbdp94  ", "https://ror.org/02mhbdp94", id="surrounding-whitespace"
+        ),
+        pytest.param(
+            "018mejw64", "https://ror.org/018mejw64", id="a-second-documented-id"
+        ),
     ],
 )
-def test_normalize_orcid_refuses_non_ascii_digits(raw):
-    with pytest.raises(ValueError):
-        normalize_orcid(raw)
-
-
-def test_normalize_orcid_accepts_upper_case_link_prefix():
-    assert normalize_orcid("HTTPS://ORCID.ORG/0000-0002-1825-0097") == "0000-0002-1825-0097"
-
-
-def test_normalize_orcid_accepts_trailing_slash_on_link():
-    assert normalize_orcid("https://orcid.org/0000-0002-1825-0097/") == "0000-0002-1825-0097"
-
-
-@pytest.mark.parametrize(
-    "raw",
-    [
-        "httpſ://orcid.org/0000-0002-1825-0097",  # long s case-folds to s under Unicode rules
-        "ORCİD.org/0000-0002-1825-0097",  # dotted capital I case-folds to i
-    ],
-)
-def test_normalize_orcid_refuses_non_ascii_link_prefix(raw):
-    with pytest.raises(ValueError):
-        normalize_orcid(raw)
-
-
-@pytest.mark.parametrize(
-    "raw",
-    [
-        "https://ror.org/02mhbdp94",
-        "ror.org/02mhbdp94",
-        "02mhbdp94",
-        "https://ror.org/02MHBDP94/",
-        "  02mhbdp94  ",
-    ],
-)
-def test_normalize_ror_accepts_full_url_short_and_bare_forms(raw):
-    assert normalize_ror(raw) == "https://ror.org/02mhbdp94"
-
-
-def test_normalize_ror_accepts_a_second_documented_id():
-    assert normalize_ror("018mejw64") == "https://ror.org/018mejw64"
+def test_normalize_ror_accepts_valid_forms_and_normalizes_to_canonical(raw, expected):
+    assert normalize_ror(raw) == expected
 
 
 def test_normalize_ror_blank_is_none():

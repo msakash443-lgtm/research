@@ -4,9 +4,9 @@
     "status": "unevaluated",
     "reason": "The gold set is empty until the scholar supplies it (plan X.15, Q10)."
   },
-  "evidence_synthesis@4": {
+  "evidence_synthesis@5": {
     "eval": "none",
-    "reason": "No gold dataset type for synthesis answers yet; its citations are checked on every run by the citation guard (M1.10)."
+    "reason": "No gold dataset type for synthesis answers yet; citation eligibility is enforced per run, including retracted-source exclusion."
   },
   "evidence_extraction@1": {
     "eval": "extraction",

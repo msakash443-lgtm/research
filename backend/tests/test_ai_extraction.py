@@ -13,7 +13,7 @@ from app.database import SessionLocal
 from app.extraction_schema import ExtractionSchema, FieldSpec
 from app.fulltext import FullText, Page, Section
 from app.main import app
-from app.models import AiSuggestion, AuditEvent, Extraction, ProjectExtractionSchema, Source, Task, TaskStatus
+from app.models import AiSuggestion, AuditEvent, Extraction, Gate, GateCode, GateStatus, ProjectExtractionSchema, Source, Task, TaskStatus
 from app.object_storage import fulltext_key
 from app.task_runner import run_one_task
 from tests.test_fulltext import make_pdf
@@ -213,6 +213,52 @@ def test_ai_extraction_runs_only_on_stored_pdf_and_persists_unverified_provenanc
     assert (listed.json()[0]["agreement_json"] is not None) is double_extract
 
 
+def test_queued_ai_extraction_fails_if_full_text_inclusion_is_revoked(fake_llm, monkeypatch):
+    from app import task_handlers
+    from tests.api_helpers import create_included_source, create_project, sign_in
+
+    client = sign_in(f"revoked-{uuid.uuid4().hex}@example.com")
+    project_id = create_project(client)
+    source_id = create_included_source(client, project_id)
+    key = fulltext_key(uuid.UUID(project_id), uuid.UUID(source_id), "pdf")
+    title_screen = client.post(f"/api/projects/{project_id}/screening/decisions", json={
+        "source_id": source_id, "stage": "title_abstract", "decision": "include",
+    })
+    assert title_screen.status_code == 201, title_screen.text
+    pdf = make_pdf([["Abstract", "We study burnout among nurses."]])
+    fake_llm.handler = lambda request: _reply(
+        "We study burnout among nurses.",
+        {"quote": "We study burnout among nurses.", "page": 1, "section": "Abstract"},
+    )
+
+    class Store:
+        def get(self, requested_key):
+            assert requested_key == key
+            return pdf
+
+    monkeypatch.setattr(task_handlers, "get_object_store", lambda settings: Store())
+    with SessionLocal() as db:
+        db.get(Source, uuid.UUID(source_id)).fulltext_path = key
+        db.commit()
+    queued = client.post(f"/api/projects/{project_id}/extractions/ai", json={
+        "source_id": source_id, "schema_name": "default",
+    })
+    assert queued.status_code == 202, queued.text
+    revoked = client.post(f"/api/projects/{project_id}/screening/decisions", json={
+        "source_id": source_id, "stage": "full_text", "decision": "exclude",
+        "reason_code": "E_OTHER", "note": "Not eligible for this review",
+    })
+    assert revoked.status_code == 201, revoked.text
+    task_id = uuid.UUID(queued.json()["task_id"])
+    assert run_one_task(task_id=task_id)
+    with SessionLocal() as db:
+        task = db.get(Task, task_id)
+        assert task.status == TaskStatus.failed
+        assert "included at full text" in task.error
+        assert db.scalar(select(Extraction).where(Extraction.task_id == task_id)) is None
+    assert not fake_llm.requests
+
+
 def test_ai_extraction_request_is_refused_before_queuing_when_project_ai_is_off():
     client = TestClient(app)
     client.post("/api/auth/development/login", json={"email": f"extract-off-{uuid.uuid4().hex}@example.com", "display_name": "Researcher"})
@@ -231,3 +277,95 @@ def test_ai_extraction_request_is_refused_before_queuing_when_project_ai_is_off(
     assert "AI is turned off" in response.json()["detail"]
     with SessionLocal() as db:
         assert db.scalars(select(Task).where(Task.project_id == uuid.UUID(project_id))).all() == []
+
+
+def test_ai_extraction_request_rejects_a_source_without_final_full_text_inclusion():
+    client = TestClient(app)
+    client.post("/api/auth/development/login", json={
+        "email": f"extract-unincluded-{uuid.uuid4().hex}@example.com", "display_name": "Researcher",
+    })
+    project_id = client.post("/api/projects", json={"title": "AI extraction eligibility"}).json()["id"]
+    source_id = client.post(f"/api/projects/{project_id}/sources", json={"title": "Undecided"}).json()["id"]
+
+    response = client.post(
+        f"/api/projects/{project_id}/extractions/ai",
+        json={"source_id": source_id, "schema_name": "default"},
+    )
+
+    assert response.status_code == 409
+    assert "included at full text" in response.json()["detail"]
+    with SessionLocal() as db:
+        assert db.scalars(select(Task).where(Task.project_id == uuid.UUID(project_id))).all() == []
+
+
+def test_ai_auto_extraction_reports_each_final_included_source_outcome():
+    client = TestClient(app)
+    client.post("/api/auth/development/login", json={
+        "email": f"extract-auto-{uuid.uuid4().hex}@example.com", "display_name": "Researcher",
+    })
+    project_id = client.post("/api/projects", json={"title": "Automatic extraction outcomes"}).json()["id"]
+    sources = {}
+    for outcome in ("completed", "already_queued", "queued", "fetch_queued", "manual_upload"):
+        source = client.post(f"/api/projects/{project_id}/sources", json={
+            "title": outcome, **({"doi": "10.5555/example"} if outcome == "fetch_queued" else {}),
+        }).json()
+        sources[outcome] = source["id"]
+        for stage in ("title_abstract", "full_text"):
+            decision = client.post(f"/api/projects/{project_id}/screening/decisions", json={
+                "source_id": source["id"], "stage": stage, "decision": "include",
+            })
+            assert decision.status_code == 201, decision.text
+
+    with SessionLocal() as db:
+        db.add(Extraction(
+            project_id=uuid.UUID(project_id), source_id=uuid.UUID(sources["completed"]),
+            schema_version="default@2", fields_json={}, evidence_spans={},
+            extracted_by="human", extractor="user:test",
+        ))
+        db.add(Task(
+            project_id=uuid.UUID(project_id), type="ai_extraction", status=TaskStatus.queued,
+            payload={"source_id": sources["already_queued"], "schema_name": "default"},
+        ))
+        db.get(Source, uuid.UUID(sources["queued"])).fulltext_path = fulltext_key(
+            uuid.UUID(project_id), uuid.UUID(sources["queued"]), "pdf",
+        )
+        db.commit()
+
+    response = client.post(f"/api/projects/{project_id}/extractions/ai/auto", json={"schema_name": "default"})
+
+    assert response.status_code == 202, response.text
+    outcomes = {item["source_id"]: item["status"] for item in response.json()["outcomes"]}
+    assert outcomes == {source_id: status for status, source_id in sources.items()}
+
+
+def test_ai_auto_extraction_refuses_when_project_ai_is_off():
+    client = TestClient(app)
+    client.post("/api/auth/development/login", json={
+        "email": f"extract-auto-off-{uuid.uuid4().hex}@example.com", "display_name": "Researcher",
+    })
+    project_id = client.post("/api/projects", json={"title": "AI disabled automatic extraction"}).json()["id"]
+    assert client.put(f"/api/projects/{project_id}/ai-settings", json={"ai_involvement": "off"}).status_code == 200
+
+    response = client.post(f"/api/projects/{project_id}/extractions/ai/auto", json={"schema_name": "default"})
+
+    assert response.status_code == 409
+    assert "AI is turned off" in response.json()["detail"]
+
+
+def test_ai_auto_extraction_refuses_after_g4_is_approved():
+    client = TestClient(app)
+    client.post("/api/auth/development/login", json={
+        "email": f"extract-auto-locked-{uuid.uuid4().hex}@example.com", "display_name": "Researcher",
+    })
+    project_id = client.post("/api/projects", json={"title": "Locked automatic extraction"}).json()["id"]
+    with SessionLocal() as db:
+        gate = db.scalar(select(Gate).where(
+            Gate.project_id == uuid.UUID(project_id), Gate.code == GateCode.G4,
+        ))
+        gate.status = GateStatus.approved
+        db.commit()
+
+    response = client.post(f"/api/projects/{project_id}/extractions/ai/auto", json={"schema_name": "default"})
+
+    assert response.status_code == 409
+    assert "Gate G4 is approved" in response.json()["detail"]

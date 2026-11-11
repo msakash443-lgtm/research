@@ -138,12 +138,12 @@ function renderConflicts(box, agreement, names, ruler) {
   box.append(list);
 }
 
-async function render(root, ctx, stage = "title_abstract") {
+async function render(root, ctx, stage = "title_abstract", sort = "oldest") {
   if (keyHandler) document.removeEventListener("keydown", keyHandler, true);
   keyHandler = null;
   const api = (suffix) => projectApi(ctx.project.id, `/screening${suffix}`);
   // Every page of the waiting list, not just the first 200 (M2.3.4).
-  const loadQueue = () => fetchEntireQueue((offset) => request(api(`/queue?stage=${stage}&limit=200&offset=${offset}`)));
+  const loadQueue = () => fetchEntireQueue((offset) => request(api(`/queue?stage=${stage}&limit=200&offset=${offset}&sort=${sort}`)));
   let queue;
   try {
     queue = await loadQueue();
@@ -161,8 +161,16 @@ async function render(root, ctx, stage = "title_abstract") {
     node.selected = option.value === stage;
     stageSelect.append(node);
   });
-  stageSelect.addEventListener("change", () => render(root, ctx, stageSelect.value));
+  stageSelect.addEventListener("change", () => render(root, ctx, stageSelect.value, sortSelect.value));
   const stageControl = el("label", { className: "screen-stage", text: "Screening stage: ", children: [stageSelect] });
+  const sortSelect = el("select", { attrs: { "aria-label": "Screening order" } });
+  [["oldest", "Oldest first"], ["question_match", "Question match"]].forEach(([value, text]) => {
+    const node = el("option", { text, attrs: { value } });
+    node.selected = value === sort;
+    sortSelect.append(node);
+  });
+  sortSelect.addEventListener("change", () => render(root, ctx, stage, sortSelect.value));
+  const sortControl = el("label", { className: "screen-sort", text: "Order: ", children: [sortSelect] });
 
   const header = el("p", { className: "screen-counts" });
   const notice = el("p", { className: "muted small screen-notice" });
@@ -194,6 +202,8 @@ async function render(root, ctx, stage = "title_abstract") {
   else if (queue.locked) notice.textContent = "Screening is locked because G3 is approved. Reopen G3 on Approvals to change a decision.";
   else if (queue.dual_screen_enabled) notice.textContent = "Dual screening is on: other reviewers' decisions and AI suggestions stay hidden until you decide.";
   else if (queue.sort === "relevance") notice.textContent = "Ordered by predicted relevance, from your own earlier decisions. It is only an order, never a decision.";
+  else if (queue.sort === "question_match") notice.textContent = "Ordered by how well each record's words match the research question and inclusion criteria. It is only an order, never a decision.";
+  else if (sort === "question_match" && queue.sort_note) notice.textContent = queue.sort_note;
   else if (stage === "full_text") notice.textContent = "Full-text screening contains only papers that passed title/abstract screening. A final Include makes a paper eligible for the evidence base.";
 
   const current = () => state.items[state.index] || null;
@@ -296,6 +306,9 @@ async function render(root, ctx, stage = "title_abstract") {
       el("p", { children: [source] }),
       ...(found ? [found] : []),
       coverageBadge(item.coverage),
+      ...(item.matched_terms && item.matched_terms.length
+        ? [el("p", { className: "muted small screen-matched-terms", text: `Matched terms: ${item.matched_terms.join(", ")}` })]
+        : []),
       el("h3", { text: "Abstract" }),
       marked("p", item.abstract || "No abstract recorded for this record.", "abstract", { className: "screen-abstract" })
     );
@@ -575,7 +588,7 @@ async function render(root, ctx, stage = "title_abstract") {
 
   const layout = el("div", { className: "screen-layout", children: [el("section", { className: "panel screen-queue", children: [bulkBar, list] }), el("section", { className: "panel", children: [record, actions] }), side] });
   const conflicts = el("section", { className: "panel screen-conflicts" });
-  root.replaceChildren(stageControl, header, notice, layout, conflicts, help);
+  root.replaceChildren(el("div", { className: "screen-controls", children: [stageControl, sortControl] }), header, notice, layout, conflicts, help);
   renderAll();
   const names = new Map((ctx.summary.members || []).map((m) => [String(m.user_id), m.display_name || m.email]));
   // Owners and supervisors may rule on a conflict (M2.4.3) while screening is open under dual-screen.

@@ -79,13 +79,13 @@ def test_dataset_name_with_triple_quotes_cannot_break_out_of_the_docstring(tmp_p
     tricky = f'"""\nopen({str(marker)!r}, "w").write("ran")\n"""'
     script = rules.generate_script(SPEC, tricky, ds.sha256_hex(CSV))
     assert rules.imported_modules(script) <= rules.ALLOWED_IMPORTS
-    done = _run(script, tmp_path, CSV)
+    done = _run_script(script, tmp_path, CSV)
     assert done.returncode == 0, done.stderr
     assert not marker.exists()
     assert json.loads(done.stdout)["dataset"] == tricky
 
 
-def _run(script_text, tmp_path, csv_text):
+def _run_script(script_text, tmp_path, csv_text):
     script = tmp_path / "analysis.py"
     script.write_text(script_text, encoding="utf-8")
     data = tmp_path / "data.csv"
@@ -97,7 +97,7 @@ def _run(script_text, tmp_path, csv_text):
 
 def test_generated_script_computes_the_descriptives_and_correlation(tmp_path):
     sha = ds.sha256_hex(CSV)
-    done = _run(rules.generate_script(SPEC, "survey", sha), tmp_path, CSV)
+    done = _run_script(rules.generate_script(SPEC, "survey", sha), tmp_path, CSV)
     assert done.returncode == 0, done.stderr
     out = json.loads(done.stdout)
     xs, ys = [1.0, 2.0, 3.0, 4.0], [2.0, 4.5, 5.0, 8.0]
@@ -113,7 +113,7 @@ def test_generated_script_computes_the_descriptives_and_correlation(tmp_path):
 def test_generated_script_refuses_cells_that_are_not_plain_finite_numbers(tmp_path, cell):
     # Review defect (M5.3.2.b): float() accepts these, so they were read as numbers. They must refuse, not be kept.
     csv_text = f"x,y,label\n1,2,a\n{cell},4.5,b\n3,5,c\n"
-    done = _run(rules.generate_script(SPEC, "survey", ds.sha256_hex(csv_text)), tmp_path, csv_text)
+    done = _run_script(rules.generate_script(SPEC, "survey", ds.sha256_hex(csv_text)), tmp_path, csv_text)
     assert done.returncode != 0
     assert "not a number" in done.stderr
     assert done.stdout == ""
@@ -124,7 +124,7 @@ def test_correlation_pairs_with_tilde_in_names_do_not_collide(tmp_path):
     cols = ["p~q", "r", "p", "q~r"]
     csv_text = "p~q,r,p,q~r\n1,2,3,4\n2,3,1,5\n3,1,2,2\n4,4,6,1\n"
     spec = {"tests": ["correlations"], "variables": cols, "seed": 1}
-    done = _run(rules.generate_script(spec, "t", ds.sha256_hex(csv_text)), tmp_path, csv_text)
+    done = _run_script(rules.generate_script(spec, "t", ds.sha256_hex(csv_text)), tmp_path, csv_text)
     assert done.returncode == 0, done.stderr
     pairs = json.loads(done.stdout)["correlations"]
     assert len(pairs) == 6
@@ -132,14 +132,14 @@ def test_correlation_pairs_with_tilde_in_names_do_not_collide(tmp_path):
 
 
 def test_generated_script_refuses_a_changed_file(tmp_path):
-    done = _run(rules.generate_script(SPEC, "survey", ds.sha256_hex(CSV)), tmp_path, CSV.replace("8", "9"))
+    done = _run_script(rules.generate_script(SPEC, "survey", ds.sha256_hex(CSV)), tmp_path, CSV.replace("8", "9"))
     assert done.returncode != 0
     assert "does not match" in done.stderr
 
 
 def test_generated_script_refuses_missing_cells_rather_than_dropping_them(tmp_path):
     holey = "x,y\n1,2\n,4\n3,5\n"
-    done = _run(rules.generate_script({"tests": ["descriptives"], "variables": ["x"], "seed": 0}, "s", ds.sha256_hex(holey)), tmp_path, holey)
+    done = _run_script(rules.generate_script({"tests": ["descriptives"], "variables": ["x"], "seed": 0}, "s", ds.sha256_hex(holey)), tmp_path, holey)
     assert done.returncode != 0
     assert "not a number" in done.stderr
 

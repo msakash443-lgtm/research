@@ -4,31 +4,24 @@ import uuid
 import zipfile
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.agent.context import select_agent_context
 from app.config import get_settings
 from app.database import SessionLocal
 from app.exit_conditions import ec_1_2
-from app.main import app
 from app.models import AuditEvent, Project, ProjectMember, ProjectRole, ResearchContextItem
+from tests.api_helpers import create_project, sign_in
 
 QUESTION = "How does the rapid pace of AI development affect learners?"
-
-
-def _login(client, tag, name):
-    client.post("/api/auth/development/login", json={"email": f"{name}-{tag}@example.com", "display_name": name})
 
 
 @pytest.fixture
 def world():
     tag = uuid.uuid4().hex[:8]
-    owner = TestClient(app)
-    _login(owner, tag, "owner")
-    pid = owner.post("/api/projects", json={"title": "Amend context"}).json()["id"]
-    reviewer = TestClient(app)
-    _login(reviewer, tag, "reviewer")
+    owner = sign_in(f"owner-{tag}@example.com", "owner")
+    pid = create_project(owner, "Amend context")
+    reviewer = sign_in(f"reviewer-{tag}@example.com", "reviewer")
     reviewer_id = reviewer.get("/api/auth/me").json()["id"]
     with SessionLocal() as db:
         db.add(ProjectMember(project_id=uuid.UUID(pid), user_id=uuid.UUID(reviewer_id), role=ProjectRole.reviewer))
@@ -55,9 +48,8 @@ def _listed(world, **params):
 
 def test_an_entry_saved_with_a_typo_can_be_corrected_and_the_old_text_is_kept():
     # Built inline: the point is the history, not the membership setup.
-    owner = TestClient(app)
-    _login(owner, uuid.uuid4().hex[:8], "typo")
-    pid = owner.post("/api/projects", json={"title": "Typo"}).json()["id"]
+    owner = sign_in(f"typo-{uuid.uuid4().hex[:8]}@example.com", "typo")
+    pid = create_project(owner, "Typo")
     item_id = owner.post(f"/api/projects/{pid}/context", json={"kind": "question", "content": "ow does AI change learning?"}).json()["id"]
 
     fixed = owner.patch(f"/api/projects/{pid}/context/{item_id}", json={"content": "How does AI change learning?"})
@@ -172,9 +164,8 @@ def test_a_reviewer_can_neither_amend_nor_retire_and_nothing_changes(world):
 
 
 def test_an_entry_of_another_project_is_not_found_and_not_touched(world):
-    other = TestClient(app)
-    _login(other, uuid.uuid4().hex[:8], "other")
-    other_pid = other.post("/api/projects", json={"title": "Other"}).json()["id"]
+    other = sign_in(f"other-{uuid.uuid4().hex[:8]}@example.com", "other")
+    other_pid = create_project(other, "Other")
     foreign = other.post(f"/api/projects/{other_pid}/context", json={"kind": "question", "content": "Not yours to edit"}).json()["id"]
 
     assert world["owner"].patch(_url(world, foreign), json={"content": "Overwritten text"}).status_code == 404
@@ -234,9 +225,8 @@ def test_a_reviewer_cannot_delete_and_the_entry_stays(world):
 
 
 def test_an_entry_of_another_project_or_an_unknown_one_is_not_found_and_not_touched(world):
-    other = TestClient(app)
-    _login(other, uuid.uuid4().hex[:8], "other")
-    other_pid = other.post("/api/projects", json={"title": "Other"}).json()["id"]
+    other = sign_in(f"other-{uuid.uuid4().hex[:8]}@example.com", "other")
+    other_pid = create_project(other, "Other")
     foreign = other.post(f"/api/projects/{other_pid}/context", json={"kind": "question", "content": "Not yours to delete"}).json()["id"]
 
     assert _delete(world, foreign).status_code == 404

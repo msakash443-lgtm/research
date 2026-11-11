@@ -12,9 +12,12 @@ from app.config import get_settings
 from app.connectors.base import ConnectorBase, ConnectorError, PaperRecord, SearchPage
 from app.database import SessionLocal
 from app.main import app
-from app.models import Claim, ClaimEvidence, Source, SourceExcerpt, excerpt_hash
+
+from app.exit_conditions import ec_6_3
+from app.models import Claim, ClaimEvidence, Project, ResearchRun, Source, SourceExcerpt, excerpt_hash, utcnow
 
 TITLE = "Remote work and worker productivity: evidence from a field experiment"
+
 AUTHORS = ["Ada Lovelace", "Grace Hopper"]
 DOI = "10.1234/rw.2020"
 
@@ -217,6 +220,49 @@ def test_a_retraction_is_added_to_the_flags(world, services):
     check(c, pid, sid)
     assert "retracted" in get(c, pid, sid)["quality_flags"]
 
+def test_a_retraction_discovered_during_source_check_unverifies_linked_claim(world, services):
+    c, pid = world
+    sid = add(c, pid)
+    with SessionLocal() as db:
+        run = ResearchRun(project_id=uuid.UUID(pid), question="Does X affect Y?", created_by="reviewer")
+        db.add(run)
+        db.flush()
+        excerpt = SourceExcerpt(source_id=uuid.UUID(sid), content="Observed effect.", content_hash=excerpt_hash("Observed effect."))
+        db.add(excerpt)
+        db.flush()
+        evidence = ClaimEvidence(
+            source_id=uuid.UUID(sid), excerpt_id=excerpt.id, quote="Observed effect.",
+            support_confirmed_by="reviewer", support_confirmed_at=utcnow(),
+        )
+        claim = Claim(
+            project_id=uuid.UUID(pid), run_id=run.id, text="Observed effect [S1]",
+            verified=False, created_by="reviewer", evidence=[evidence],
+        )
+        db.add(claim)
+        db.commit()
+        claim.verified = True
+        db.commit()
+        claim_id, evidence_id = claim.id, evidence.id
+
+    services.record = rec(flags=("retracted",))
+    check(c, pid, sid)
+
+    with SessionLocal() as db:
+        assert db.get(Claim, claim_id).verified is False
+        evidence = db.get(ClaimEvidence, evidence_id)
+        assert evidence.support_confirmed_by is None
+        assert evidence.support_confirmed_at is None
+        assert ec_6_3(db, db.get(Project, uuid.UUID(pid))).met is False
+    claim_events = audit_of(c, pid, "claim.verification_revoked")
+    assert len(claim_events) == 1
+    assert claim_events[0]["payload_json"]["reason"] == "source_retracted"
+    assert str(claim_id) in claim_events[0]["payload_json"]["claim_ids"]
+    support_events = audit_of(c, pid, "citation.support_confirmation_revoked")
+    assert len(support_events) == 1
+    assert support_events[0]["payload_json"]["reason"] == "source_retracted"
+    assert str(evidence_id) in support_events[0]["payload_json"]["evidence_ids"]
+
+
 
 def test_merging_clears_a_stale_automatic_verification(world, services):
     c, pid = world
@@ -253,7 +299,7 @@ def test_merging_any_claim_evidence_source_invalidates_verified_claim(world, ser
     assert any(str(claim_id) in event["payload_json"]["claim_ids"] and event["payload_json"]["reason"] == "source_merge" for event in events)
 
 
-def test_requests_are_validated(world, services, monkeypatch):
+def test_a_source_check_request_is_validated(world, services, monkeypatch):
     c, pid = world
     sid = add(c, pid)
     assert c.post(f"/api/projects/{pid}/sources/{uuid.uuid4()}/check").status_code == 404

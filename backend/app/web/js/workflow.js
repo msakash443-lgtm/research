@@ -35,10 +35,10 @@ export const FRAMEWORK_ELEMENTS = {
 // ProjectStage ids (app/models.py) with no dedicated built screen today: there is no STEPS entry whose work is
 // locked behind reaching exactly that stage. Mirrors the current screen coverage (frontend constant, not backend
 // data, same pattern as GATE_NAMES/FRAMEWORK_ELEMENTS) — re-derive by reading STEPS below if screens change.
-// NOT "screened"/"extracted"/"drafted": the Screening, Evidence table/Verify extraction and Write screens below
-// cover that work now, even though an older version of this file had no screen past "retrieved".
+// NOT "screened"/"extracted"/"gaps_selected"/"framework"/"drafted": the Screening, Evidence table/Verify extraction,
+// Gaps & questions, and Write screens below cover that work now, even though an older version had no screen past "retrieved".
 export const NO_SCREEN_STAGES = new Set([
-  "retrieved", "synthesized", "gaps_selected", "framework", "design_approved",
+  "retrieved", "synthesized", "design_approved",
   "data_collected", "plan_locked", "analyzed", "revised", "submission_ready",
   "submitted", "revision_loop", "accepted",
 ]);
@@ -63,6 +63,7 @@ export const STEPS = [
   { id: "screen", title: "Screening", group: "Gather" },
   { id: "evidence", title: "Evidence table", group: "Synthesize" },
   { id: "verification", title: "Verify extraction", group: "Synthesize" },
+  { id: "gaps", title: "Gaps & questions", group: "Synthesize" },
   { id: "ask", title: "Ask", group: "Synthesize" },
   { id: "write", title: "Write", group: "Synthesize" },
   { id: "approvals", title: "Approvals", group: "Project" },
@@ -127,6 +128,11 @@ export const GUIDES = {
     what: "Write a manuscript section. Every sentence records who wrote it: typed by you, pasted, or from an AI suggestion.",
     why: "Authorship is kept for the writing record and the provenance report. Nothing is deleted: every save adds a version you can restore.",
     approval: null,
+  },
+  gaps: {
+    what: "Curate evidence-backed literature gaps, draft research questions, and review advisory FINER criteria.",
+    why: "Make the human's reasoning about relevance, novelty, theory, and evidence explicit.",
+    approval: "G5 and G6 remain human decisions; FINER is advisory only.",
   },
   ask: {
     what: "Ask a research question answered from saved context and sources.",
@@ -227,4 +233,20 @@ export function stepStatus(stepId, summary) {
 export async function loadGuide(ctx, request) {
   if (!ctx.cache.guide) ctx.cache.guide = await request("/api/guide");
   return ctx.cache.guide;
+}
+
+// The stage(s) whose work each screen does (frontend constant, same pattern as NO_SCREEN_STAGES). A screen is
+// available when any mapped stage appears in the project's chain (GET /stage); screens with no mapping belong
+// to every type.
+export const SCREEN_STAGE = {
+  scope: "scoped", criteria: "search_planned", search: "search_planned", results: "retrieved", sources: "retrieved",
+  screen: "screened", evidence: "extracted", verification: "extracted", gaps: ["gaps_selected", "framework"],
+  ask: "synthesized", write: "drafted",
+};
+// `chain` is the GET /stage shape: [{stage, gate, label}]. An empty or missing chain hides nothing.
+export function screenInChain(stepId, chain) {
+  const stage = SCREEN_STAGE[stepId];
+  if (!stage || !chain?.length) return true;
+  const alternatives = Array.isArray(stage) ? stage : [stage];
+  return chain.some((item) => alternatives.includes(item.stage));
 }

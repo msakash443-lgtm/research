@@ -106,3 +106,5 @@
 20261029_0099 search_query_timestamps
 20261029_0100 context_item_amend_retire
 20261029_0101 meta_analysis_timestamps
+20261109_0102 landscape_scan_runs
+20261110_0103 research_objectives

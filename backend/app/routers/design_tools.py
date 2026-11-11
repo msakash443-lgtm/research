@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app import design_tools, saturation_guidance
+from app import design_tools, methodology_advisor, research_types, saturation_guidance
 from app.dependencies import READ_ROLES, project_access
 from app.models import Project
 
@@ -22,6 +22,28 @@ def method_recommendation(
 ) -> dict[str, Any]:
     try:
         return design_tools.recommend_method(goal, can_randomize=can_randomize, accessible_population=accessible_population)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+
+@router.get("/methodology-recommendation")
+def methodology_recommendation(
+    goal: str = Query(...),
+    can_randomize: bool | None = Query(None),
+    accessible_population: bool | None = Query(None),
+    vulnerable_population: bool | None = Query(None),
+    sensitive_topic: bool | None = Query(None),
+    project: Project = Depends(project_access(READ_ROLES)),
+) -> dict[str, Any]:
+    try:
+        return methodology_advisor.recommend(
+            project.research_type,
+            goal,
+            human_participants=research_types.human_participants(project),
+            can_randomize=can_randomize,
+            accessible_population=accessible_population,
+            vulnerable_population=vulnerable_population,
+            sensitive_topic=sensitive_topic,
+        )
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
 

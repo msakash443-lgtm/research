@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -10,35 +11,58 @@ def _login_project(email, title="People"):
     return client, pid
 
 
-def test_an_orcid_link_is_stored_as_the_bare_normalised_id():
-    client, pid = _login_project("people-orcid@example.com")
-    response = client.post(
-        f"/api/projects/{pid}/people",
-        json={"name": "Ada", "orcid": "https://orcid.org/0000-0002-1825-0097"},
-    )
+@pytest.mark.parametrize(
+    "resource,email,field,value,expected",
+    [
+        pytest.param(
+            "people",
+            "people-orcid@example.com",
+            "orcid",
+            "https://orcid.org/0000-0002-1825-0097",
+            "0000-0002-1825-0097",
+            id="an-orcid-link-is-stored-as-the-bare-normalised-id",
+        ),
+        pytest.param(
+            "institutions",
+            "people-ror@example.com",
+            "ror_id",
+            "02mhbdp94",
+            "https://ror.org/02mhbdp94",
+            id="a-ror-id-is-stored-as-the-full-url",
+        ),
+    ],
+)
+def test_an_identifier_is_normalised_on_storage(resource, email, field, value, expected):
+    client, pid = _login_project(email)
+    response = client.post(f"/api/projects/{pid}/{resource}", json={"name": "Ada", field: value})
     assert response.status_code == 201
-    assert response.json()["orcid"] == "0000-0002-1825-0097"
+    assert response.json()[field] == expected
 
 
-def test_a_malformed_orcid_is_refused_and_nothing_is_stored():
-    client, pid = _login_project("people-bad-orcid@example.com")
-    response = client.post(f"/api/projects/{pid}/people", json={"name": "Ada", "orcid": "0000-0002-1825-0098"})
+@pytest.mark.parametrize(
+    "resource,email,field,value",
+    [
+        pytest.param(
+            "people",
+            "people-bad-orcid@example.com",
+            "orcid",
+            "0000-0002-1825-0098",
+            id="a-malformed-orcid-is-refused-and-nothing-is-stored",
+        ),
+        pytest.param(
+            "institutions",
+            "people-bad-ror@example.com",
+            "ror_id",
+            "02mhbdp95",
+            id="a-ror-id-with-a-wrong-check-digit-is-refused",
+        ),
+    ],
+)
+def test_a_malformed_identifier_is_refused_and_nothing_is_stored(resource, email, field, value):
+    client, pid = _login_project(email)
+    response = client.post(f"/api/projects/{pid}/{resource}", json={"name": "Ada", field: value})
     assert response.status_code == 422
-    assert client.get(f"/api/projects/{pid}/people").json() == []
-
-
-def test_a_ror_id_is_stored_as_the_full_url():
-    client, pid = _login_project("people-ror@example.com")
-    response = client.post(f"/api/projects/{pid}/institutions", json={"name": "Lab", "ror_id": "02mhbdp94"})
-    assert response.status_code == 201
-    assert response.json()["ror_id"] == "https://ror.org/02mhbdp94"
-
-
-def test_a_ror_id_with_a_wrong_check_digit_is_refused():
-    client, pid = _login_project("people-bad-ror@example.com")
-    response = client.post(f"/api/projects/{pid}/institutions", json={"name": "Lab", "ror_id": "02mhbdp95"})
-    assert response.status_code == 422
-    assert client.get(f"/api/projects/{pid}/institutions").json() == []
+    assert client.get(f"/api/projects/{pid}/{resource}").json() == []
 
 
 def test_a_person_can_link_to_an_institution_of_the_same_project():

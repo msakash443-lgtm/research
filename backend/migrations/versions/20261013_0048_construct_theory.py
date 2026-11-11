@@ -47,38 +47,22 @@ def upgrade() -> None:
     op.create_index("ix_theory_constructs_project_id", "theory_constructs", ["project_id"])
     op.create_index("ix_theory_constructs_theory_id", "theory_constructs", ["theory_id"])
     op.create_index("ix_theory_constructs_construct_id", "theory_constructs", ["construct_id"])
-    bind = op.get_bind()
-    if bind.dialect.name == "sqlite":
-        for event in ("INSERT", "UPDATE"):
-            op.execute(f"""
-                CREATE TRIGGER theory_constructs_same_project_{event.lower()}
-                BEFORE {event} ON theory_constructs
-                WHEN NOT EXISTS (SELECT 1 FROM theories WHERE id = NEW.theory_id AND project_id = NEW.project_id)
-                  OR NOT EXISTS (SELECT 1 FROM constructs WHERE id = NEW.construct_id AND project_id = NEW.project_id)
-                BEGIN SELECT RAISE(ABORT, 'theory construct link must belong to one project'); END
-            """)
-    elif bind.dialect.name == "postgresql":
-        op.execute("""
-            CREATE FUNCTION theory_constructs_same_project_guard() RETURNS trigger AS $$
-            BEGIN
-                IF NOT EXISTS (SELECT 1 FROM theories WHERE id = NEW.theory_id AND project_id = NEW.project_id)
-                   OR NOT EXISTS (SELECT 1 FROM constructs WHERE id = NEW.construct_id AND project_id = NEW.project_id) THEN
-                    RAISE EXCEPTION 'theory construct link must belong to one project';
-                END IF;
-                RETURN NEW;
-            END; $$ LANGUAGE plpgsql
-        """)
-        op.execute("CREATE TRIGGER theory_constructs_same_project BEFORE INSERT OR UPDATE ON theory_constructs FOR EACH ROW EXECUTE FUNCTION theory_constructs_same_project_guard()")
+    op.execute("""
+        CREATE FUNCTION theory_constructs_same_project_guard() RETURNS trigger AS $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM theories WHERE id = NEW.theory_id AND project_id = NEW.project_id)
+               OR NOT EXISTS (SELECT 1 FROM constructs WHERE id = NEW.construct_id AND project_id = NEW.project_id) THEN
+                RAISE EXCEPTION 'theory construct link must belong to one project';
+            END IF;
+            RETURN NEW;
+        END; $$ LANGUAGE plpgsql
+    """)
+    op.execute("CREATE TRIGGER theory_constructs_same_project BEFORE INSERT OR UPDATE ON theory_constructs FOR EACH ROW EXECUTE FUNCTION theory_constructs_same_project_guard()")
 
 
 def downgrade() -> None:
-    bind = op.get_bind()
-    if bind.dialect.name == "sqlite":
-        op.execute("DROP TRIGGER IF EXISTS theory_constructs_same_project_update")
-        op.execute("DROP TRIGGER IF EXISTS theory_constructs_same_project_insert")
-    elif bind.dialect.name == "postgresql":
-        op.execute("DROP TRIGGER IF EXISTS theory_constructs_same_project ON theory_constructs")
-        op.execute("DROP FUNCTION IF EXISTS theory_constructs_same_project_guard()")
+    op.execute("DROP TRIGGER IF EXISTS theory_constructs_same_project ON theory_constructs")
+    op.execute("DROP FUNCTION IF EXISTS theory_constructs_same_project_guard()")
     op.drop_index("ix_theory_constructs_construct_id", table_name="theory_constructs")
     op.drop_index("ix_theory_constructs_theory_id", table_name="theory_constructs")
     op.drop_index("ix_theory_constructs_project_id", table_name="theory_constructs")

@@ -110,6 +110,8 @@ test("the search-results box lists records ranked/filtered by citation count (M2
   const dataRows = resultsTable.children.slice(1); // first row is the table header
   const citationCells = dataRows.map((row) => row.children[3].textContent);
   assert.deepEqual(citationCells, ["5", "Unknown", "20"]);
+  const titleCells = dataRows.map((row) => row.children[0].textContent);
+  assert.deepEqual(titleCells, ["A", "B", "C"]);
 });
 
 const RESULTS_SUMMARY = {

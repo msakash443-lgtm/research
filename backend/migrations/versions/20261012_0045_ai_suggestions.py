@@ -64,35 +64,23 @@ def upgrade() -> None:
     )
     op.create_index("ix_ai_suggestion_events_suggestion_id", "ai_suggestion_events", ["suggestion_id"])
 
-    dialect = op.get_bind().dialect.name
-    if dialect == "postgresql":
-        op.execute(
-            f"""
-            CREATE OR REPLACE FUNCTION ai_suggestion_events_append_only() RETURNS trigger AS $$
-            BEGIN
-                RAISE EXCEPTION '{MESSAGE}';
-            END;
-            $$ LANGUAGE plpgsql
-            """
-        )
-        op.execute(
-            "CREATE TRIGGER ai_suggestion_events_no_update_delete BEFORE UPDATE OR DELETE ON ai_suggestion_events "
-            "FOR EACH ROW EXECUTE FUNCTION ai_suggestion_events_append_only()"
-        )
-        op.execute(
-            "CREATE TRIGGER ai_suggestion_events_no_truncate BEFORE TRUNCATE ON ai_suggestion_events "
-            "FOR EACH STATEMENT EXECUTE FUNCTION ai_suggestion_events_append_only()"
-        )
-    elif dialect == "sqlite":
-        for name, verb in (("ai_suggestion_events_no_update", "UPDATE"), ("ai_suggestion_events_no_delete", "DELETE")):
-            op.execute(
-                f"""
-                CREATE TRIGGER IF NOT EXISTS {name} BEFORE {verb} ON ai_suggestion_events
-                BEGIN
-                    SELECT RAISE(ABORT, '{MESSAGE}');
-                END
-                """
-            )
+    op.execute(
+        f"""
+        CREATE OR REPLACE FUNCTION ai_suggestion_events_append_only() RETURNS trigger AS $$
+        BEGIN
+            RAISE EXCEPTION '{MESSAGE}';
+        END;
+        $$ LANGUAGE plpgsql
+        """
+    )
+    op.execute(
+        "CREATE TRIGGER ai_suggestion_events_no_update_delete BEFORE UPDATE OR DELETE ON ai_suggestion_events "
+        "FOR EACH ROW EXECUTE FUNCTION ai_suggestion_events_append_only()"
+    )
+    op.execute(
+        "CREATE TRIGGER ai_suggestion_events_no_truncate BEFORE TRUNCATE ON ai_suggestion_events "
+        "FOR EACH STATEMENT EXECUTE FUNCTION ai_suggestion_events_append_only()"
+    )
 
 
 def downgrade() -> None:
@@ -103,13 +91,9 @@ def downgrade() -> None:
         raise RuntimeError("ai_suggestion_events still has rows; refusing to drop the record of people's decisions")
     if bind.execute(sa.text("SELECT COUNT(*) FROM ai_suggestions")).scalar():
         raise RuntimeError("ai_suggestions still has rows; refusing to drop AI suggestion provenance")
-    if bind.dialect.name == "postgresql":
-        op.execute("DROP TRIGGER IF EXISTS ai_suggestion_events_no_truncate ON ai_suggestion_events")
-        op.execute("DROP TRIGGER IF EXISTS ai_suggestion_events_no_update_delete ON ai_suggestion_events")
-        op.execute("DROP FUNCTION IF EXISTS ai_suggestion_events_append_only()")
-    elif bind.dialect.name == "sqlite":
-        op.execute("DROP TRIGGER IF EXISTS ai_suggestion_events_no_delete")
-        op.execute("DROP TRIGGER IF EXISTS ai_suggestion_events_no_update")
+    op.execute("DROP TRIGGER IF EXISTS ai_suggestion_events_no_truncate ON ai_suggestion_events")
+    op.execute("DROP TRIGGER IF EXISTS ai_suggestion_events_no_update_delete ON ai_suggestion_events")
+    op.execute("DROP FUNCTION IF EXISTS ai_suggestion_events_append_only()")
     op.drop_index("ix_ai_suggestion_events_suggestion_id", table_name="ai_suggestion_events")
     op.drop_table("ai_suggestion_events")
     op.drop_index("ix_ai_suggestions_target", table_name="ai_suggestions")

@@ -6,23 +6,13 @@ Every save writes a new append-only version and its authorship events; a retry w
 
 import uuid
 
-from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from app.database import SessionLocal
 from app.main import app
 from app import ledger
 from app.models import AuditEvent, AuthorshipEvent, Document, DocumentVersion, Source
-
-
-def _login(email):
-    client = TestClient(app)
-    user_id = client.post("/api/auth/development/login", json={"email": email, "display_name": "D"}).json()["id"]
-    return client, user_id
-
-
-def _project(client, title="Manuscript"):
-    return client.post("/api/projects", json={"title": title}).json()["id"]
+from tests.api_helpers import create_project, sign_in_user
 
 
 def _document(project_id, owner_id):
@@ -41,7 +31,7 @@ def _para(*inline):
     return {"type": "paragraph", "content": list(inline)}
 
 
-def _run(text, sid, by, origin="typed", paste=None, src=None):
+def _prov_text(text, sid, by, origin="typed", paste=None, src=None):
     prov = {"sid": sid, "origin": origin, "by": by, "sug": None, "note": None, "paste": paste, "src": src}
     return {"type": "text", "text": text, "marks": [{"type": "prov", "attrs": prov}]}
 
@@ -68,14 +58,14 @@ def _version_count(document_id):
 
 
 def _setup(tag):
-    owner, owner_id = _login(f"doc-owner-{tag}@example.com")
-    project_id = _project(owner)
+    owner, owner_id = sign_in_user(f"doc-owner-{tag}@example.com")
+    project_id = create_project(owner, "Manuscript")
     return owner, owner_id, project_id, _document(project_id, owner_id)
 
 
 def test_first_save_writes_version_one_and_an_inserted_event():
     owner, owner_id, project_id, document_id = _setup("first")
-    content = _doc(_para(_run("Care work is unpaid.", "s-1", owner_id)))
+    content = _doc(_para(_prov_text("Care work is unpaid.", "s-1", owner_id)))
 
     response = _save(owner, project_id, document_id, content, base=0)
 
@@ -93,7 +83,7 @@ def test_first_save_writes_version_one_and_an_inserted_event():
 
 def test_retrying_the_same_client_save_returns_the_existing_version():
     owner, owner_id, project_id, document_id = _setup("retry")
-    content = _doc(_para(_run("Once.", "s-1", owner_id)))
+    content = _doc(_para(_prov_text("Once.", "s-1", owner_id)))
 
     first = _save(owner, project_id, document_id, content, base=0, client_save_id="save-abc")
     again = _save(owner, project_id, document_id, content, base=0, client_save_id="save-abc")
@@ -106,9 +96,9 @@ def test_retrying_the_same_client_save_returns_the_existing_version():
 
 def test_a_stale_base_number_is_refused_and_writes_nothing():
     owner, owner_id, project_id, document_id = _setup("stale")
-    _save(owner, project_id, document_id, _doc(_para(_run("First.", "s-1", owner_id))), base=0)
+    _save(owner, project_id, document_id, _doc(_para(_prov_text("First.", "s-1", owner_id))), base=0)
 
-    response = _save(owner, project_id, document_id, _doc(_para(_run("Second.", "s-2", owner_id))), base=0)
+    response = _save(owner, project_id, document_id, _doc(_para(_prov_text("Second.", "s-2", owner_id))), base=0)
 
     assert response.status_code == 409
     detail = response.json()["detail"]
@@ -119,7 +109,7 @@ def test_a_stale_base_number_is_refused_and_writes_nothing():
 
 def test_a_quotation_without_a_citation_is_refused_and_writes_nothing():
     owner, owner_id, project_id, document_id = _setup("quote")
-    quoted = _doc(_para(_run("Borrowed words.", "q-1", owner_id, origin="pasted", paste="quotation")))
+    quoted = _doc(_para(_prov_text("Borrowed words.", "q-1", owner_id, origin="pasted", paste="quotation")))
 
     response = _save(owner, project_id, document_id, quoted, base=0)
 
@@ -136,7 +126,7 @@ def test_a_quotation_with_a_citation_to_a_verified_source_is_saved():
         source.metadata_verified = True
         source.verification_method = "human"
         db.commit()
-    content = _doc(_para(_run("Borrowed words.", "q-1", owner_id, origin="pasted", paste="quotation"), _cite(source_id)))
+    content = _doc(_para(_prov_text("Borrowed words.", "q-1", owner_id, origin="pasted", paste="quotation"), _cite(source_id)))
 
     response = _save(owner, project_id, document_id, content, base=0)
 
@@ -146,7 +136,7 @@ def test_a_quotation_with_a_citation_to_a_verified_source_is_saved():
 def test_a_new_citation_to_an_unverified_source_is_refused():
     owner, owner_id, project_id, document_id = _setup("unverified")
     source_id = owner.post(f"/api/projects/{project_id}/sources", json={"title": "Unchecked"}).json()["id"]
-    content = _doc(_para(_run("Claim.", "c-1", owner_id), _cite(source_id)))
+    content = _doc(_para(_prov_text("Claim.", "c-1", owner_id), _cite(source_id)))
 
     response = _save(owner, project_id, document_id, content, base=0)
 
@@ -156,7 +146,7 @@ def test_a_new_citation_to_an_unverified_source_is_refused():
 
 def test_text_written_under_another_persons_name_is_refused():
     owner, owner_id, project_id, document_id = _setup("foreign")
-    content = _doc(_para(_run("Not mine.", "f-1", by="someone-else")))
+    content = _doc(_para(_prov_text("Not mine.", "f-1", by="someone-else")))
 
     response = _save(owner, project_id, document_id, content, base=0)
 
@@ -171,7 +161,7 @@ def test_pasted_text_matching_a_project_source_is_detected_and_returned():
     with SessionLocal() as db:
         db.get(Source, uuid.UUID(source_id)).abstract = "Women carry most unpaid care work in most households."
         db.commit()
-    content = _doc(_para(_run("women carry most unpaid care work in most households.", "p-1", owner_id, origin="pasted", paste="unconfirmed")))
+    content = _doc(_para(_prov_text("women carry most unpaid care work in most households.", "p-1", owner_id, origin="pasted", paste="unconfirmed")))
 
     response = _save(owner, project_id, document_id, content, base=0)
 
@@ -184,8 +174,8 @@ def test_pasted_text_matching_a_project_source_is_detected_and_returned():
 
 def test_restore_writes_a_new_version_and_keeps_the_old_ones():
     owner, owner_id, project_id, document_id = _setup("restore")
-    first = _save(owner, project_id, document_id, _doc(_para(_run("Version one.", "a", owner_id))), base=0).json()["version"]
-    second = _save(owner, project_id, document_id, _doc(_para(_run("Version two.", "b", owner_id))), base=1).json()["version"]
+    first = _save(owner, project_id, document_id, _doc(_para(_prov_text("Version one.", "a", owner_id))), base=0).json()["version"]
+    second = _save(owner, project_id, document_id, _doc(_para(_prov_text("Version two.", "b", owner_id))), base=1).json()["version"]
 
     response = owner.post(f"/api/projects/{project_id}/documents/{document_id}/versions/1/restore", json={"base_number": 2})
 
@@ -204,8 +194,8 @@ def test_restore_writes_a_new_version_and_keeps_the_old_ones():
 
 def test_a_restore_with_a_stale_base_is_refused():
     owner, owner_id, project_id, document_id = _setup("restore-stale")
-    _save(owner, project_id, document_id, _doc(_para(_run("One.", "a", owner_id))), base=0)
-    _save(owner, project_id, document_id, _doc(_para(_run("Two.", "b", owner_id))), base=1)
+    _save(owner, project_id, document_id, _doc(_para(_prov_text("One.", "a", owner_id))), base=0)
+    _save(owner, project_id, document_id, _doc(_para(_prov_text("Two.", "b", owner_id))), base=1)
 
     response = owner.post(f"/api/projects/{project_id}/documents/{document_id}/versions/1/restore", json={"base_number": 1})
 
@@ -216,8 +206,8 @@ def test_a_restore_with_a_stale_base_is_refused():
 
 def test_current_version_list_and_single_version_are_readable():
     owner, owner_id, project_id, document_id = _setup("read")
-    _save(owner, project_id, document_id, _doc(_para(_run("One.", "a", owner_id))), base=0)
-    _save(owner, project_id, document_id, _doc(_para(_run("Two.", "b", owner_id))), base=1)
+    _save(owner, project_id, document_id, _doc(_para(_prov_text("One.", "a", owner_id))), base=0)
+    _save(owner, project_id, document_id, _doc(_para(_prov_text("Two.", "b", owner_id))), base=1)
     base = f"/api/projects/{project_id}/documents/{document_id}"
 
     assert owner.get(base).json()["number"] == 2
@@ -230,8 +220,8 @@ def test_current_version_list_and_single_version_are_readable():
 
 def test_the_ledger_lists_one_spans_events_and_no_text():
     owner, owner_id, project_id, document_id = _setup("ledger")
-    _save(owner, project_id, document_id, _doc(_para(_run("Typed.", "a", owner_id))), base=0)
-    _save(owner, project_id, document_id, _doc(_para(_run("Typed again.", "a", owner_id))), base=1)
+    _save(owner, project_id, document_id, _doc(_para(_prov_text("Typed.", "a", owner_id))), base=0)
+    _save(owner, project_id, document_id, _doc(_para(_prov_text("Typed again.", "a", owner_id))), base=1)
 
     events = owner.get(f"/api/projects/{project_id}/documents/{document_id}/ledger", params={"span_id": "a"}).json()
 
@@ -241,7 +231,7 @@ def test_the_ledger_lists_one_spans_events_and_no_text():
 
 def test_a_document_from_another_project_is_not_found():
     owner, owner_id, project_id, document_id = _setup("scope")
-    other_project = _project(owner, title="Other")
+    other_project = create_project(owner, "Other")
 
     response = owner.get(f"/api/projects/{other_project}/documents/{document_id}")
 
@@ -269,7 +259,7 @@ def test_create_a_section_returns_it_and_records_the_author():
 
 def test_list_returns_only_this_projects_sections_in_position_order():
     owner, _, project_id, _ = _setup("list")  # seeds "Introduction" at position 1
-    other_project = _project(owner, title="Other")
+    other_project = create_project(owner, "Other")
     owner.post(f"/api/projects/{project_id}/documents", json={"title": "Discussion", "position": 3})
     owner.post(f"/api/projects/{project_id}/documents", json={"title": "Methods", "position": 2})
     owner.post(f"/api/projects/{other_project}/documents", json={"title": "Elsewhere", "position": 1})
@@ -297,7 +287,7 @@ def test_patch_changes_only_the_fields_sent_and_is_audited():
 
 def test_patch_refuses_a_section_from_another_project():
     owner, _, project_id, _ = _setup("cross")
-    other_project = _project(owner, title="Other")
+    other_project = create_project(owner, "Other")
     other_document = owner.post(f"/api/projects/{other_project}/documents", json={"title": "Theirs", "position": 1}).json()["id"]
 
     response = owner.patch(f"/api/projects/{project_id}/documents/{other_document}", json={"title": "Stolen"})
@@ -375,7 +365,7 @@ def test_each_call_gets_a_new_span_id():
 
 def test_a_note_from_another_user_is_refused_even_when_filed_to_this_project():
     owner, _, project_id, document_id = _setup("from-note-other-user")
-    coauthor, _ = _login("doc-coauthor-from-note@example.com")
+    coauthor, _ = sign_in_user("doc-coauthor-from-note@example.com")
     invited = owner.post(f"/api/projects/{project_id}/members", json={"email": "doc-coauthor-from-note@example.com", "role": "co_author"})
     assert invited.status_code == 201, invited.text
     their_note = _note(coauthor, project_id=project_id)
@@ -387,7 +377,7 @@ def test_a_note_from_another_user_is_refused_even_when_filed_to_this_project():
 
 def test_a_note_filed_to_another_project_or_not_filed_is_refused():
     owner, _, project_id, document_id = _setup("from-note-other-project")
-    other_project = _project(owner, title="Other")
+    other_project = create_project(owner, "Other")
     elsewhere = _note(owner, project_id=other_project)
     unfiled = _note(owner)
 
@@ -398,7 +388,7 @@ def test_a_note_filed_to_another_project_or_not_filed_is_refused():
 
 def test_a_section_from_another_project_is_refused():
     owner, _, project_id, _ = _setup("from-note-cross-doc")
-    other_project = _project(owner, title="Other")
+    other_project = create_project(owner, "Other")
     other_document = owner.post(f"/api/projects/{other_project}/documents", json={"title": "Theirs", "position": 1}).json()["id"]
     note_id = _note(owner, project_id=project_id)
 
@@ -428,8 +418,8 @@ def test_quoted_text_is_never_put_in_the_paragraph():
 
 def test_version_conflict_409_is_resolved_by_keeping_mine():
     owner, owner_id, project_id, document_id = _setup("conflict-mine")
-    _save(owner, project_id, document_id, _doc(_para(_run("Saved from tab A.", "s-a", owner_id))), base=0)
-    mine = _doc(_para(_run("Written in tab B before it saw tab A's save.", "s-b", owner_id)))
+    _save(owner, project_id, document_id, _doc(_para(_prov_text("Saved from tab A.", "s-a", owner_id))), base=0)
+    mine = _doc(_para(_prov_text("Written in tab B before it saw tab A's save.", "s-b", owner_id)))
 
     conflict = _save(owner, project_id, document_id, mine, base=0)
     assert conflict.status_code == 409
@@ -444,8 +434,8 @@ def test_version_conflict_409_is_resolved_by_keeping_mine():
 
 def test_version_conflict_409_is_resolved_by_keeping_theirs():
     owner, owner_id, project_id, document_id = _setup("conflict-theirs")
-    _save(owner, project_id, document_id, _doc(_para(_run("Saved from tab A.", "s-a", owner_id))), base=0)
-    mine = _doc(_para(_run("Written in tab B before it saw tab A's save.", "s-b", owner_id)))
+    _save(owner, project_id, document_id, _doc(_para(_prov_text("Saved from tab A.", "s-a", owner_id))), base=0)
+    mine = _doc(_para(_prov_text("Written in tab B before it saw tab A's save.", "s-b", owner_id)))
 
     conflict = _save(owner, project_id, document_id, mine, base=0)
     assert conflict.status_code == 409
@@ -458,17 +448,17 @@ def test_version_conflict_409_is_resolved_by_keeping_theirs():
 
 def test_version_conflict_409_is_resolved_by_keeping_both():
     owner, owner_id, project_id, document_id = _setup("conflict-both")
-    _save(owner, project_id, document_id, _doc(_para(_run("Saved from tab A.", "s-a", owner_id))), base=0)
-    mine = _doc(_para(_run("Written in tab B before it saw tab A's save.", "s-b", owner_id)))
+    _save(owner, project_id, document_id, _doc(_para(_prov_text("Saved from tab A.", "s-a", owner_id))), base=0)
+    mine = _doc(_para(_prov_text("Written in tab B before it saw tab A's save.", "s-b", owner_id)))
 
     conflict = _save(owner, project_id, document_id, mine, base=0)
     current_number = conflict.json()["detail"]["current"]["number"]
     current_text = conflict.json()["detail"]["current"]["content_text"]
 
     merged = _doc(
-        _para(_run("Written in tab B before it saw tab A's save.", "s-merge-1", owner_id)),
-        _para(_run("[Server copy]", "s-merge-2", owner_id)),
-        _para(_run(current_text, "s-merge-3", owner_id)),
+        _para(_prov_text("Written in tab B before it saw tab A's save.", "s-merge-1", owner_id)),
+        _para(_prov_text("[Server copy]", "s-merge-2", owner_id)),
+        _para(_prov_text(current_text, "s-merge-3", owner_id)),
     )
     resolved = _save(owner, project_id, document_id, merged, base=current_number)
     assert resolved.status_code == 201, resolved.text

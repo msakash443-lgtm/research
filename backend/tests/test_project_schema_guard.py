@@ -7,13 +7,19 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import DatabaseError
 
 from app.database import SessionLocal
-from app.models import ProjectExtractionSchema
+from app.models import Project, ProjectExtractionSchema, User
 
 
 def _schema_id():
     with SessionLocal() as db:
+        owner = User(email=f"schema-{uuid.uuid4().hex}@example.test")
+        db.add(owner)
+        db.flush()
+        project = Project(owner_id=owner.id, title="Schemas")
+        db.add(project)
+        db.flush()
         row = ProjectExtractionSchema(
-            project_id=uuid.uuid4(),
+            project_id=project.id,
             name="lab",
             version=1,
             label="Lab schema",
@@ -46,7 +52,7 @@ def test_raw_sql_cannot_rewrite_or_delete_a_project_schema_version(statement):
     schema_id = _schema_id()
     with SessionLocal() as db:
         with pytest.raises(DatabaseError, match="append-only"):
-            db.execute(text(statement), {"id": schema_id.hex})
+            db.execute(text(statement), {"id": schema_id})
             db.commit()
         db.rollback()
         assert db.scalar(select(ProjectExtractionSchema.id).where(ProjectExtractionSchema.id == schema_id)) == schema_id

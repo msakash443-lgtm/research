@@ -55,6 +55,7 @@ function verificationHint(ctx) {
 // Only verified sources may be cited in an answer (citation guard, plan M1.10.3), so every card
 // says whether its source is verified and offers the two ways to verify it (ported from M1.13.1).
 function verificationText(source) {
+  if ((source.quality_flags || []).includes("retracted")) return "RETRACTED — do not cite";
   const when = source.verified_at ? ` · ${formatDate(source.verified_at)}` : "";
   let text = "Not verified: the agent can't cite this source";
   if (source.metadata_verified && source.verification_method === "human") text = `Verified by a person${when}`;
@@ -312,7 +313,11 @@ function sourceCard(ctx, source) {
   } else {
     card.append(el("h3", { text: source.title }));
   }
-  card.append(el("p", { className: "verification-status small", text: verificationText(source) }));
+  const retracted = (source.quality_flags || []).includes("retracted");
+  card.append(el("p", {
+    className: `verification-status small${retracted ? " retracted-badge" : ""}`,
+    text: verificationText(source),
+  }));
   card.append(el("p", { className: "source-locator", text: citationText(source) }));
   const via = foundViaText(source.found_via);
   if (via) card.append(el("p", { className: "source-locator", text: via }));

@@ -6,7 +6,6 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.database import SessionLocal
@@ -14,18 +13,9 @@ from app.main import app
 from app.models import AuditEvent, Document, DocumentVersion, SimilarityCheck, Source, SourceExcerpt, Task, excerpt_hash
 from app.task_handlers import SIMILARITY_CHECK
 from app.task_registry import get_handler
+from tests.api_helpers import create_project, sign_in_user
 
 SOURCE_SENTENCE = "Unpaid care work limits how many hours women can spend in paid employment each week."
-
-
-def _login(email):
-    client = TestClient(app)
-    user_id = client.post("/api/auth/development/login", json={"email": email, "display_name": "D"}).json()["id"]
-    return client, user_id
-
-
-def _project(client, title="Similarity"):
-    return client.post("/api/projects", json={"title": title}).json()["id"]
 
 
 def _document(project_id, owner_id, title="Discussion"):
@@ -94,8 +84,8 @@ def _version_ids(document_id):
 
 
 def test_a_verbatim_copy_of_a_project_source_is_flagged_with_the_source_and_excerpt():
-    owner, owner_id = _login("sim-copy@example.com")
-    project_id = _project(owner)
+    owner, owner_id = sign_in_user("sim-copy@example.com")
+    project_id = create_project(owner, "Similarity")
     source_id, excerpt_id = _source_with_excerpt(project_id, "Kumar 2021", SOURCE_SENTENCE)
     document_id = _document(project_id, owner_id)
     assert _save(owner, project_id, document_id, SOURCE_SENTENCE, base=0, owner_id=owner_id).status_code == 201
@@ -114,8 +104,8 @@ def test_a_verbatim_copy_of_a_project_source_is_flagged_with_the_source_and_exce
 
 
 def test_a_request_is_queued_and_writes_nothing_until_the_task_runs():
-    owner, owner_id = _login("sim-queued@example.com")
-    project_id = _project(owner)
+    owner, owner_id = sign_in_user("sim-queued@example.com")
+    project_id = create_project(owner, "Similarity")
     _source_with_excerpt(project_id, "Kumar 2021", SOURCE_SENTENCE)
     document_id = _document(project_id, owner_id)
     _save(owner, project_id, document_id, SOURCE_SENTENCE, base=0, owner_id=owner_id)
@@ -131,8 +121,8 @@ def test_a_request_is_queued_and_writes_nothing_until_the_task_runs():
 
 
 def test_the_check_reads_the_version_pinned_when_it_was_requested():
-    owner, owner_id = _login("sim-pinned@example.com")
-    project_id = _project(owner)
+    owner, owner_id = sign_in_user("sim-pinned@example.com")
+    project_id = create_project(owner, "Similarity")
     _source_with_excerpt(project_id, "Kumar 2021", SOURCE_SENTENCE)
     document_id = _document(project_id, owner_id)
     _save(owner, project_id, document_id, SOURCE_SENTENCE, base=0, owner_id=owner_id)
@@ -149,8 +139,8 @@ def test_the_check_reads_the_version_pinned_when_it_was_requested():
 
 
 def test_a_check_uses_the_latest_saved_version_not_an_older_one():
-    owner, owner_id = _login("sim-latest@example.com")
-    project_id = _project(owner)
+    owner, owner_id = sign_in_user("sim-latest@example.com")
+    project_id = create_project(owner, "Similarity")
     _source_with_excerpt(project_id, "Kumar 2021", SOURCE_SENTENCE)
     document_id = _document(project_id, owner_id)
     _save(owner, project_id, document_id, SOURCE_SENTENCE, base=0, owner_id=owner_id)
@@ -163,9 +153,9 @@ def test_a_check_uses_the_latest_saved_version_not_an_older_one():
 
 
 def test_a_source_in_another_project_is_not_a_reference():
-    owner, owner_id = _login("sim-isolation@example.com")
-    project_id = _project(owner, "Here")
-    other_project = _project(owner, "There")
+    owner, owner_id = sign_in_user("sim-isolation@example.com")
+    project_id = create_project(owner, "Here")
+    other_project = create_project(owner, "There")
     _source_with_excerpt(other_project, "Elsewhere 2020", SOURCE_SENTENCE)
     document_id = _document(project_id, owner_id)
     _save(owner, project_id, document_id, SOURCE_SENTENCE, base=0, owner_id=owner_id)
@@ -174,8 +164,8 @@ def test_a_source_in_another_project_is_not_a_reference():
 
 
 def test_checks_are_listed_for_their_section_newest_first():
-    owner, owner_id = _login("sim-list@example.com")
-    project_id = _project(owner)
+    owner, owner_id = sign_in_user("sim-list@example.com")
+    project_id = create_project(owner, "Similarity")
     _source_with_excerpt(project_id, "Kumar 2021", SOURCE_SENTENCE)
     document_id = _document(project_id, owner_id)
     _save(owner, project_id, document_id, SOURCE_SENTENCE, base=0, owner_id=owner_id)
@@ -189,8 +179,8 @@ def test_checks_are_listed_for_their_section_newest_first():
 
 
 def test_a_section_with_no_saved_version_cannot_be_checked():
-    owner, owner_id = _login("sim-empty@example.com")
-    project_id = _project(owner)
+    owner, owner_id = sign_in_user("sim-empty@example.com")
+    project_id = create_project(owner, "Similarity")
     document_id = _document(project_id, owner_id)
 
     response = _request_check(owner, project_id, document_id)
@@ -200,9 +190,9 @@ def test_a_section_with_no_saved_version_cannot_be_checked():
 
 
 def test_a_section_from_another_project_is_not_found():
-    owner, owner_id = _login("sim-foreign@example.com")
-    project_id = _project(owner, "Mine")
-    other_project = _project(owner, "Theirs")
+    owner, owner_id = sign_in_user("sim-foreign@example.com")
+    project_id = create_project(owner, "Mine")
+    other_project = create_project(owner, "Theirs")
     foreign_document = _document(other_project, owner_id)
     _save(owner, other_project, foreign_document, SOURCE_SENTENCE, base=0, owner_id=owner_id)
 
@@ -210,8 +200,8 @@ def test_a_section_from_another_project_is_not_found():
 
 
 def test_an_institutional_provider_reports_not_configured_and_writes_nothing():
-    owner, owner_id = _login("sim-institution@example.com")
-    project_id = _project(owner)
+    owner, owner_id = sign_in_user("sim-institution@example.com")
+    project_id = create_project(owner, "Similarity")
     document_id = _document(project_id, owner_id)
     _save(owner, project_id, document_id, SOURCE_SENTENCE, base=0, owner_id=owner_id)
 
@@ -224,8 +214,8 @@ def test_an_institutional_provider_reports_not_configured_and_writes_nothing():
 
 
 def test_a_recorded_check_cannot_be_changed_or_deleted():
-    owner, owner_id = _login("sim-append@example.com")
-    project_id = _project(owner)
+    owner, owner_id = sign_in_user("sim-append@example.com")
+    project_id = create_project(owner, "Similarity")
     _source_with_excerpt(project_id, "Kumar 2021", SOURCE_SENTENCE)
     document_id = _document(project_id, owner_id)
     _save(owner, project_id, document_id, SOURCE_SENTENCE, base=0, owner_id=owner_id)

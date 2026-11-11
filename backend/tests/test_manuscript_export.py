@@ -7,19 +7,13 @@ import zipfile
 from types import SimpleNamespace
 import pytest
 from docx import Document as WordDocument
-from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app import manuscript_export as me
 from app.database import SessionLocal
 from app.main import app
-from app.models import AnalysisPlan, AnalysisRun, AuditEvent, DatasetVersion, Document, DocumentVersion, Source
-
-
-def _login(email):
-    client = TestClient(app)
-    user_id = client.post("/api/auth/development/login", json={"email": email, "display_name": "D"}).json()["id"]
-    return client, user_id
+from app.models import AuditEvent, Document, DocumentVersion, Source
+from tests.api_helpers import insert_analysis_run, insert_source, sign_in_user
 
 
 def _prov(sid, user_id):
@@ -38,30 +32,6 @@ def _stat(run_id, path):
     return {"type": "stat", "attrs": {"analysis_run_id": run_id, "path": path}}
 
 
-def _run(project_id, output, user_id="u1"):
-    with SessionLocal() as db:
-        dataset = DatasetVersion(
-            project_id=uuid.UUID(project_id), version_no=1, kind="raw", name="d.csv", content="a\n1\n", sha256="0" * 64,
-            row_count=1, column_names=["a"], created_by=user_id,
-        )
-        db.add(dataset)
-        db.flush()
-        plan = AnalysisPlan(
-            project_id=uuid.UUID(project_id), dataset_id=dataset.id, spec_json={"tests": [], "variables": [], "seed": 0},
-            plan_sha256="1" * 64, environment_sha256="2" * 64, created_by=user_id,
-        )
-        db.add(plan)
-        db.flush()
-        run = AnalysisRun(
-            project_id=uuid.UUID(project_id), analysis_plan_id=plan.id, dataset_id=dataset.id, plan_sha256=plan.plan_sha256,
-            dataset_sha256=dataset.sha256, script_sha256="3" * 64, environment_sha256=plan.environment_sha256,
-            image="python@sha256:" + "4" * 64, output_json=output, created_by=user_id,
-        )
-        db.add(run)
-        db.commit()
-        return str(run.id)
-
-
 def _new_document(project_id, user_id, title, position):
     with SessionLocal() as db:
         document = Document(project_id=uuid.UUID(project_id), title=title, position=position, created_by=f"user:{user_id}")
@@ -78,23 +48,15 @@ def _save(client, project_id, document_id, content):
     assert response.status_code == 201, response.text
 
 
-def _source(project_id, **fields):
-    with SessionLocal() as db:
-        row = Source(project_id=uuid.UUID(project_id), **fields)
-        db.add(row)
-        db.commit()
-        return str(row.id)
-
-
 @pytest.fixture
 def world():
-    client, user_id = _login("writer.export@example.org")
+    client, user_id = sign_in_user("writer.export@example.org")
     project_id = client.post("/api/projects", json={"title": "Remote Work"}).json()["id"]
-    verified = _source(
+    verified = insert_source(
         project_id, title="Wages after remote work", authors=["Smith, Jane", "Lee, Ann"], year=2021,
         venue="Labour Journal", doi="10.1/abc", metadata_verified=True,
     )
-    unverified = _source(project_id, title="Unchecked claim", authors=["Doe, Joe"], year=2020, metadata_verified=True)
+    unverified = insert_source(project_id, title="Unchecked claim", authors=["Doe, Joe"], year=2020, metadata_verified=True)
     intro = _new_document(project_id, user_id, "Introduction", 1)
     methods = _new_document(project_id, user_id, "Methods", 2)
     _new_document(project_id, user_id, "Never saved", 3)
@@ -171,7 +133,7 @@ def test_json_lists_saved_sections_and_verified_references(world):
 
 
 def test_bibtex_has_only_cited_verified_sources(world):
-    _source(world.project_id, title="Verified but never cited", authors=["Roe, Rae"], year=2019, metadata_verified=True)
+    insert_source(world.project_id, title="Verified but never cited", authors=["Roe, Rae"], year=2019, metadata_verified=True)
 
     response = _export(world, "bibtex")
 
@@ -183,7 +145,7 @@ def test_bibtex_has_only_cited_verified_sources(world):
 
 
 def test_nothing_saved_exports_only_the_title_and_unset_statement_placeholders(world):
-    client, user_id = _login("empty.export@example.org")
+    client, user_id = sign_in_user("empty.export@example.org")
     project_id = client.post("/api/projects", json={"title": "Empty"}).json()["id"]
     _new_document(project_id, user_id, "Draft", 1)
 
@@ -257,9 +219,9 @@ def test_json_references_carry_a_verified_status(world):
 
 
 def test_export_is_blocked_by_a_citation_to_a_source_in_another_project(world):
-    other_client, _ = _login("other.export@example.org")
+    other_client, _ = sign_in_user("other.export@example.org")
     other_project = other_client.post("/api/projects", json={"title": "Other"}).json()["id"]
-    foreign = _source(other_project, title="Foreign", authors=["Fox, Al"], year=2018, metadata_verified=True)
+    foreign = insert_source(other_project, title="Foreign", authors=["Fox, Al"], year=2018, metadata_verified=True)
     doc = _new_document(world.project_id, world.user_id, "Discussion", 4)
     content = {"type": "doc", "content": [{"type": "paragraph", "content": [_text("See ", "x", world.user_id), _cite(foreign)]}]}
     with SessionLocal() as db:  # the save API refuses this citation, so the version is written directly
@@ -282,7 +244,7 @@ def test_a_clean_export_is_not_blocked(world):
 
 
 def test_markdown_and_docx_render_a_resolved_inserted_number(world):
-    run = _run(world.project_id, {"descriptives": {"age": {"mean": 35.5}}})
+    run = insert_analysis_run(world.project_id, {"descriptives": {"age": {"mean": 35.5}}})
     doc = _new_document(world.project_id, world.user_id, "Results", 5)
     content = {"type": "doc", "content": [{"type": "paragraph", "content": [
         _text("Mean age was ", "x", world.user_id), _stat(run, "descriptives.age.mean"),
@@ -316,7 +278,7 @@ def test_export_is_blocked_by_a_number_naming_an_unknown_analysis_run(world):
 
 
 def test_export_is_blocked_by_a_number_whose_path_does_not_resolve(world):
-    run = _run(world.project_id, {"descriptives": {"age": {"mean": 35.5}}})
+    run = insert_analysis_run(world.project_id, {"descriptives": {"age": {"mean": 35.5}}})
     doc = _new_document(world.project_id, world.user_id, "Results", 5)
     content = {"type": "doc", "content": [{"type": "paragraph", "content": [_stat(run, "descriptives.age.missing")]}]}
     with SessionLocal() as db:  # the save API refuses this, so the version is written directly

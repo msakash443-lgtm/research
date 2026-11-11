@@ -86,8 +86,9 @@ def _source_snapshot(source: Source) -> dict[str, Any]:
         # The prompt labels these so the answer can flag conclusions that rest on them.
         "automated": source.is_automated,
         "auto_checked": bool(source.metadata_verified and source.verification_method == "automatic"),
-        # Only verified sources may be cited in a generated answer (plan M1.10.3).
         "verified": bool(source.metadata_verified),
+        "quality_flags": list(source.quality_flags or []),
+        "retracted": "retracted" in (source.quality_flags or []),
         # What cleaning removed or noticed (hidden text, chat markup, instruction-like phrases).
         "flags": sorted({flag for part in parts for flag in part.flags}),
     }
@@ -175,6 +176,8 @@ def _citation_problem(answer: str, sources: list[dict[str, Any]]) -> tuple[int, 
     for index in sorted(_cited_indices(answer)):
         if not 1 <= index <= len(sources):
             return index, "unknown_citation_index"
+        if sources[index - 1].get("retracted"):
+            return index, "retracted_citation"
         if not sources[index - 1].get("verified"):
             return index, "unverified_citation"
     return None
@@ -251,7 +254,7 @@ def _store_cited_claims(db: Session, run: ResearchRun, answer: str, sources: lis
 
 # The exact prompt every research run uses. Changing wording means adding a new version file
 # and moving this pin on purpose; the version is stored with each answer.
-EVIDENCE_SYNTHESIS_PROMPT = ("evidence_synthesis", 4)  # v4: structured reply with confidence + abstention (M0.8.6)
+EVIDENCE_SYNTHESIS_PROMPT = ("evidence_synthesis", 5)  # v5: retracted sources are never citable
 
 
 def _item_identity_hash(item) -> str:
@@ -398,9 +401,10 @@ def _source_status(source: dict[str, Any], *, explicit_verification: bool = Fals
         status = "automatically retrieved" if explicit_verification else "automatically retrieved, unverified"
     else:
         status = "added by a researcher"
-    if explicit_verification:
-        # v3+: an explicit, uniform signal the model can key off directly (plan M1.10.5) — separate
-        # from the provenance text above, so a human-verified automated source is never contradictory.
+    if source.get("retracted"):
+        status = "RETRACTED — do not cite"
+    elif explicit_verification:
+        # v3+: an explicit, uniform signal the model can key off directly (plan M1.10.5).
         status += (
             " | Verified — may be cited."
             if source.get("verified")
@@ -616,7 +620,7 @@ def execute_research_run(
             run.provider_model = llm.model
             run.prompt_version = prompt.ref
             # Don't hold a write transaction (e.g. retrieved sources) across the model call: the usage
-            # meter writes in its own session, and on SQLite that write would wait on our lock.
+            # meter writes in its own session, and that write would wait on our lock.
             if ensure_owned is not None:
                 ensure_owned(db)
             db.commit()
@@ -643,7 +647,7 @@ def execute_research_run(
                         prompt_version=run.prompt_version,
                     )
                 elif bad_citation:
-                    # Unverifiable citations are blocked, not warned (M1.10.3). Don't store the answer.
+                    # Ineligible citations are blocked, not warned. Don't store the answer.
                     index, reason = bad_citation
                     logger.warning("Run %s: model answer rejected (%s: [S%s])", run.id, reason, index)
                     run.status = ResearchRunStatus.failed
@@ -654,12 +658,13 @@ def execute_research_run(
                             "The citation was rejected rather than guessed."
                         )
                     elif reason == "unparseable_citation_bracket":
-                        # M1.10.7: something inside [...] looks like an attempted S# citation but the
-                        # reader couldn't fully parse it (odd punctuation, truncated token, ...) — treated
-                        # as suspicious rather than silently read as "no citation" (rule 22, fail loudly).
                         run.error_message = (
                             "The answer contains a bracketed reference that looks like a source citation "
                             "but isn't in a form that could be checked. It was rejected rather than guessed."
+                        )
+                    elif reason == "retracted_citation":
+                        run.error_message = (
+                            f"The answer cited a retracted source ([S{index}]). Retracted sources can't be cited."
                         )
                     else:
                         run.error_message = (

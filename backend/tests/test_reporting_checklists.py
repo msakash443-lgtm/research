@@ -1,23 +1,15 @@
 import uuid
 
-from fastapi.testclient import TestClient
-
 from app import reporting_checklists
 from app.database import SessionLocal
-from app.main import app
 from app.models import Project
+from tests.api_helpers import create_project, sign_in
 
 
-def _login(email):
-    client = TestClient(app)
-    client.post("/api/auth/development/login", json={"email": email, "display_name": "C"})
-    return client
-
-
-def _project(discipline=None):
+def _project_with_discipline(discipline=None):
     tag = uuid.uuid4().hex[:8]
-    owner = _login(f"checklist-{tag}@example.com")
-    pid = owner.post("/api/projects", json={"title": "Checklist"}).json()["id"]
+    owner = sign_in(f"checklist-{tag}@example.com")
+    pid = create_project(owner, "Checklist")
     if discipline is not None:
         with SessionLocal() as db:
             db.get(Project, uuid.UUID(pid)).discipline = discipline
@@ -55,7 +47,7 @@ def test_a_guideline_without_a_written_checklist_returns_none():
 
 
 def test_checklist_endpoint_returns_items_and_authoritative_source():
-    owner, pid = _project(discipline="social_sciences")
+    owner, pid = _project_with_discipline(discipline="social_sciences")
     body = owner.get(f"/api/projects/{pid}/prisma/checklist").json()
     assert body["guideline"] == "PRISMA-2020" and body["shipped"] is True
     assert body["source"]["url"] == "https://doi.org/10.1136/bmj.n71"
@@ -64,7 +56,7 @@ def test_checklist_endpoint_returns_items_and_authoritative_source():
 
 
 def test_checklist_endpoint_says_not_shipped_when_no_guideline_is_set():
-    owner, pid = _project()
+    owner, pid = _project_with_discipline()
     assert owner.get(f"/api/projects/{pid}/prisma/checklist").json() == {
         "guideline": None, "shipped": False, "source": None, "items": [],
     }
@@ -72,6 +64,6 @@ def test_checklist_endpoint_says_not_shipped_when_no_guideline_is_set():
 
 
 def test_checklist_endpoint_refuses_outsiders():
-    owner, pid = _project()
-    outsider = _login(f"checklist-out-{uuid.uuid4().hex[:8]}@example.com")
+    owner, pid = _project_with_discipline()
+    outsider = sign_in(f"checklist-out-{uuid.uuid4().hex[:8]}@example.com")
     assert outsider.get(f"/api/projects/{pid}/prisma/checklist").status_code == 404

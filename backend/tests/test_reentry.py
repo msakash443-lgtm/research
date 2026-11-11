@@ -3,7 +3,6 @@
 import uuid
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app import artifacts as art
@@ -11,27 +10,21 @@ from app import task_queue as q
 from app import task_registry as registry
 from gate_helpers import approve_earlier_gates
 from app.database import SessionLocal
-from app.main import app
 from app.models import (
     Artifact, ArtifactStatus, AuditEvent, Gate, GateCode, GateStatus, Project, ProjectMember, ProjectRole,
     ProjectStage as S, Source, TaskStatus,
 )
-
-
-def _login(email):
-    client = TestClient(app)
-    user_id = client.post("/api/auth/development/login", json={"email": email, "display_name": "R"}).json()["id"]
-    return client, user_id
+from tests.api_helpers import sign_in_user
 
 
 @pytest.fixture
 def world():
     tag = uuid.uuid4().hex[:8]
-    owner, owner_id = _login(f"re-owner-{tag}@example.com")
+    owner, owner_id = sign_in_user(f"re-owner-{tag}@example.com")
     project_id = owner.post("/api/projects", json={"title": "Re-entry"}).json()["id"]
     clients = {"owner": owner}
     for role in (ProjectRole.supervisor, ProjectRole.co_author, ProjectRole.reviewer):
-        client, uid = _login(f"re-{role.value}-{tag}@example.com")
+        client, uid = sign_in_user(f"re-{role.value}-{tag}@example.com")
         with SessionLocal() as db:
             db.add(ProjectMember(project_id=uuid.UUID(project_id), user_id=uuid.UUID(uid), role=role))
             db.commit()
@@ -94,7 +87,7 @@ def test_edges_refuse_self_cross_project_and_cyclic_dependencies(world):
     a = _artifact(world, "a", S.retrieved)
     b = _artifact(world, "b", S.screened, depends_on=[a])
     c = _artifact(world, "c", S.extracted, depends_on=[b])
-    other_owner, _ = _login(f"re-other-{uuid.uuid4().hex[:6]}@example.com")
+    other_owner, _ = sign_in_user(f"re-other-{uuid.uuid4().hex[:6]}@example.com")
     other_pid = uuid.UUID(other_owner.post("/api/projects", json={"title": "Other"}).json()["id"])
 
     with SessionLocal() as db:

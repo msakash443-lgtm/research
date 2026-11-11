@@ -7,20 +7,15 @@ from fastapi.testclient import TestClient
 from app.database import SessionLocal
 from app.main import app
 from app.models import AutoExcludeAudit, Project, ProjectMember, ProjectRole, ScreeningDecision, SearchQuery
-
-
-def _login(email):
-    client = TestClient(app)
-    client.post("/api/auth/development/login", json={"email": email, "display_name": "P"})
-    return client
+from tests.api_helpers import sign_in
 
 
 @pytest.fixture
 def project():
     tag = uuid.uuid4().hex[:8]
-    owner = _login(f"prisma-{tag}@example.com")
+    owner = sign_in(f"prisma-{tag}@example.com")
     pid = owner.post("/api/projects", json={"title": "Prisma"}).json()["id"]
-    return owner, uuid.UUID(pid), _login(f"prisma-out-{tag}@example.com")
+    return owner, uuid.UUID(pid), sign_in(f"prisma-out-{tag}@example.com")
 
 
 def entry(i, doi=None, key=None):
@@ -155,7 +150,7 @@ def test_different_dois_are_never_merged_even_with_same_title_key(project):
     assert flow(owner, pid)["identification"]["after_duplicates_removed"] == 2
 
 
-def test_only_the_latest_version_of_a_search_counts(project):
+def test_prisma_identification_counts_only_the_latest_search_version(project):
     owner, pid, _ = project
     sid = add_run(pid, "openalex", [entry(1, "10.1/a"), entry(2, "10.1/b")])
     add_run(pid, "openalex", [entry(3, "10.1/c")], search_id=sid, version=2)

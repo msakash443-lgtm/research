@@ -8,11 +8,12 @@ from app import front_matter_task
 from app.database import SessionLocal
 from app.models import AuditEvent, DocumentVersion, ManuscriptOutput
 from app.task_registry import PermanentTaskError
-from tests.test_manuscript_export import _login, _new_document, _save, _text
+from tests.api_helpers import sign_in_user
+from tests.test_manuscript_export import _new_document, _save, _text
 
 
 def _world():
-    client, user_id = _login(f"front-integration-{uuid.uuid4().hex}@example.org")
+    client, user_id = sign_in_user(f"front-integration-{uuid.uuid4().hex}@example.org")
     pid = client.post("/api/projects", json={"title": "Front integration"}).json()["id"]
     doc = _new_document(pid, user_id, "Introduction", 1)
     _save(client, pid, doc, {"type": "doc", "content": [{"type": "paragraph", "content": [_text("A saved section.", "a", user_id)]}]})

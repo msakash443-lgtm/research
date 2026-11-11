@@ -162,3 +162,29 @@ def test_what_cannot_be_locked_is_refused_and_a_foreign_item_is_not_found(world)
     foreign_source = other.post(f"/api/projects/{foreign}/sources", json={"title": "Theirs"}).json()["id"]
     assert _lock(world, "source", foreign_source).status_code == 404  # not in this project
     assert world["owner"].get(f"/api/projects/{pid}/ai-locks").json() == []
+
+
+def test_a_lock_set_while_pre_screening_runs_stops_the_next_item_from_being_sent(world):
+    # The lock lands in the middle of the run (after the first model call, from another request). The second
+    # source was undecided and unlocked when the run listed its work, so only the per-item recheck before its
+    # model call can keep it from being sent.
+    owner = world["owner"]
+    pid = world["pid"]
+    locked_target = world["ids"][1]
+
+    class LockingLLM(ScriptedLLM):
+        def complete(self, system_prompt, user_prompt):
+            if not self.prompts:
+                assert owner.put(f"/api/projects/{pid}/ai-locks/source/{locked_target}").status_code == 200
+            return super().complete(system_prompt, user_prompt)
+
+    llm = LockingLLM([answer("include", "I1"), answer("include", "I1"), answer("include", "I1")])
+    with SessionLocal() as db:
+        project = db.get(Project, uuid.UUID(pid))
+        result = run_prescreen(db, project, llm=llm, min_confidence=0.6, actor="tester")
+
+    assert (result.suggested, result.locked) == (2, 1)
+    assert len(llm.prompts) == 2 and not any("Paper 1" in user for _, user in llm.prompts)
+    with SessionLocal() as db:
+        decided = {r.source_id for r in db.scalars(select(ScreeningDecision))}
+    assert uuid.UUID(locked_target) not in decided

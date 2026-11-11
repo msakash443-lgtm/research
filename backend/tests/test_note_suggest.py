@@ -4,6 +4,8 @@ A project is suggested when at least 15% of the note's distinct content words ap
 least 20% do, up to three sources. The suggested project's stage is offered alongside it.
 """
 
+import pytest
+
 from app.note_suggest import ProjectSummary, SourceSummary, suggest
 
 WAGE = ProjectSummary(
@@ -39,12 +41,15 @@ def test_suggests_sources_at_or_above_the_threshold_with_their_project():
     assert [(item.target_id, item.project_id) for item in sources] == [("s1", "p1")]
 
 
-def test_nothing_is_suggested_for_a_note_with_no_shared_words():
-    assert suggest("Bananas and apples", [WAGE, LFPR], SOURCES) == []
-
-
-def test_a_note_of_only_stop_words_suggests_nothing():
-    assert suggest("The of and to", [WAGE, LFPR], SOURCES) == []
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param("Bananas and apples", id="no-shared-words"),
+        pytest.param("The of and to", id="only-stop-words"),
+    ],
+)
+def test_nothing_is_suggested_when_the_note_shares_no_meaningful_words(text):
+    assert suggest(text, [WAGE, LFPR], SOURCES) == []
 
 
 def test_a_single_shared_word_below_fifteen_percent_is_not_enough():

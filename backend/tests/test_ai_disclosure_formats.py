@@ -10,7 +10,8 @@ from app import ai_disclosure_formats as f
 from app import suggestion_store
 from app.database import SessionLocal
 from app.models import AuditEvent, Document, DocumentVersion
-from tests.test_provenance_reports_api import _doc, _document, _login, _project, _report, _save, _typed
+from tests.api_helpers import create_project, sign_in_user
+from tests.test_provenance_reports_api import _doc, _document, _report, _save, _typed
 
 COVERED = [{"document_id": "d1", "title": "Introduction"}, {"document_id": "d2", "title": "Methods"}, {"document_id": "d3", "title": "Results"}]
 
@@ -92,8 +93,8 @@ def _ai_version(project_id, document_id, user_id, text, number=1):
 
 @pytest.fixture
 def world():
-    client, user_id = _login(f"disc-{uuid.uuid4().hex[:8]}@example.org")
-    project_id = _project(client)
+    client, user_id = sign_in_user(f"disc-{uuid.uuid4().hex[:8]}@example.org")
+    project_id = create_project(client, "Manuscript")
     intro = _document(project_id, user_id, "Introduction", 1)
     methods = _document(project_id, user_id, "Methods", 2)
     assert _save(client, project_id, intro, _doc(_typed("Remote work changed wages.", "s1", user_id)), 0).status_code == 201
@@ -152,6 +153,6 @@ def test_the_export_is_audited_with_ids_and_counts_only(world):
 
 
 def test_another_project_cannot_read_the_export(world):
-    other, _ = _login(f"other-{uuid.uuid4().hex[:8]}@example.org")
-    other_project = _project(other)
+    other, _ = sign_in_user(f"other-{uuid.uuid4().hex[:8]}@example.org")
+    other_project = create_project(other, "Manuscript")
     assert other.get(f"/api/projects/{other_project}/provenance-reports/{world['report']}/ai-disclosure").status_code == 404

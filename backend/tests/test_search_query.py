@@ -46,12 +46,28 @@ def test_duplicates_ignoring_case_are_removed_keeping_the_first():
     assert block("Women", "women", "WOMEN", "girls").terms == ("Women", "girls")
 
 
-def test_non_ascii_terms_survive():
-    assert render(query(block("महिला श्रम", "résumé"))) == '("महिला श्रम" OR "résumé")'
-
-
-def test_wildcard_is_unquoted_single_word_truncation():
-    assert render(query(block("employ*", "job search"))) == '(employ* OR "job search")'
+@pytest.mark.parametrize(
+    "terms,expected",
+    [
+        pytest.param(
+            ("महिला श्रम", "résumé"),
+            '("महिला श्रम" OR "résumé")',
+            id="non-ascii-terms-survive",
+        ),
+        pytest.param(
+            ("employ*", "job search"),
+            '(employ* OR "job search")',
+            id="wildcard-is-unquoted-single-word-truncation",
+        ),
+        pytest.param(
+            ("trade and growth", "cause or effect"),
+            '("trade and growth" OR "cause or effect")',
+            id="operator-words-inside-a-phrase-are-fine",
+        ),
+    ],
+)
+def test_render_formats_various_term_shapes_correctly(terms, expected):
+    assert render(query(block(*terms))) == expected
 
 
 @pytest.mark.parametrize("bad", ["*", "a*", "em*ploy", "*employ", "employ ment*", "employ**"])
@@ -69,10 +85,6 @@ def test_terms_that_could_change_the_query_are_refused_not_altered(bad):
         normalise_term(bad)
     with pytest.raises(ValidationError):
         block(bad)
-
-
-def test_operator_words_inside_a_phrase_are_fine():
-    assert render(query(block("trade and growth", "cause or effect"))) == '("trade and growth" OR "cause or effect")'
 
 
 def test_length_limits():

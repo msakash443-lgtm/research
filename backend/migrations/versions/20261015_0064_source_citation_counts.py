@@ -6,7 +6,7 @@ Create Date: 2026-10-15
 
 Additive: three nullable columns on `sources`. NULL means "unknown" (no service gave a count),
 so existing rows need no backfill. Values come only from `PaperRecord.cited_by_count`, which is
-validated as >= 0; no table-level check is added, so SQLite needs no table rebuild.
+validated as >= 0; no table-level check is added.
 """
 
 from typing import Sequence, Union

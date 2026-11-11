@@ -121,6 +121,24 @@ def test_a_known_good_reference_can_be_cited(world, services, fake_llm):
     assert run["status"] == "completed"
     assert run["answer"] == "Fake answer [S1]."
     assert rejections(c, pid) == []
+def test_a_retracted_verified_source_cannot_be_cited(world, services, fake_llm):
+    c, pid = world
+    sid = add_source(c, pid)
+    assert automatic_check(c, pid, sid)["metadata_verified"] is True
+    from app.database import SessionLocal
+    from app.models import Source
+    with SessionLocal() as db:
+        db.get(Source, uuid.UUID(sid)).quality_flags = ["retracted"]
+        db.commit()
+
+    run = research(c, pid)
+
+    assert_blocked(run, rejections(c, pid), 1, "retracted_citation", "cited a retracted source")
+    assert run["input_snapshot"]["sources"][0]["quality_flags"] == ["retracted"]
+    user = json.loads(fake_llm.requests[0].content)["messages"][1]["content"]
+    assert "Status: RETRACTED — do not cite" in user
+
+
 
 
 def test_a_source_verified_by_a_person_can_be_cited(world, fake_llm):
@@ -221,7 +239,7 @@ def test_the_prompt_tells_the_model_which_sources_it_may_cite(world, fake_llm):
     assert "Verified — may be cited." in blocks["A verified study"]
     assert "NOT VERIFIED — do not cite this source." in blocks["An unverified study"]
     assert "Verified — may be cited." not in blocks["An unverified study"]
-    assert run["prompt_version"] == "evidence_synthesis@4"
+    assert run["prompt_version"] == "evidence_synthesis@5"
 
 
 def test_older_prompt_versions_render_without_the_citation_marker():
@@ -285,25 +303,27 @@ def test_the_citation_reader_checks_source_markers_inside_nested_or_unclosed_bra
     assert _cited_indices(citation) == expected
     sources = [{"verified": index != 1} for index in range(1, max(expected) + 1)]
     assert _citation_problem(citation, sources) == (1, "unverified_citation")
-@pytest.mark.parametrize("text", ["[S.1]", "[S:1]", "[S*1]"])
-def test_a_bracket_with_an_s_number_token_the_reader_cannot_parse_is_flagged_unparseable(text):
-    """M1.10.7: punctuation between "S" and its digit isn't a recognised separator, so it must be flagged
-    rather than silently read as "no citation" — a run can still be rejected even with no known index."""
-    from app.agent.executor import _unparseable_citation_bracket
-
-    assert _unparseable_citation_bracket(text) is True
-
 
 @pytest.mark.parametrize(
-    "text",
+    "text,expected",
     [
-        "[Smith and Jones 2020]", "[CS2 model]", "[see discussion, section 2]",
-        "[S1, S2]", "[S1 to S3]", "no brackets S2 here", "[S_1]",  # underscore is a word char, not a separator
+        pytest.param("[S.1]", True, id="punctuation-dot-between-s-and-digit"),
+        pytest.param("[S:1]", True, id="punctuation-colon-between-s-and-digit"),
+        pytest.param("[S*1]", True, id="punctuation-asterisk-between-s-and-digit"),
+        pytest.param("[Smith and Jones 2020]", False, id="ordinary-author-year-bracket"),
+        pytest.param("[CS2 model]", False, id="cs2-model-is-not-a-citation"),
+        pytest.param("[see discussion, section 2]", False, id="prose-bracket-is-not-a-citation"),
+        pytest.param("[S1, S2]", False, id="fully-readable-citation-list"),
+        pytest.param("[S1 to S3]", False, id="fully-readable-citation-range"),
+        pytest.param("no brackets S2 here", False, id="no-brackets-at-all"),
+        pytest.param("[S_1]", False, id="underscore-is-a-word-char-not-a-separator"),
     ],
 )
-def test_ordinary_non_citation_brackets_are_never_flagged_unparseable(text):
-    """The M1.10.7 fallback must not fire on text M1.10.6 deliberately treats as not-a-citation, or on a
-    normal, fully-readable citation."""
+def test_unparseable_citation_bracket_flags_only_tokens_the_reader_cannot_parse(text, expected):
+    """M1.10.7: punctuation between "S" and its digit isn't a recognised separator, so it must be flagged
+    rather than silently read as "no citation" (a run can still be rejected even with no known index);
+    the fallback must not fire on text M1.10.6 deliberately treats as not-a-citation, or on a normal,
+    fully-readable citation."""
     from app.agent.executor import _unparseable_citation_bracket
 
-    assert _unparseable_citation_bracket(text) is False
+    assert _unparseable_citation_bracket(text) is expected

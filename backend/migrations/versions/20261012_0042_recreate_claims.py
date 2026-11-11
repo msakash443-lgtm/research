@@ -10,7 +10,7 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 
-from app.claim_guard import SQLITE_DELETE, SQLITE_INSERT, SQLITE_MOVE, SQLITE_VERIFY, POSTGRES_FUNCTION, POSTGRES_TRIGGERS
+from app.claim_guard import POSTGRES_FUNCTION, POSTGRES_TRIGGERS
 
 
 revision: str = "20261012_0042"
@@ -47,20 +47,14 @@ def upgrade() -> None:
     )
     for column in ("claim_id", "source_id", "excerpt_id"):
         op.create_index(f"ix_claim_evidence_{column}", "claim_evidence", [column])
-    dialect = op.get_bind().dialect.name
-    if dialect == "sqlite":
-        for statement in (SQLITE_VERIFY, SQLITE_INSERT, SQLITE_DELETE, SQLITE_MOVE):
-            op.execute(sa.text(statement))
-    elif dialect == "postgresql":
-        op.execute(sa.text(POSTGRES_FUNCTION))
-        for statement in POSTGRES_TRIGGERS:
-            op.execute(sa.text(statement))
+    op.execute(sa.text(POSTGRES_FUNCTION))
+    for statement in POSTGRES_TRIGGERS:
+        op.execute(sa.text(statement))
 
 
 def downgrade() -> None:
     if op.get_bind().scalar(sa.text("SELECT COUNT(*) FROM claims")):
         raise RuntimeError("Cannot downgrade claims while claim rows exist")
-    if op.get_bind().dialect.name == "postgresql":
-        op.execute("DROP FUNCTION claim_evidence_guard() CASCADE")
+    op.execute("DROP FUNCTION claim_evidence_guard() CASCADE")
     op.drop_table("claim_evidence")
     op.drop_table("claims")

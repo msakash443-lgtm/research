@@ -78,47 +78,30 @@ def upgrade() -> None:
     op.create_index("ix_note_revisions_note_id", "note_revisions", ["note_id"])
 
     # Append-only enforcement for note_revisions (mirrors 20261003_0006_audit_events_append_only.py).
-    dialect = bind.dialect.name
-    if dialect == "postgresql":
-        op.execute(
-            """
-            CREATE OR REPLACE FUNCTION note_revisions_append_only() RETURNS trigger AS $$
-            BEGIN
-                RAISE EXCEPTION 'note_revisions is append-only: rows cannot be updated or deleted';
-            END;
-            $$ LANGUAGE plpgsql
-            """
-        )
-        op.execute(
-            "CREATE TRIGGER note_revisions_no_update_delete BEFORE UPDATE OR DELETE ON note_revisions "
-            "FOR EACH ROW EXECUTE FUNCTION note_revisions_append_only()"
-        )
-        op.execute(
-            "CREATE TRIGGER note_revisions_no_truncate BEFORE TRUNCATE ON note_revisions "
-            "FOR EACH STATEMENT EXECUTE FUNCTION note_revisions_append_only()"
-        )
-    elif dialect == "sqlite":
-        for name, verb in (("note_revisions_no_update", "UPDATE"), ("note_revisions_no_delete", "DELETE")):
-            op.execute(
-                f"""
-                CREATE TRIGGER IF NOT EXISTS {name} BEFORE {verb} ON note_revisions
-                BEGIN
-                    SELECT RAISE(ABORT, 'note_revisions is append-only: rows cannot be updated or deleted');
-                END
-                """
-            )
+    op.execute(
+        """
+        CREATE OR REPLACE FUNCTION note_revisions_append_only() RETURNS trigger AS $$
+        BEGIN
+            RAISE EXCEPTION 'note_revisions is append-only: rows cannot be updated or deleted';
+        END;
+        $$ LANGUAGE plpgsql
+        """
+    )
+    op.execute(
+        "CREATE TRIGGER note_revisions_no_update_delete BEFORE UPDATE OR DELETE ON note_revisions "
+        "FOR EACH ROW EXECUTE FUNCTION note_revisions_append_only()"
+    )
+    op.execute(
+        "CREATE TRIGGER note_revisions_no_truncate BEFORE TRUNCATE ON note_revisions "
+        "FOR EACH STATEMENT EXECUTE FUNCTION note_revisions_append_only()"
+    )
 
 
 def downgrade() -> None:
     bind = op.get_bind()
-    if bind.dialect.name == "postgresql":
-        op.execute("DROP TRIGGER IF EXISTS note_revisions_no_truncate ON note_revisions")
-        op.execute("DROP TRIGGER IF EXISTS note_revisions_no_update_delete ON note_revisions")
-        op.execute("DROP FUNCTION IF EXISTS note_revisions_append_only()")
-    elif bind.dialect.name == "sqlite":
-        op.execute("DROP TRIGGER IF EXISTS note_revisions_no_delete")
-        op.execute("DROP TRIGGER IF EXISTS note_revisions_no_update")
-
+    op.execute("DROP TRIGGER IF EXISTS note_revisions_no_truncate ON note_revisions")
+    op.execute("DROP TRIGGER IF EXISTS note_revisions_no_update_delete ON note_revisions")
+    op.execute("DROP FUNCTION IF EXISTS note_revisions_append_only()")
     op.drop_index("ix_note_revisions_note_id", table_name="note_revisions")
     op.drop_table("note_revisions")
     op.drop_index("ix_notes_project_id", table_name="notes")

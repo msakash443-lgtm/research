@@ -29,5 +29,4 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     for table in TABLES:
-        # Plain DROP COLUMN (not a batch rebuild) so SQLite keeps the table's triggers.
         op.drop_column(table, "created_by")

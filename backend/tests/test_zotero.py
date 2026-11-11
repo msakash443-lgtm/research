@@ -27,14 +27,9 @@ from app.zotero import (
     zotero_item_to_record,
 )
 from gate_helpers import approve_earlier_gates
+from tests.api_helpers import sign_in_user
 
 USER_ID = "12345"
-
-
-def _login(email):
-    client = TestClient(app)
-    user_id = client.post("/api/auth/development/login", json={"email": email, "display_name": "Z"}).json()["id"]
-    return client, user_id
 
 
 @pytest.fixture
@@ -87,7 +82,7 @@ def make_library(initial_items=(), get_failures=(), post_failures=()):
 @pytest.fixture
 def world(zotero, monkeypatch):
     """A project with its owner, a fake library wired into the task handlers, and a gate-approved pull."""
-    client, owner_id = _login(f"zot-{uuid.uuid4().hex[:8]}@example.com")
+    client, owner_id = sign_in_user(f"zot-{uuid.uuid4().hex[:8]}@example.com")
     project_id = client.post("/api/projects", json={"title": "Zotero sync"}).json()["id"]
     lib_client, state, seen = make_library()
     monkeypatch.setattr("app.task_handlers.build_zotero_client", lambda: lib_client)
@@ -157,7 +152,7 @@ def test_status_reports_configuration_and_counts(world):
 
 def test_endpoints_refuse_with_409_while_not_configured(monkeypatch):
     get_settings.cache_clear()  # default settings: zotero off
-    client, _ = _login(f"zot-off-{uuid.uuid4().hex[:8]}@example.com")
+    client, _ = sign_in_user(f"zot-off-{uuid.uuid4().hex[:8]}@example.com")
     project_id = client.post("/api/projects", json={"title": "Off"}).json()["id"]
 
     pulled = client.post(f"/api/projects/{project_id}/zotero/pull")

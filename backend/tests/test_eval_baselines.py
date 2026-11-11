@@ -45,7 +45,7 @@ def test_the_extraction_prompt_is_registered_as_an_extraction_eval():
 
 
 def test_live_prompts_are_discovered_from_the_code():
-    assert {"screening_prescreen@2", "evidence_synthesis@4", "synonym_suggestions@1"} <= set(bl.live_prompt_refs())
+    assert {"screening_prescreen@2", "evidence_synthesis@5", "synonym_suggestions@1"} <= set(bl.live_prompt_refs())
 
 
 def test_a_load_prompt_call_the_rule_cannot_see_is_an_error(tmp_path):
@@ -57,7 +57,7 @@ def test_a_load_prompt_call_the_rule_cannot_see_is_an_error(tmp_path):
 
 # ---- the rule, on made-up baselines (these are test inputs, not gold data) ---------------------------
 
-LIVE = {"screening_prescreen@1", "evidence_synthesis@4"}
+LIVE = {"screening_prescreen@1", "evidence_synthesis@5"}
 NONE_ENTRY = {"eval": "none", "reason": "no gold type"}
 
 
@@ -69,7 +69,7 @@ def _report(tmp_path, name="r.json", **over):
 
 
 def _check(tmp_path, screening_entry, *, has_gold=True, current_hash="h1", extra=None):
-    baselines = {"screening_prescreen@1": screening_entry, "evidence_synthesis@4": NONE_ENTRY, **(extra or {})}
+    baselines = {"screening_prescreen@1": screening_entry, "evidence_synthesis@5": NONE_ENTRY, **(extra or {})}
     return bl.problems(baselines, LIVE, has_gold=has_gold, current_hash=current_hash, report_dir=tmp_path)
 
 
@@ -78,8 +78,8 @@ def test_a_fresh_passing_report_satisfies_the_rule(tmp_path):
 
 
 def test_a_new_prompt_version_without_an_entry_fails(tmp_path):
-    found = bl.problems({"evidence_synthesis@4": NONE_ENTRY}, LIVE, has_gold=False, current_hash="h", report_dir=tmp_path)
-    assert found == ["screening_prescreen@1: no baseline entry; run the evaluation (or add an eval 'none' entry with a reason)"]
+    found = bl.problems({"screening_prescreen@1": NONE_ENTRY}, LIVE, has_gold=False, current_hash="h", report_dir=tmp_path)
+    assert found == ["evidence_synthesis@5: no baseline entry; run the evaluation (or add an eval 'none' entry with a reason)"]
 
 
 def test_an_entry_for_a_retired_prompt_version_fails(tmp_path):
@@ -125,8 +125,8 @@ def test_broken_entries_are_reported(tmp_path, entry, expected):
 
 def test_eval_none_needs_a_reason(tmp_path):
     found = _check(tmp_path, {"eval": "screening", "status": "unevaluated", "reason": "x"}, has_gold=False,
-                   extra={"evidence_synthesis@4": {"eval": "none", "reason": " "}})
-    assert found == ["evidence_synthesis@4: eval 'none' needs a reason"]
+                   extra={"evidence_synthesis@5": {"eval": "none", "reason": " "}})
+    assert found == ["evidence_synthesis@5: eval 'none' needs a reason"]
 
 
 def test_a_baseline_status_must_match_its_report(tmp_path):

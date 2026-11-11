@@ -2,39 +2,43 @@
 Alembic head, instead of letting the first request that touches a missing column 500 with no
 explanation (reproduced live, X.160 walkthrough)."""
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
-from sqlalchemy.pool import StaticPool
 
 from app.main import app
 from app.migration_status import database_migration_status, revisions_behind, script_directory
 
 
-def test_an_up_to_date_database_reports_nothing():
-    script = script_directory()
-    head = script.get_current_head()
-    eng = create_engine("sqlite:///:memory:")
+@pytest.fixture
+def scratch_engine(scratch_database_url):
+    eng = create_engine(scratch_database_url)
+    yield eng
+    eng.dispose()
+
+
+def _stamp(eng, revision: str) -> None:
     with eng.begin() as c:
         c.execute(text("CREATE TABLE alembic_version (version_num VARCHAR(32))"))
-        c.execute(text("INSERT INTO alembic_version VALUES (:v)"), {"v": head})
-    assert database_migration_status(eng) is None
+        c.execute(text("INSERT INTO alembic_version VALUES (:v)"), {"v": revision})
 
 
-def test_a_database_with_no_alembic_version_table_reports_nothing():
+def test_an_up_to_date_database_reports_nothing(scratch_engine):
+    _stamp(scratch_engine, script_directory().get_current_head())
+    assert database_migration_status(scratch_engine) is None
+
+
+def test_a_database_with_no_alembic_version_table_reports_nothing(scratch_engine):
     # A fresh dev/test database built by `AUTO_CREATE_SCHEMA`, not Alembic: not this check's job.
-    eng = create_engine("sqlite:///:memory:")
-    assert database_migration_status(eng) is None
+    assert database_migration_status(scratch_engine) is None
 
 
-def test_a_revision_id_the_code_does_not_know_reports_nothing_rather_than_guessing():
-    eng = create_engine("sqlite:///:memory:")
-    with eng.begin() as c:
-        c.execute(text("CREATE TABLE alembic_version (version_num VARCHAR(32))"))
-        c.execute(text("INSERT INTO alembic_version VALUES ('not_a_real_revision')"))
-    assert database_migration_status(eng) is None
+def test_a_revision_id_the_code_does_not_know_reports_nothing_rather_than_guessing(scratch_engine):
+    _stamp(scratch_engine, "not_a_real_revision")
+    assert database_migration_status(scratch_engine) is None
 
 
-def test_a_database_several_migrations_behind_reports_the_exact_count():
+def test_a_database_several_migrations_behind_reports_the_exact_count(scratch_engine):
     script = script_directory()
     head = script.get_current_head()
     # Three real steps back from head (asserted first so this test fails loudly, not silently,
@@ -42,11 +46,8 @@ def test_a_database_several_migrations_behind_reports_the_exact_count():
     steps = list(script.walk_revisions(base="base", head=head))
     assert len(steps) >= 4
     three_back = steps[3].revision  # steps[0] is head; walk_revisions descends toward base
-    eng = create_engine("sqlite:///:memory:")
-    with eng.begin() as c:
-        c.execute(text("CREATE TABLE alembic_version (version_num VARCHAR(32))"))
-        c.execute(text("INSERT INTO alembic_version VALUES (:v)"), {"v": three_back})
-    status = database_migration_status(eng)
+    _stamp(scratch_engine, three_back)
+    status = database_migration_status(scratch_engine)
     assert status is not None
     assert status == {
         "behind": 3,
@@ -66,18 +67,15 @@ def test_revisions_behind_a_single_step_is_one_not_two():
     assert revisions_behind(one_back, script) == 1
 
 
-def test_ready_reports_the_migration_gap_when_the_database_is_behind(monkeypatch):
+def test_ready_reports_the_migration_gap_when_the_database_is_behind(monkeypatch, scratch_engine):
     from app import main as main_module
 
     script = script_directory()
     head = script.get_current_head()
     steps = list(script.walk_revisions(base="base", head=head))
     two_back = steps[2].revision
-    eng = create_engine("sqlite:///:memory:", poolclass=StaticPool, connect_args={"check_same_thread": False})
-    with eng.begin() as c:
-        c.execute(text("CREATE TABLE alembic_version (version_num VARCHAR(32))"))
-        c.execute(text("INSERT INTO alembic_version VALUES (:v)"), {"v": two_back})
-    monkeypatch.setattr(main_module, "engine", eng)
+    _stamp(scratch_engine, two_back)
+    monkeypatch.setattr(main_module, "engine", scratch_engine)
 
     response = TestClient(app).get("/ready")
     assert response.status_code == 200

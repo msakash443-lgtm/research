@@ -1,0 +1,82 @@
+# Research type: experimental study (X.172 decision, docs/step-by-step-journey-audit.md §3). Keeps the full journey's 19 stages
+# and gates, but G8 (locked analysis plan) comes before data collection (X.177): pre-registration is the point of the type.
+# Exit-condition rules (app/exit_conditions.py) follow the stage they guard, not an adjacent pair, so this order is safe.
+# Five stages are relabelled for an experimental audience.
+name = "experimental"
+version = 1
+label = "Experimental study"
+description = "A study that assigns participants to conditions and tests pre-registered hypotheses."
+human_participants = true
+
+[[stages]]
+stage = "idea"
+
+[[stages]]
+stage = "scoped"
+gate = "G1"
+
+[[stages]]
+stage = "search_planned"
+gate = "G2"
+
+[[stages]]
+stage = "retrieved"
+
+[[stages]]
+stage = "screened"
+gate = "G3"
+
+[[stages]]
+stage = "extracted"
+gate = "G4"
+
+[[stages]]
+stage = "synthesized"
+
+[[stages]]
+stage = "gaps_selected"
+gate = "G5"
+
+[[stages]]
+stage = "framework"
+gate = "G6"
+label = "Hypotheses & conditions"
+
+[[stages]]
+stage = "design_approved"
+gate = "G7"
+label = "Experimental design & ethics"
+
+[[stages]]
+stage = "plan_locked"
+gate = "G8"
+label = "Pre-registration locked"
+
+[[stages]]
+stage = "data_collected"
+label = "Experiment run"
+
+[[stages]]
+stage = "analyzed"
+gate = "G9"
+label = "Confirmatory analysis"
+
+[[stages]]
+stage = "drafted"
+gate = "G10"
+
+[[stages]]
+stage = "revised"
+
+[[stages]]
+stage = "submission_ready"
+gate = "G11"
+
+[[stages]]
+stage = "submitted"
+
+[[stages]]
+stage = "revision_loop"
+
+[[stages]]
+stage = "accepted"

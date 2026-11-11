@@ -6,20 +6,18 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.database import SessionLocal
-from app.main import app
 from app.models import AiSuggestion, AuditEvent, Task
 from app.task_handlers import WORKSPACE_AI_ACTION
 from app.task_registry import PermanentTaskError, get_handler
+from tests.api_helpers import create_project, sign_in
 
 
-def _project(email, *, ai="suggestions_only"):
-    client = TestClient(app)
-    assert client.post("/api/auth/development/login", json={"email": email, "display_name": "U"}).status_code == 200
-    pid = client.post("/api/projects", json={"title": "Workspace AI"}).json()["id"]
+def _project_with_ai_mode(email, *, ai="suggestions_only"):
+    client = sign_in(email)
+    pid = create_project(client, "Workspace AI")
     if ai != "suggestions_only":
         assert client.put(f"/api/projects/{pid}/ai-settings", json={"ai_involvement": ai}).status_code == 200
     return client, pid
@@ -53,7 +51,7 @@ def _reply(fake_llm, payload):
     fake_llm.handler = lambda request: {"choices": [{"message": {"content": json.dumps(payload)}}]}
 
 
-def _run_task(payload):
+def _run_workspace_task(payload):
     handler = get_handler(WORKSPACE_AI_ACTION)
     handler(SimpleNamespace(payload=payload, ensure_owned=lambda: None))
 
@@ -70,7 +68,7 @@ def _audit(pid, action):
 
 
 def test_with_ai_off_nothing_is_queued_and_the_code_says_why(fake_llm):
-    client, pid = _project("wai-off@example.com", ai="off")
+    client, pid = _project_with_ai_mode("wai-off@example.com", ai="off")
     doc = _document(client, pid)
     response = _request(client, pid, document_id=doc)
     assert response.status_code == 409
@@ -78,16 +76,29 @@ def test_with_ai_off_nothing_is_queued_and_the_code_says_why(fake_llm):
     assert fake_llm.requests == []
 
 
-def test_clearer_sentence_needs_the_full_level(fake_llm):
-    client, pid = _project("wai-level@example.com")
+@pytest.mark.parametrize(
+    "email,action,code",
+    [
+        pytest.param(
+            "wai-level@example.com", "clearer_sentence", "ai_level_too_low",
+            id="clearer-sentence-needs-the-full-level",
+        ),
+        pytest.param(
+            "wai-nosrc@example.com", "find_evidence", "no_sources",
+            id="find-evidence-refuses-a-project-with-no-sources",
+        ),
+    ],
+)
+def test_an_action_a_project_cannot_satisfy_is_refused_with_its_code(fake_llm, email, action, code):
+    client, pid = _project_with_ai_mode(email)
     doc = _document(client, pid)
-    response = _request(client, pid, action="clearer_sentence", document_id=doc)
+    response = _request(client, pid, action=action, document_id=doc)
     assert response.status_code == 409
-    assert response.json()["detail"]["code"] == "ai_level_too_low"
+    assert response.json()["detail"]["code"] == code
 
 
 def test_a_locked_document_is_never_sent(fake_llm):
-    client, pid = _project("wai-lock@example.com")
+    client, pid = _project_with_ai_mode("wai-lock@example.com")
     doc = _document(client, pid)
     assert client.patch(f"/api/projects/{pid}/documents/{doc}", json={"ai_locked": True}).status_code == 200
     response = _request(client, pid, document_id=doc)
@@ -97,30 +108,22 @@ def test_a_locked_document_is_never_sent(fake_llm):
 
 
 def test_text_must_be_present_and_capped(fake_llm):
-    client, pid = _project("wai-text@example.com")
+    client, pid = _project_with_ai_mode("wai-text@example.com")
     doc = _document(client, pid)
     assert _request(client, pid, text="   ", document_id=doc).status_code == 422
     assert _request(client, pid, text="x" * 2001, document_id=doc).status_code == 422
 
 
 def test_exactly_one_target_is_required(fake_llm):
-    client, pid = _project("wai-target@example.com")
+    client, pid = _project_with_ai_mode("wai-target@example.com")
     assert _request(client, pid).status_code == 422
     doc = _document(client, pid)
     note = str(uuid.uuid4())
     assert _request(client, pid, document_id=doc, note_id=note).status_code == 422
 
 
-def test_find_evidence_refuses_a_project_with_no_sources(fake_llm):
-    client, pid = _project("wai-nosrc@example.com")
-    doc = _document(client, pid)
-    response = _request(client, pid, action="find_evidence", document_id=doc)
-    assert response.status_code == 409
-    assert response.json()["detail"]["code"] == "no_sources"
-
-
 def test_a_valid_request_queues_one_task_and_audits_without_the_text(fake_llm):
-    client, pid = _project("wai-queue@example.com")
+    client, pid = _project_with_ai_mode("wai-queue@example.com")
     doc = _document(client, pid)
     response = _request(client, pid, document_id=doc)
     assert response.status_code == 202
@@ -135,7 +138,7 @@ def test_a_valid_request_queues_one_task_and_audits_without_the_text(fake_llm):
 
 
 def test_preview_says_where_the_text_would_go_and_sends_nothing(fake_llm):
-    client, pid = _project("wai-preview@example.com")
+    client, pid = _project_with_ai_mode("wai-preview@example.com")
     doc = _document(client, pid)
     before = len(_suggestions(pid))
     response = client.post(f"/api/projects/{pid}/ai/suggestions/preview", json={"action": "challenge", "text": "One two three.", "document_id": doc})
@@ -147,11 +150,11 @@ def test_preview_says_where_the_text_would_go_and_sends_nothing(fake_llm):
 
 
 def test_the_handler_stores_one_suggestion_per_comment_with_the_record_of_what_was_sent(fake_llm):
-    client, pid = _project("wai-handler@example.com")
+    client, pid = _project_with_ai_mode("wai-handler@example.com")
     doc = _document(client, pid)
     text = "Output rose in every country studied."
     _reply(fake_llm, {"items": [{"text": "Which countries, and how many?"}, {"text": "Does this hold outside the trial?"}]})
-    _run_task({"project_id": pid, "action": "challenge", "text": text, "document_id": doc, "actor": "user:test"})
+    _run_workspace_task({"project_id": pid, "action": "challenge", "text": text, "document_id": doc, "actor": "user:test"})
 
     rows = _suggestions(pid)
     assert [r.content for r in rows] == ["Which countries, and how many?", "Does this hold outside the trial?"]
@@ -166,24 +169,24 @@ def test_the_handler_stores_one_suggestion_per_comment_with_the_record_of_what_w
 
 
 def test_a_reply_naming_an_unsent_source_stores_nothing_and_fails_loudly(fake_llm):
-    client, pid = _project("wai-unknown@example.com")
+    client, pid = _project_with_ai_mode("wai-unknown@example.com")
     doc = _document(client, pid)
     _source_with_excerpt(client, pid)
     _reply(fake_llm, {"items": [{"source_id": str(uuid.uuid4()), "excerpt_id": str(uuid.uuid4()), "stance": "supports", "why": "Trust me."}]})
     with pytest.raises(PermanentTaskError):
-        _run_task({"project_id": pid, "action": "find_evidence", "text": "Output rose.", "document_id": doc, "actor": "user:test"})
+        _run_workspace_task({"project_id": pid, "action": "find_evidence", "text": "Output rose.", "document_id": doc, "actor": "user:test"})
     assert _suggestions(pid) == []
     [failed] = _audit(pid, "ai.failed")
     assert failed["code"] == "unknown_source"
 
 
 def test_evidence_suggestions_keep_the_source_and_stance_and_the_model_sees_only_sent_excerpts(fake_llm):
-    client, pid = _project("wai-evidence@example.com")
+    client, pid = _project_with_ai_mode("wai-evidence@example.com")
     doc = _document(client, pid)
     sid = _source_with_excerpt(client, pid)
     excerpt_id = _excerpt_id(sid)
     _reply(fake_llm, {"items": [{"source_id": sid, "excerpt_id": excerpt_id, "stance": "supports", "why": "Same direction of effect."}]})
-    _run_task({"project_id": pid, "action": "find_evidence", "text": "Output rose.", "document_id": doc, "actor": "user:test"})
+    _run_workspace_task({"project_id": pid, "action": "find_evidence", "text": "Output rose.", "document_id": doc, "actor": "user:test"})
     [row] = _suggestions(pid)
     assert row.evidence_json == [{"source_id": sid, "excerpt_id": excerpt_id, "stance": "supports"}]
     [sent] = fake_llm.requests
@@ -191,24 +194,24 @@ def test_evidence_suggestions_keep_the_source_and_stance_and_the_model_sees_only
 
 
 def test_a_reply_that_repeats_the_prompt_is_refused(fake_llm):
-    client, pid = _project("wai-leak@example.com")
+    client, pid = _project_with_ai_mode("wai-leak@example.com")
     doc = _document(client, pid)
     from app.prompt_registry import load_prompt
 
     system = load_prompt("workspace_challenge", 1).system
     _reply(fake_llm, {"items": [{"text": system[:200]}]})
     with pytest.raises(PermanentTaskError):
-        _run_task({"project_id": pid, "action": "challenge", "text": "A claim.", "document_id": doc, "actor": "user:test"})
+        _run_workspace_task({"project_id": pid, "action": "challenge", "text": "A claim.", "document_id": doc, "actor": "user:test"})
     assert _suggestions(pid) == []
     [failed] = _audit(pid, "ai.failed")
     assert failed["code"] == "leaked_prompt"
 
 
 def test_a_stored_workspace_suggestion_is_decided_through_the_shared_accept_endpoint(fake_llm):
-    client, pid = _project("wai-accept@example.com")
+    client, pid = _project_with_ai_mode("wai-accept@example.com")
     doc = _document(client, pid)
     _reply(fake_llm, {"items": [{"text": "Which countries?"}]})
-    _run_task({"project_id": pid, "action": "challenge", "text": "A claim.", "document_id": doc, "actor": "user:test"})
+    _run_workspace_task({"project_id": pid, "action": "challenge", "text": "A claim.", "document_id": doc, "actor": "user:test"})
     [row] = _suggestions(pid)
     accepted = client.post(f"/api/projects/{pid}/suggestions/{row.id}/accept")
     assert accepted.status_code == 200
@@ -216,9 +219,9 @@ def test_a_stored_workspace_suggestion_is_decided_through_the_shared_accept_endp
 
 
 def test_the_list_says_which_workspace_action_made_each_suggestion(fake_llm):
-    client, pid = _project("wai-list@example.com")
+    client, pid = _project_with_ai_mode("wai-list@example.com")
     doc = _document(client, pid)
     _reply(fake_llm, {"items": [{"text": "Which countries?"}]})
-    _run_task({"project_id": pid, "action": "challenge", "text": "A claim.", "document_id": doc, "actor": "user:test"})
+    _run_workspace_task({"project_id": pid, "action": "challenge", "text": "A claim.", "document_id": doc, "actor": "user:test"})
     [row] = client.get(f"/api/projects/{pid}/suggestions?target_kind=document&target_id={doc}").json()
     assert row["action"] == "challenge"

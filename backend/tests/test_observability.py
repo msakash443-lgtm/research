@@ -151,7 +151,7 @@ def _queued(pid, type, max_attempts=3):
 def _as_utc(moment):
     from datetime import timezone
 
-    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)  # SQLite returns naive datetimes
+    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
 
 
 def test_a_step_that_failed_for_good_after_running_is_not_timed_even_though_it_has_a_start_and_a_finish(monkeypatch):

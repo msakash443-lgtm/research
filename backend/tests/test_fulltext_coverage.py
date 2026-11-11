@@ -39,7 +39,7 @@ def _world():
     return client, project
 
 
-def _source(client, project, title, **fields):
+def _source_with_coverage_fields(client, project, title, **fields):
     source_id = client.post(f"/api/projects/{project}/sources", json={"title": title}).json()["id"]
     with SessionLocal() as db:
         row = db.get(Source, uuid.UUID(source_id))
@@ -51,9 +51,9 @@ def _source(client, project, title, **fields):
 
 def test_source_screening_queue_and_matrix_all_report_the_same_level():
     client, project = _world()
-    full = _source(client, project, "Has the PDF", fulltext_path="stored", abstract="A")
-    abstract = _source(client, project, "Abstract only", abstract="Some abstract.", oa_url="https://repo.example/a")
-    none = _source(client, project, "Title only")
+    full = _source_with_coverage_fields(client, project, "Has the PDF", fulltext_path="stored", abstract="A")
+    abstract = _source_with_coverage_fields(client, project, "Abstract only", abstract="Some abstract.", oa_url="https://repo.example/a")
+    none = _source_with_coverage_fields(client, project, "Title only")
 
     sources = {s["id"]: s["coverage"] for s in client.get(f"/api/projects/{project}/sources").json()}
     assert {sid: c["level"] for sid, c in sources.items()} == {full: FULL_TEXT, abstract: ABSTRACT_ONLY, none: NOT_ACCESSIBLE}
@@ -65,5 +65,12 @@ def test_source_screening_queue_and_matrix_all_report_the_same_level():
     matrix = client.get(f"/api/projects/{project}/evidence-matrix").json()["papers"]
     assert {p["source_id"]: p["coverage"]["level"] for p in matrix} == {full: FULL_TEXT, abstract: ABSTRACT_ONLY, none: NOT_ACCESSIBLE}
 
+    assert client.get(f"/api/projects/{project}/extractions/verification-queue").json() == []
+    for stage in ("title_abstract", "full_text"):
+        decision = client.post(f"/api/projects/{project}/screening/decisions", json={
+            "source_id": full, "stage": stage, "decision": "include",
+        })
+        assert decision.status_code == 201, decision.text
     verification = client.get(f"/api/projects/{project}/extractions/verification-queue").json()
-    assert {i["source_id"]: i["coverage"]["level"] for i in verification} == {full: FULL_TEXT, abstract: ABSTRACT_ONLY, none: NOT_ACCESSIBLE}
+    assert [item["source_id"] for item in verification] == [full]
+    assert verification[0]["coverage"]["level"] == FULL_TEXT

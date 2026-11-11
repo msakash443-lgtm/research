@@ -38,7 +38,7 @@ globalThis.document = {
 };
 
 const askStep = (await import("../steps/ask.js")).default;
-test("the Ask step renders the shared frame with a Previous step link to Verify extraction", () => {
+test("the Ask step renders the shared frame with a Previous step link to Gaps & questions", () => {
   const root = new Node("main");
   askStep.render(root, {
     project: { id: "project-1" },
@@ -50,8 +50,8 @@ test("the Ask step renders the shared frame with a Previous step link to Verify 
   const footer = root.children.find((node) => node.className === "step-footer");
   const previous = footer.children.find((node) => node.className === "back-link");
   assert.ok(footer);
-  assert.equal(previous.textContent, "Previous step: Verify extraction");
-  assert.equal(previous.href, "#/p/project-1/verification");
+  assert.equal(previous.textContent, "Previous step: Gaps & questions");
+  assert.equal(previous.href, "#/p/project-1/gaps");
 });
 
 test("condition fixes render with the level, exact message and accessible destination", async () => {

@@ -8,6 +8,7 @@ from sqlalchemy import select
 from app.database import SessionLocal
 from app.main import app
 from app.models import ResearchBrief, SearchQuery, Source
+from tests.api_helpers import insert_source
 
 THIS_YEAR = datetime.now(timezone.utc).year
 
@@ -30,10 +31,8 @@ def _search(world, database, *, ran=True):
         db.commit()
 
 
-def _source(world, title, *, year=2015, citations=None, language=None):
-    with SessionLocal() as db:
-        db.add(Source(project_id=world["pid"], title=title, year=year, citation_count=citations, language=language))
-        db.commit()
+def _source_with_citations(world, title, *, year=2015, citations=None, language=None):
+    insert_source(str(world["pid"]), title=title, year=year, citation_count=citations, language=language)
 
 
 def _brief(world, min_citations):
@@ -68,11 +67,10 @@ def test_a_single_database_is_a_warning_and_two_are_not(world):
 
 def test_a_citation_threshold_reports_what_it_hides_and_how_much_is_recent(world):
     _brief(world, 10)
-    _source(world, "old and cited", year=2010, citations=500)
-    _source(world, "old and low", year=2010, citations=2)
-    _source(world, "new and low", year=THIS_YEAR, citations=0)
-    _source(world, "unknown count", year=2014, citations=None)
-
+    _source_with_citations(world, "old and cited", year=2010, citations=500)
+    _source_with_citations(world, "old and low", year=2010, citations=2)
+    _source_with_citations(world, "new and low", year=THIS_YEAR, citations=0)
+    _source_with_citations(world, "unknown count", year=2014, citations=None)
     warning = warnings(world)["citation_count_bias"]
 
     assert warning["level"] == "warning"
@@ -84,9 +82,8 @@ def test_a_citation_threshold_reports_what_it_hides_and_how_much_is_recent(world
 
 def test_a_source_exactly_recent_years_old_counts_as_recent(world):
     _brief(world, 10)
-    _source(world, "exactly two years old", year=THIS_YEAR - 1, citations=0)
-    _source(world, "one year older", year=THIS_YEAR - 2, citations=0)
-
+    _source_with_citations(world, "exactly two years old", year=THIS_YEAR - 1, citations=0)
+    _source_with_citations(world, "one year older", year=THIS_YEAR - 2, citations=0)
     warning = warnings(world)["citation_count_bias"]
 
     assert warning["hidden_below_threshold"] == 2
@@ -95,22 +92,21 @@ def test_a_source_exactly_recent_years_old_counts_as_recent(world):
 
 def test_a_source_with_exactly_the_threshold_count_is_not_hidden(world):
     _brief(world, 10)
-    _source(world, "exactly at the threshold", year=2010, citations=10)
-    _source(world, "just below", year=2010, citations=9)
-
+    _source_with_citations(world, "exactly at the threshold", year=2010, citations=10)
+    _source_with_citations(world, "just below", year=2010, citations=9)
     warning = warnings(world)["citation_count_bias"]
 
     assert warning["hidden_below_threshold"] == 1
 
 
 def test_no_threshold_means_no_citation_warning(world):
-    _source(world, "x", citations=1)
+    _source_with_citations(world, "x", citations=1)
 
     assert "citation_count_bias" not in warnings(world)
 
 
 def test_language_is_reported_as_not_assessable_because_it_is_not_recorded(world):
-    _source(world, "x")
+    _source_with_citations(world, "x")
 
     found = warnings(world)["language_bias"]
 
@@ -127,9 +123,9 @@ def test_merged_sources_are_not_counted(world):
 
 
 def test_merged_and_screened_out_sources_are_left_out_of_the_language_counts(world):
-    _source(world, "english", language="en")
-    _source(world, "merged french", language="fr")
-    _source(world, "excluded german", language="de")
+    _source_with_citations(world, "english", language="en")
+    _source_with_citations(world, "merged french", language="fr")
+    _source_with_citations(world, "excluded german", language="de")
     with SessionLocal() as db:
         db.get(Source, _id_of(world, "merged french")).merged_into = uuid.uuid4()
         db.commit()

@@ -4,7 +4,7 @@ Revision ID: 20261007_0032
 Revises: 20261007_0031
 Create Date: 2026-10-07
 
-Additive: four new tables. Vectors are JSON lists so SQLite and Postgres both work (no pgvector yet).
+Additive: four new tables. Vectors are JSON lists (no pgvector yet).
 """
 
 from typing import Sequence, Union

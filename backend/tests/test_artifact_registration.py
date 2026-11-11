@@ -16,6 +16,7 @@ from app.models import Artifact, ArtifactStatus, AuditEvent, Project, ProjectSta
 from app.stage_order import StageNotInChain
 from app.search_query import BooleanQuery, ConceptBlock
 from app.search_runner import run_search
+from tests.api_helpers import include_at_full_text
 from gate_helpers import approve_earlier_gates
 
 
@@ -120,6 +121,7 @@ def _source_with_pdf(world, monkeypatch):
     with SessionLocal() as db:
         db.get(Source, uuid.UUID(sid)).fulltext_path = key
         db.commit()
+    include_at_full_text(world["pid"], sid)
     return sid
 
 
@@ -151,7 +153,7 @@ def _ai_extraction(world, source_id):
     extraction_id = uuid.uuid4()
     with SessionLocal() as db:
         db.add(Extraction(id=extraction_id, project_id=uuid.UUID(world["pid"]), source_id=uuid.UUID(source_id),
-                          schema_version="default@1", fields_json=EXTRACTION["fields"], evidence_spans=EXTRACTION["evidence"],
+                          schema_version="default@2", fields_json=EXTRACTION["fields"], evidence_spans=EXTRACTION["evidence"],
                           extracted_by="ai", extractor="agent:test", model_id="test-model", prompt_version="test@1"))
         db.commit()
     return str(extraction_id)

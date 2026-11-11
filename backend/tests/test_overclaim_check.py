@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.overclaim_check import check_text
+from tests.api_helpers import sign_in
 
 
 def _kinds(text, design="observational"):
@@ -24,17 +25,30 @@ def test_the_same_sentence_is_fine_for_an_experimental_design():
     assert _kinds("Remote work causes burnout among staff.", "experimental") == []
 
 
-def test_unspecified_design_still_checks_causal_wording():
-    assert _kinds("Training leads to higher pay.", "unspecified") == ["causal_language"]
+@pytest.mark.parametrize(
+    "text,design,kind",
+    [
+        pytest.param(
+            "Training leads to higher pay.",
+            "unspecified",
+            "causal_language",
+            id="causal-wording-still-checked-under-an-unspecified-design",
+        ),
+        pytest.param(
+            "All adults always prefer a shorter commute.",
+            "experimental",
+            "overgeneralization",
+            id="overgeneralization-flagged-even-for-an-experiment",
+        ),
+    ],
+)
+def test_a_finding_fires_under_a_design_that_does_not_exempt_it(text, design, kind):
+    assert _kinds(text, design) == [kind]
 
 
 def test_hedged_or_associational_wording_is_not_flagged():
     assert _kinds("Remote work may lead to burnout.") == []
     assert _kinds("Remote work is associated with burnout.") == []
-
-
-def test_generalization_is_flagged_even_for_an_experiment():
-    assert _kinds("All adults always prefer a shorter commute.", "experimental") == ["overgeneralization"]
 
 
 def test_a_sentence_can_carry_both_findings_and_each_sentence_is_judged_alone():
@@ -88,12 +102,6 @@ def test_an_unknown_design_is_refused_rather_than_switching_the_check_off():
         check_text("Anything.", "experimentl")
 
 
-def _login(email):
-    client = TestClient(app)
-    client.post("/api/auth/development/login", json={"email": email, "display_name": "O"})
-    return client
-
-
 def _section_with(client, text):
     pid = client.post("/api/projects", json={"title": "Overclaim"}).json()["id"]
     did = client.post(f"/api/projects/{pid}/documents", json={"title": "Discussion", "position": 0}).json()["id"]
@@ -108,7 +116,7 @@ def _section_with(client, text):
 
 
 def test_the_route_reports_findings_for_the_latest_saved_version():
-    client = _login("overclaim.route@example.org")
+    client = sign_in("overclaim.route@example.org")
     pid, did = _section_with(client, "Remote work causes burnout. Everyone agrees.")
     body = client.get(f"/api/projects/{pid}/documents/{did}/overclaim-check").json()
     assert body["design"] == "observational" and body["ok"] is False and body["version_id"]
@@ -116,7 +124,7 @@ def test_the_route_reports_findings_for_the_latest_saved_version():
 
 
 def test_the_route_honours_the_design_query_and_refuses_an_unknown_one():
-    client = _login("overclaim.design@example.org")
+    client = sign_in("overclaim.design@example.org")
     pid, did = _section_with(client, "Remote work causes burnout.")
     url = f"/api/projects/{pid}/documents/{did}/overclaim-check"
     assert client.get(url, params={"design": "experimental"}).json()["ok"] is True
@@ -124,7 +132,7 @@ def test_the_route_honours_the_design_query_and_refuses_an_unknown_one():
 
 
 def test_an_unsaved_section_is_ok_with_no_version():
-    client = _login("overclaim.empty@example.org")
+    client = sign_in("overclaim.empty@example.org")
     pid = client.post("/api/projects", json={"title": "Empty"}).json()["id"]
     did = client.post(f"/api/projects/{pid}/documents", json={"title": "Intro", "position": 0}).json()["id"]
     body = client.get(f"/api/projects/{pid}/documents/{did}/overclaim-check").json()
@@ -132,7 +140,7 @@ def test_an_unsaved_section_is_ok_with_no_version():
 
 
 def test_another_projects_section_is_not_found():
-    client = _login("overclaim.scope@example.org")
+    client = sign_in("overclaim.scope@example.org")
     mine = client.post("/api/projects", json={"title": "Mine"}).json()["id"]
-    _, foreign = _section_with(_login("overclaim.other@example.org"), "Text.")
+    _, foreign = _section_with(sign_in("overclaim.other@example.org"), "Text.")
     assert client.get(f"/api/projects/{mine}/documents/{foreign}/overclaim-check").status_code == 404

@@ -2,7 +2,7 @@ import uuid
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import ProgrammingError
 
 from app.database import SessionLocal
 from app.main import app
@@ -120,7 +120,7 @@ def test_database_rejects_cross_project_question_gap_and_hypothesis_links(world)
         db.add_all([local_question, foreign_gap])
         db.flush()
         db.add(ResearchQuestionGap(project_id=uuid.UUID(project_id), research_question_id=local_question.id, gap_id=foreign_gap.id))
-        with pytest.raises(IntegrityError):
+        with pytest.raises(ProgrammingError, match="must belong to one project"):
             db.commit()
         db.rollback()
 
@@ -129,6 +129,6 @@ def test_database_rejects_cross_project_question_gap_and_hypothesis_links(world)
         db.add(local_question)
         db.flush()
         db.add(Hypothesis(project_id=uuid.UUID(other), research_question_id=local_question.id, statement="Foreign hypothesis", direction="positive", theoretical_basis="Basis", empirical_support="Support", created_by="test"))
-        with pytest.raises(IntegrityError):
+        with pytest.raises(ProgrammingError, match="must belong to its research question project"):
             db.commit()
         db.rollback()

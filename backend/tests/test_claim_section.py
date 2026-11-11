@@ -3,14 +3,11 @@ import uuid
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests.api_helpers import create_project
 
 
-def _login(client: TestClient) -> None:
+def _sign_in(client: TestClient) -> None:
     client.post("/api/auth/development/login", json={"email": f"sec-{uuid.uuid4().hex}@example.com", "display_name": "S"})
-
-
-def _project(client: TestClient) -> str:
-    return client.post("/api/projects", json={"title": "Section binding"}).json()["id"]
 
 
 def _section(client: TestClient, pid: str, title: str, position: int) -> str:
@@ -30,8 +27,8 @@ def _claim(client: TestClient, pid: str, text: str, section_id: str | None = Non
 
 def test_a_claim_created_in_a_section_of_its_project_records_that_section():
     client = TestClient(app)
-    _login(client)
-    pid = _project(client)
+    _sign_in(client)
+    pid = create_project(client, "Section binding")
     intro = _section(client, pid, "Introduction", 0)
     claim = _claim(client, pid, "Remote teams share less knowledge", intro)
     assert claim["section_id"] == intro
@@ -39,9 +36,9 @@ def test_a_claim_created_in_a_section_of_its_project_records_that_section():
 
 def test_a_claim_cannot_be_bound_to_a_section_of_another_project():
     client = TestClient(app)
-    _login(client)
-    mine = _project(client)
-    other = _project(client)
+    _sign_in(client)
+    mine = create_project(client, "Section binding")
+    other = create_project(client, "Section binding")
     foreign_section = _section(client, other, "Their introduction", 0)
     response = client.post(f"/api/projects/{mine}/claims", json={"text": "x", "section_id": foreign_section})
     assert response.status_code == 404
@@ -49,8 +46,8 @@ def test_a_claim_cannot_be_bound_to_a_section_of_another_project():
 
 def test_the_outline_lists_only_the_claims_bound_to_that_section_with_their_verification_state():
     client = TestClient(app)
-    _login(client)
-    pid = _project(client)
+    _sign_in(client)
+    pid = create_project(client, "Section binding")
     intro = _section(client, pid, "Introduction", 0)
     method = _section(client, pid, "Method", 1)
     first = _claim(client, pid, "Remote teams share less knowledge", intro)
@@ -66,8 +63,8 @@ def test_the_outline_lists_only_the_claims_bound_to_that_section_with_their_veri
 
 def test_the_outline_of_another_projects_section_is_not_found():
     client = TestClient(app)
-    _login(client)
-    mine = _project(client)
-    other = _project(client)
+    _sign_in(client)
+    mine = create_project(client, "Section binding")
+    other = create_project(client, "Section binding")
     foreign_section = _section(client, other, "Their introduction", 0)
     assert client.get(f"/api/projects/{mine}/documents/{foreign_section}/outline").status_code == 404

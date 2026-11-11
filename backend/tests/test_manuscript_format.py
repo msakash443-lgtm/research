@@ -25,14 +25,16 @@ def test_the_total_limit_is_checked_across_all_sections():
     assert problems == [{"section": "total", "words": 5, "limit": 4}]
 
 
-def test_a_limit_for_a_section_that_is_not_in_the_draft_is_refused():
+@pytest.mark.parametrize(
+    "limits",
+    [
+        pytest.param({"Abstrct": 10}, id="a-limit-for-a-section-not-in-the-draft"),
+        pytest.param({"Abstract": 0}, id="a-limit-that-is-not-a-positive-whole-number"),
+    ],
+)
+def test_an_invalid_word_limit_is_refused(limits):
     with pytest.raises(ValueError):
-        check_word_limits({"Abstract": "one"}, {"Abstrct": 10})
-
-
-def test_a_limit_must_be_a_positive_whole_number():
-    with pytest.raises(ValueError):
-        check_word_limits({"Abstract": "one"}, {"Abstract": 0})
+        check_word_limits({"Abstract": "one"}, limits)
 
 
 def test_an_outline_section_the_draft_has_no_heading_for_is_reported_as_missing():
@@ -48,18 +50,25 @@ def test_an_unknown_genre_is_refused_rather_than_passed():
         missing_sections("poster", ["Introduction"])
 
 
-def test_a_figure_wider_than_the_guideline_is_flagged_on_width():
-    figures = [{"name": "Figure 1", "width_mm": 180, "dpi": 300}]
-    assert check_figure_specs(figures, {"max_width_mm": 170}) == [
-        {"figure": "Figure 1", "measure": "width_mm", "value": 180, "limit": 170}
-    ]
-
-
-def test_a_figure_below_the_minimum_resolution_is_flagged_on_dpi():
-    figures = [{"name": "Figure 2", "width_mm": 80, "dpi": 150}]
-    assert check_figure_specs(figures, {"min_dpi": 300}) == [
-        {"figure": "Figure 2", "measure": "dpi", "value": 150, "limit": 300}
-    ]
+@pytest.mark.parametrize(
+    "figure,limits,flag",
+    [
+        pytest.param(
+            {"name": "Figure 1", "width_mm": 180, "dpi": 300},
+            {"max_width_mm": 170},
+            {"figure": "Figure 1", "measure": "width_mm", "value": 180, "limit": 170},
+            id="wider-than-the-guideline-is-flagged-on-width",
+        ),
+        pytest.param(
+            {"name": "Figure 2", "width_mm": 80, "dpi": 150},
+            {"min_dpi": 300},
+            {"figure": "Figure 2", "measure": "dpi", "value": 150, "limit": 300},
+            id="below-the-minimum-resolution-is-flagged-on-dpi",
+        ),
+    ],
+)
+def test_a_figure_outside_its_limit_is_flagged(figure, limits, flag):
+    assert check_figure_specs([figure], limits) == [flag]
 
 
 def test_a_figure_within_both_limits_is_not_flagged():

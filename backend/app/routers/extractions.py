@@ -94,6 +94,15 @@ def _locked(db: Session, project: Project) -> bool:
     return gate is not None and gate.status == GateStatus.approved
 
 
+def _included_or_409(db: Session, project: Project, source: Source) -> None:
+    """Require the final, human full-text include decision before evidence enters extraction."""
+    if source.id not in {included.id for included in included_sources(db, project)}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only sources included at full text can be extracted.",
+        )
+
+
 def _checked(
     db: Session, project: Project, source: Source, schema_name: str,
     fields: dict[str, Any], evidence: dict[str, Any],
@@ -377,6 +386,7 @@ def request_ai_extraction(
     ))
     if source is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
+    _included_or_409(db, project, source)
     if not source.fulltext_path:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This source has no stored full-text PDF")
     try:
@@ -419,6 +429,7 @@ def create_extraction(
     source = db.scalar(select(Source).where(Source.id == payload.source_id, Source.project_id == project.id, Source.merged_into.is_(None)))
     if source is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
+    _included_or_409(db, project, source)
     version = _checked(db, project, source, payload.schema_name, payload.fields, payload.evidence)
     actor = audit.user_actor(user)
     row = Extraction(
@@ -466,6 +477,7 @@ def update_extraction(
     source = db.get(Source, row.source_id)
     if source is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
+    _included_or_409(db, project, source)
     _checked(db, project, source, name, payload.fields, payload.evidence)
     before = sorted(k for k, v in row.fields_json.items() if v is not None)
     row.fields_json = payload.fields

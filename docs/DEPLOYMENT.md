@@ -106,7 +106,7 @@ The web and worker containers need the same configuration (both read it from the
 The application refuses to start in production (`ENVIRONMENT=production`) if:
 
 - `SESSION_SECRET` is a placeholder or shorter than 32 characters;
-- `DATABASE_URL` is SQLite;
+- `DATABASE_URL` is not a PostgreSQL URL (refused in every environment, not only production);
 - `AUTO_CREATE_SCHEMA` is true;
 - `PUBLIC_ORIGIN` is not `https://`, or `GOOGLE_REDIRECT_URI` does not start with it;
 - the Google OAuth client id or secret is missing;
@@ -239,7 +239,7 @@ The application does not encrypt stored data itself. Encryption at rest is a **h
 | Data | Requirement |
 | --- | --- |
 | PostgreSQL (projects, sources, notes, audit log, run snapshots) | Managed Postgres with storage encryption enabled, or an encrypted volume. Backups and point-in-time-recovery copies must be encrypted too. |
-| Object storage (uploaded files) | With `OBJECT_STORAGE_BACKEND=s3`: server-side encryption on the bucket (S3 SSE or the provider's equivalent). With `local`: an encrypted volume. The default `./data/objects` path and the dev SQLite file are plain files and are for development only. |
+| Object storage (uploaded files) | With `OBJECT_STORAGE_BACKEND=s3`: server-side encryption on the bucket (S3 SSE or the provider's equivalent). With `local`: an encrypted volume. The default `./data/objects` path is a plain directory and is for development only. |
 
 - The hosting platform is not chosen yet (Q13), so the exact mechanism is not named here. Record it in the pre-flight decisions once it is, and confirm it in the provider's console before any real user or participant data is stored.
 - Nothing in the application can check this. Treat it as a manual item on the release checklist.

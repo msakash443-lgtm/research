@@ -2,33 +2,26 @@ import uuid
 from datetime import datetime, timezone
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.database import SessionLocal
-from app.main import app
 from app.models import AuditEvent, Extraction, Gate, GateCode, GateStatus, ProjectMember, ProjectRole
 from app.object_storage import fulltext_key
+from tests.api_helpers import create_project, create_source, sign_in_user
 from tests.test_fulltext import make_pdf
-
-
-def _login(email):
-    client = TestClient(app)
-    user_id = client.post("/api/auth/development/login", json={"email": email, "display_name": "X"}).json()["id"]
-    return client, user_id
 
 
 @pytest.fixture
 def world(monkeypatch):
     tag = uuid.uuid4().hex[:8]
-    owner, owner_id = _login(f"extract-owner-{tag}@example.com")
-    pid = owner.post("/api/projects", json={"title": "Extraction"}).json()["id"]
-    reviewer, reviewer_id = _login(f"extract-reviewer-{tag}@example.com")
+    owner, owner_id = sign_in_user(f"extract-owner-{tag}@example.com")
+    pid = create_project(owner, "Extraction")
+    reviewer, reviewer_id = sign_in_user(f"extract-reviewer-{tag}@example.com")
     with SessionLocal() as db:
         db.add(ProjectMember(project_id=uuid.UUID(pid), user_id=uuid.UUID(reviewer_id), role=ProjectRole.reviewer))
         db.commit()
-    sid = owner.post(f"/api/projects/{pid}/sources", json={"title": "A paper"}).json()["id"]
+    sid = create_source(owner, pid, "A paper")
     for stage in ("title_abstract", "full_text"):
         response = owner.post(f"/api/projects/{pid}/screening/decisions", json={
             "source_id": sid, "stage": stage, "decision": "include",
@@ -71,7 +64,7 @@ def test_a_well_formed_extraction_is_stored_unverified_with_its_schema_version(w
     r = create(world)
     assert r.status_code == 201, r.text
     data = r.json()
-    assert data["schema_version"] == "default@1"
+    assert data["schema_version"] == "default@2"
     assert data["fields_json"] == GOOD["fields"] and data["evidence_spans"] == GOOD["evidence"]
     assert data["verified_by_human"] is False and data["verified_by"] is None
     assert data["extracted_by"] == "human" and data["extractor"] == world["owner_id"]
@@ -82,13 +75,30 @@ def test_a_well_formed_extraction_is_stored_unverified_with_its_schema_version(w
     assert world["reviewer"].get(f"/api/projects/{world['pid']}/extractions/{data['id']}").json() == data
 
 
-def test_extraction_capture_is_available_before_screening_is_final(world):
+def test_an_extraction_cannot_be_captured_before_final_full_text_inclusion(world):
     source = world["owner"].post(f"/api/projects/{world['pid']}/sources", json={"title": "Unscreened"}).json()["id"]
     response = world["owner"].post(f"/api/projects/{world['pid']}/extractions", json={
         "source_id": source, "fields": {}, "evidence": {},
     })
+    assert response.status_code == 409
+    assert "included at full text" in response.json()["detail"]
+
+
+
+def test_an_existing_extraction_cannot_be_edited_after_inclusion_is_revoked(world):
+    extraction_id = create(world).json()["id"]
+    response = world["owner"].post(f"/api/projects/{world['pid']}/screening/decisions", json={
+        "source_id": world["sid"], "stage": "full_text", "decision": "maybe",
+    })
     assert response.status_code == 201, response.text
 
+    edited = world["owner"].put(
+        f"/api/projects/{world['pid']}/extractions/{extraction_id}",
+        json={"fields": {}, "evidence": {}},
+    )
+
+    assert edited.status_code == 409
+    assert "included at full text" in edited.json()["detail"]
 
 def test_a_value_without_evidence_is_refused_with_every_problem(world):
     body = {
@@ -128,25 +138,25 @@ def test_a_quote_must_match_the_cited_page_and_section(world):
     assert world["owner"].get(f"/api/projects/{world['pid']}/extractions").json() == []
 
 
-def test_layout_normalised_quote_matches_the_stored_pdf(world):
+@pytest.mark.parametrize(
+    "quote,section",
+    [
+        pytest.param(
+            "We ask   whether remote work raises output",
+            "introduction",
+            id="extra-whitespace-is-layout-normalised",
+        ),
+        pytest.param(
+            "We ask whether remote work raises output",
+            "Introduction",
+            id="section-case-is-normalised",
+        ),
+    ],
+)
+def test_a_quote_that_fuzzy_matches_the_stored_pdf_is_verified_and_saved(world, quote, section):
     body = {
         "fields": {"research_question": "Does remote work raise output?"},
-        "evidence": {"research_question": {
-            "quote": "We ask   whether remote work raises output",
-            "page": 2, "section": "introduction",
-        }},
-    }
-    response = create(world, body)
-    assert response.status_code == 201, response.text
-
-
-def test_source_quote_is_verified_before_save_with_matching_citation(world):
-    body = {
-        "fields": {"research_question": "Does remote work raise output?"},
-        "evidence": {"research_question": {
-            "quote": "We ask whether remote work raises output",
-            "page": 2, "section": "Introduction",
-        }},
+        "evidence": {"research_question": {"quote": quote, "page": 2, "section": section}},
     }
     response = create(world, body)
     assert response.status_code == 201, response.text

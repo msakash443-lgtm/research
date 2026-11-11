@@ -190,8 +190,8 @@ def reenter_stage(db: Session, project: Project, target: ProjectStage, *, actor:
 
 
 def _utc_seconds(value: datetime) -> datetime:
-    """`value` in UTC, to the second. `created_at` comes from the database clock (whole seconds on SQLite,
-    sometimes without a zone), `stale_at` from Python with microseconds; compare them on equal terms."""
+    """`value` in UTC, to the second. `created_at` comes from the database clock, `stale_at` from Python
+    with microseconds; compare them on equal terms."""
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc).replace(microsecond=0)

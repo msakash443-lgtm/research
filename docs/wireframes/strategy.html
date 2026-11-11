@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scope and Gaps &amp; Questions Wireframe</title>
+<link rel="stylesheet" href="wireframe.css">
+<style>
+  .stepnav { display:flex; gap:8px; flex-wrap:wrap; padding:12px 20px; background:#fff; border-bottom:1px solid var(--line); }
+  .stepnav button[aria-current="step"] { background:var(--teal); }
+  .stepnav .group { align-self:center; color:var(--muted); font-size:12px; font-weight:700; text-transform:uppercase; }
+  .work { display:grid; grid-template-columns:minmax(0,1fr) minmax(260px,34%); gap:14px; padding:16px 20px; }
+  .stack { display:grid; align-content:start; gap:14px; }
+  .field { display:grid; gap:5px; margin:10px 0; }
+  .field label, .label { font-weight:650; }
+  input[type="text"], textarea, select { width:100%; border:1px solid #aeb8c2; border-radius:6px; padding:8px; background:#fff; color:var(--ink); }
+  textarea { min-height:78px; resize:vertical; }
+  .candidate, .curated, .objective, .finding { border:1px solid var(--line); border-radius:8px; padding:10px; margin:8px 0; background:#fff; }
+  .candidate h3, .curated h3 { margin:0 0 5px; font-size:15px; }
+  .meta { display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
+  .source-list { margin:6px 0; padding-left:20px; }
+  .source-list li { margin:4px 0; }
+  .quote { font-size:13px; }
+  .btnrow { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:10px; }
+  .objective { display:flex; justify-content:space-between; gap:8px; }
+  .statusline { min-height:20px; color:var(--navy); font-size:13px; }
+  .approval { border:1px solid var(--line); background:var(--warm); border-radius:8px; padding:10px 12px; }
+  .plan { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:8px; }
+  .plan div { border:1px solid var(--line); background:#fff; border-radius:7px; padding:9px; }
+  .readonly { color:var(--muted); font-size:13px; }
+  .screen[hidden] { display:none; }
+  @media (max-width:760px) { .work { grid-template-columns:minmax(0,1fr); padding:12px 16px; } }
+</style>
+</head>
+<body>
+<div class="wf-banner"><span><strong>WIREFRAMES</strong> · X.187 · static prototype with invented examples · not connected to the app · resets on reload</span></div>
+<header class="topbar">
+  <a class="brand" href="index.html">Research AI</a>
+  <div class="crumbs">Project · <span id="crumb">Scope</span></div>
+  <div class="spacer"></div>
+  <label class="small"><input type="checkbox" id="pin-toggle" checked> Show walkthrough questions</label>
+  <label class="small">View as
+    <select id="role"><option value="owner">Owner</option><option value="supervisor">Supervisor</option></select>
+  </label>
+</header>
+<nav class="stepnav" aria-label="Research steps">
+  <span class="group">Scope</span>
+  <button type="button" data-view="scope" aria-current="step">Idea brief</button>
+  <span class="group">Synthesize</span>
+  <button type="button" class="quiet" disabled>Verify extraction</button>
+  <button type="button" data-view="gaps" class="quiet">Gaps &amp; questions</button>
+</nav>
+
+<main>
+  <section class="screen" id="scope-screen" aria-labelledby="scope-title">
+    <section class="work">
+      <div class="stack">
+        <p class="small muted">Purpose: shape the project direction, review a reproducible landscape scan, and keep objectives in your own words.</p>
+        <div class="panel">
+          <div class="panel-head"><h1 id="scope-title">Idea brief</h1><span class="pin" title="Q1">Q1</span></div>
+          <div class="panel-body">
+            <p class="small muted">Your draft stays yours. The scan below is evidence to inspect, not a novelty decision.</p>
+            <div class="field"><label for="idea">Research idea</label><textarea id="idea">How does leader communication relate to trust in remote teams?</textarea></div>
+            <div class="field"><label for="aim">Project aim</label><input id="aim" type="text" value="Understand communication and trust in remote collaboration"></div>
+            <div class="approval">
+              <strong>G1 · Topic direction</strong>
+              <p class="small">Review the brief and landscape before asking an approver to decide. A pending approval does not prevent drafting or reading.</p>
+              <button type="button" class="quiet" data-action="g1">Request G1 approval</button>
+            </div>
+            <p class="statusline" id="scope-status" role="status" aria-live="polite"></p>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>Landscape scan</h2><span class="pin" title="Q2">Q2</span></div>
+          <div class="panel-body">
+            <p class="small muted">Example results are invented. A real scan should show each enabled service, its result count or failure, and a reproducible scan record.</p>
+            <div class="field"><label for="scan-query">Search query</label><input id="scan-query" type="text" value="remote teams leader communication trust"></div>
+            <div class="meta"><span class="chip ok">OpenAlex · 18 records</span><span class="chip ok">Crossref · 11 records</span><span class="chip warn">Semantic Scholar · unavailable</span></div>
+            <p class="small">After deduplication: 22 example records · last scan: 9 Nov 2026</p>
+            <div class="btnrow"><button type="button" class="quiet" data-action="scan">Review scan sources</button><a href="#scan-record" id="scan-record">View scan record</a></div>
+            <p class="statusline" id="scan-status" role="status" aria-live="polite"></p>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>Objectives</h2><span class="pin" title="Q3">Q3</span></div>
+          <div class="panel-body">
+            <div class="objective"><span>Describe communication practices reported in included studies.</span><span class="chip plain">Draft</span></div>
+            <div class="objective"><span>Compare how trust is measured across study settings.</span><span class="chip plain">Draft</span></div>
+            <div class="field"><label for="objective">Add an objective</label><input id="objective" type="text" placeholder="Write an objective in your own words"></div>
+            <button type="button" class="quiet" data-write data-action="objective">Add objective</button>
+            <p class="small muted">Objectives are editable drafts; nothing is approved by this wireframe.</p>
+          </div>
+        </div>
+        <div class="btnrow"><a class="quiet" href="index.html">Previous step: Overview</a><button type="button" data-view="gaps">Continue to Gaps &amp; questions</button></div>
+      </div>
+      <aside class="stack">
+        <div class="panel"><div class="panel-head"><h2>What stays open</h2></div><div class="panel-body small">You can keep drafting, reading later steps, and returning here while G1 is pending. A scan does not approve the topic or decide novelty.</div></div>
+        <div class="panel"><div class="panel-head"><h2>Project status</h2></div><div class="panel-body"><span class="chip warn">Idea · G1 pending</span><p class="small muted">No gate decision is made by this prototype.</p></div></div>
+      </aside>
+    </section>
+  </section>
+
+  <section class="screen" id="gaps-screen" aria-labelledby="gaps-title" hidden>
+    <section class="work">
+      <div class="stack">
+        <p class="small muted">Purpose: inspect evidence-derived candidates, choose what becomes a curated gap, then draft questions and hypotheses. Every choice remains yours.</p>
+        <div class="panel">
+          <div class="panel-head"><h1 id="gaps-title">Gaps &amp; questions</h1><span class="pin" title="Q4">Q4</span></div>
+          <div class="panel-body">
+            <p class="small muted">Deterministic candidates use verified evidence; they are not AI-authored claims. Empty or single-paper cells are prompts to inspect, not proof of a gap.</p>
+            <article class="candidate">
+              <div class="meta"><span class="chip warn">Suggested type: empirical</span><span class="chip plain">Rank 1 · inspect evidence</span></div>
+              <h3>Trust measures vary across remote-team studies</h3>
+              <p class="small">Reason: verified extractions from two studies mention different trust measures. Check whether the difference is a substantive gap.</p>
+              <ul class="source-list">
+                <li><a href="#source-a">Source A · verified extraction, future-research field</a><blockquote class="quote" id="source-a">“Future studies could compare how trust is measured across distributed teams.” · p. 8</blockquote></li>
+                <li><a href="#source-b">Source B · verified extraction, limitations field</a><blockquote class="quote" id="source-b">“Our measure does not capture trust-building over time.” · p. 12</blockquote></li>
+              </ul>
+              <button type="button" class="quiet" data-write data-action="curate">Add to curated gaps</button>
+            </article>
+            <div class="panel" style="margin-top:12px"><div class="panel-head"><h2>Curated gaps</h2><span class="pin" title="Q5">Q5</span></div>
+              <div class="panel-body" id="curated-gaps"><p class="small muted">No gap has been selected. Adding a candidate creates only a local draft in this prototype.</p></div>
+            </div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>Research question</h2><span class="pin" title="Q6">Q6</span></div>
+          <div class="panel-body">
+            <div class="field"><label for="question">Your question draft</label><textarea id="question">How do studies measure trust in remote teams, and how does leader communication relate to it?</textarea></div>
+            <button type="button" class="quiet" data-write data-action="critique">Check question structure</button>
+            <div id="critique" class="finding" aria-live="polite"><strong>Advisory checks have not run.</strong><p class="small muted">A checklist can flag structure and evidence links; it cannot validate novelty, feasibility, ethics, or scholarly importance.</p></div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>Hypotheses</h2></div>
+          <div class="panel-body">
+            <div class="field"><label for="hypothesis">Hypothesis draft</label><input id="hypothesis" type="text" value="More frequent leader communication is associated with higher reported trust."></div>
+            <button type="button" class="quiet" data-write data-action="hypothesis">Save local draft</button>
+            <p class="small muted">A hypothesis is an editable proposal, not a result or an approved analysis plan.</p>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>Research-plan view</h2><span class="pin" title="Q7">Q7</span></div>
+          <div class="panel-body plan">
+            <div><strong>Question</strong><p class="small">Current draft · human review needed</p></div>
+            <div><strong>Selected gap</strong><p class="small" id="plan-gap">None selected</p></div>
+            <div><strong>Hypothesis</strong><p class="small">Draft · not an analysis decision</p></div>
+            <div><strong>Evidence</strong><p class="small">Source links above · inspect before use</p></div>
+          </div>
+        </div>
+        <div class="approval"><strong>G5 · Gap selection</strong><p class="small">The researcher selects and justifies gaps. Approval remains a separate human decision.</p><button type="button" class="quiet" data-action="g5">Request G5 approval</button><p class="statusline" id="gap-status" role="status" aria-live="polite"></p></div>
+        <div class="btnrow"><button type="button" class="quiet" data-view="scope">Previous step: Scope</button><button type="button" class="quiet" data-action="next">Continue to research design</button></div>
+      </div>
+      <aside class="stack">
+        <div class="panel"><div class="panel-head"><h2>Research process</h2></div><div class="panel-body small"><ol><li>Verify extraction</li><li><strong>Gaps &amp; questions</strong></li><li>Research design</li></ol><p>Drafting and reading remain open while approvals are pending.</p></div></div>
+        <div class="panel"><div class="panel-head"><h2>Review roles</h2></div><div class="panel-body small" id="role-note">Owner: can edit drafts and request an approval. Approval is not automatic.</div></div>
+        <div class="panel"><div class="panel-head"><h2>Evidence boundary</h2></div><div class="panel-body small">A candidate is not a finding. A human must inspect the linked, verified evidence and decide whether to curate it.</div></div>
+      </aside>
+    </section>
+  </section>
+</main>
+
+<div class="questions" id="questions">
+  <strong>Open questions for the scholar walkthrough</strong>
+  <ol>
+    <li><span class="pin">Q1</span> Is the idea brief, landscape scan, and objectives grouping clear on Scope? Where would you expect to approve the topic?</li>
+    <li><span class="pin">Q2</span> Does the scan show enough provenance—services, counts, failures, and a record—to judge what was searched?</li>
+    <li><span class="pin">Q3</span> Are objectives easy to distinguish from approved commitments?</li>
+    <li><span class="pin">Q4</span> Can you tell a deterministic evidence-derived candidate from an AI proposal and a curated gap?</li>
+    <li><span class="pin">Q5</span> Is the evidence and reason enough to decide whether to curate this candidate?</li>
+    <li><span class="pin">Q6</span> Does the advisory critique help you revise the question without implying scholarly validation?</li>
+    <li><span class="pin">Q7</span> Can you find the research-plan view, see what is draft, and go back to earlier work?</li>
+  </ol>
+</div>
+<script src="wireframe.js"></script>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const views = { scope: $("scope-screen"), gaps: $("gaps-screen") };
+  function show(view) {
+    for (const [name, node] of Object.entries(views)) node.hidden = name !== view;
+    document.querySelectorAll("[data-view]").forEach((button) => {
+      const active = button.dataset.view === view;
+      if (button.matches("nav button")) button.setAttribute("aria-current", active ? "step" : "false");
+    });
+    $("crumb").textContent = view === "scope" ? "Scope" : "Gaps & questions";
+    window.scrollTo(0, 0);
+  }
+  document.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => show(button.dataset.view)));
+  $("role").addEventListener("change", () => {
+    const readOnly = $("role").value === "supervisor";
+    document.querySelectorAll("[data-write]").forEach((button) => { button.disabled = readOnly; });
+    $("role-note").textContent = readOnly
+      ? "Supervisor: read-only for drafts; may approve only when the relevant approval is available."
+      : "Owner: can edit drafts and request an approval. Approval is not automatic.";
+  });
+  document.querySelectorAll("[data-action]").forEach((button) => button.addEventListener("click", () => {
+    const action = button.dataset.action;
+    if (action === "curate") {
+      $("curated-gaps").innerHTML = '<article class="curated"><h3>Trust measures vary across remote-team studies</h3><p class="small">Selected by the researcher · evidence: Source A and Source B</p><span class="chip plain">Draft · not yet approved</span></article>';
+      $("plan-gap").textContent = "Trust measures vary across remote-team studies · draft";
+    } else if (action === "critique") {
+      const text = $("question").value.trim();
+      const hasQuestion = text.endsWith("?") && (text.match(/\?/g) || []).length === 1;
+      const doubleBarrelled = /\b(and|or)\b/i.test(text);
+      $("critique").innerHTML = `<strong>Advisory structure checks · human review required</strong><ul class="small"><li>Question form: ${hasQuestion ? "pass" : "warn"} — use one clear question ending in one question mark.</li><li>Possible double-barrel: ${doubleBarrelled ? "warn" : "pass"} — review joined clauses yourself.</li><li>Novelty, feasibility, ethics, and importance: human judgment required.</li></ul>`;
+    } else if (action === "g1") {
+      $("scope-status").textContent = "Approval request shown in this prototype only; no gate was changed.";
+    } else if (action === "g5") {
+      $("gap-status").textContent = "Approval request shown in this prototype only; no gate was changed.";
+    } else if (action === "scan") {
+      $("scan-status").textContent = "Example scan reviewed. This prototype does not contact services or store a scan.";
+    } else if (action === "objective") {
+      const input = $("objective");
+      if (input.value.trim()) {
+        const item = document.createElement("div");
+        item.className = "objective";
+        item.innerHTML = `<span></span><span class="chip plain">Draft</span>`;
+        item.firstElementChild.textContent = input.value.trim();
+        input.closest(".panel-body").insertBefore(item, input.closest(".field"));
+        input.value = "";
+      }
+    } else if (action === "hypothesis") {
+      button.nextElementSibling.textContent = "Hypothesis kept as a local draft in this prototype; nothing was saved to the app.";
+    } else if (action === "next") {
+      button.textContent = "Research design is not part of this prototype";
+    }
+  }));
+})();
+</script>
+</body>
+</html>

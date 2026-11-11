@@ -96,43 +96,26 @@ def downgrade() -> None:
 
 
 def _install_append_only(table: str, message: str) -> None:
-    dialect = op.get_bind().dialect.name
-    if dialect == "postgresql":
-        op.execute(
-            f"""
-            CREATE OR REPLACE FUNCTION {table}_append_only() RETURNS trigger AS $$
-            BEGIN
-                RAISE EXCEPTION '{message}';
-            END;
-            $$ LANGUAGE plpgsql
-            """
-        )
-        op.execute(
-            f"CREATE TRIGGER {table}_no_update_delete BEFORE UPDATE OR DELETE ON {table} "
-            f"FOR EACH ROW EXECUTE FUNCTION {table}_append_only()"
-        )
-        op.execute(
-            f"CREATE TRIGGER {table}_no_truncate BEFORE TRUNCATE ON {table} "
-            f"FOR EACH STATEMENT EXECUTE FUNCTION {table}_append_only()"
-        )
-    elif dialect == "sqlite":
-        for suffix, verb in (("no_update", "UPDATE"), ("no_delete", "DELETE")):
-            op.execute(
-                f"""
-                CREATE TRIGGER IF NOT EXISTS {table}_{suffix} BEFORE {verb} ON {table}
-                BEGIN
-                    SELECT RAISE(ABORT, '{message}');
-                END
-                """
-            )
+    op.execute(
+        f"""
+        CREATE OR REPLACE FUNCTION {table}_append_only() RETURNS trigger AS $$
+        BEGIN
+            RAISE EXCEPTION '{message}';
+        END;
+        $$ LANGUAGE plpgsql
+        """
+    )
+    op.execute(
+        f"CREATE TRIGGER {table}_no_update_delete BEFORE UPDATE OR DELETE ON {table} "
+        f"FOR EACH ROW EXECUTE FUNCTION {table}_append_only()"
+    )
+    op.execute(
+        f"CREATE TRIGGER {table}_no_truncate BEFORE TRUNCATE ON {table} "
+        f"FOR EACH STATEMENT EXECUTE FUNCTION {table}_append_only()"
+    )
 
 
 def _remove_append_only(table: str) -> None:
-    dialect = op.get_bind().dialect.name
-    if dialect == "postgresql":
-        op.execute(f"DROP TRIGGER IF EXISTS {table}_no_update_delete ON {table}")
-        op.execute(f"DROP TRIGGER IF EXISTS {table}_no_truncate ON {table}")
-        op.execute(f"DROP FUNCTION IF EXISTS {table}_append_only()")
-    elif dialect == "sqlite":
-        op.execute(f"DROP TRIGGER IF EXISTS {table}_no_update")
-        op.execute(f"DROP TRIGGER IF EXISTS {table}_no_delete")
+    op.execute(f"DROP TRIGGER IF EXISTS {table}_no_update_delete ON {table}")
+    op.execute(f"DROP TRIGGER IF EXISTS {table}_no_truncate ON {table}")
+    op.execute(f"DROP FUNCTION IF EXISTS {table}_append_only()")

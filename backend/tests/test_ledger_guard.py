@@ -128,26 +128,20 @@ def test_a_document_is_not_append_only_so_its_current_version_can_move():
         assert db.get(Document, document_id).current_version_id == version_id
 
 
-def test_a_second_version_with_the_same_number_is_rejected():
+@pytest.mark.parametrize(
+    "number,client_save_id",
+    [
+        pytest.param(1, "save-2", id="a-second-version-with-the-same-number"),
+        pytest.param(2, "save-1", id="a-retried-save-with-the-same-client-save-id"),
+    ],
+)
+def test_a_version_violating_a_unique_constraint_is_rejected_by_the_database(number, client_save_id):
     document_id, _, _ = _ledger_rows()
     with SessionLocal() as db:
         db.add(
             DocumentVersion(
-                document_id=document_id, project_id=db.get(Document, document_id).project_id, number=1,
-                content_json={}, content_text="", content_hash="c" * 64, saved_by="user:l", client_save_id="save-2",
-            )
-        )
-        with pytest.raises(IntegrityError):
-            db.commit()
-
-
-def test_a_retried_save_with_the_same_client_save_id_is_rejected_by_the_database():
-    document_id, _, _ = _ledger_rows()
-    with SessionLocal() as db:
-        db.add(
-            DocumentVersion(
-                document_id=document_id, project_id=db.get(Document, document_id).project_id, number=2,
-                content_json={}, content_text="", content_hash="c" * 64, saved_by="user:l", client_save_id="save-1",
+                document_id=document_id, project_id=db.get(Document, document_id).project_id, number=number,
+                content_json={}, content_text="", content_hash="c" * 64, saved_by="user:l", client_save_id=client_save_id,
             )
         )
         with pytest.raises(IntegrityError):

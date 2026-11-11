@@ -96,3 +96,49 @@ def _shared(member_ids: list[str], terms_of: dict[str, frozenset[str]]) -> list[
             counts[term] = counts.get(term, 0) + 1
     shared = sorted((term for term, n in counts.items() if n >= 2), key=lambda t: (-counts[t], t))
     return sorted(shared[:MAX_SHARED_TERMS])
+
+
+# Closed, curated vocabularies for the population/setting context extraction (spec 5.1.1, X.189): a term is a
+# candidate only when it is one of these exact content words. Deliberately small and explicit rather than a
+# heuristic guess, so a hit is always traceable to a named word, never an inferred one.
+POPULATION_TERMS = frozenset(
+    """patients participants students nurses adults children employees teachers workers clinicians consumers
+    users residents caregivers physicians parents adolescents women men athletes managers survivors
+    clients families couples infants veterans immigrants refugees volunteers""".split()
+)
+SETTING_TERMS = frozenset(
+    """hospital hospitals school schools workplace workplaces clinic clinics university universities online
+    community classroom classrooms ward wards home homes organization organizations organisation
+    organisations company companies remote rural urban laboratory clinical outpatient inpatient virtual
+    telehealth fieldwork""".split()
+)
+
+
+@dataclass(frozen=True)
+class Context:
+    kind: str  # "population" | "setting"
+    term: str
+    idea_ids: list[str]
+
+
+def extract_contexts(ideas: list[Idea]) -> list[Context]:
+    """Population/setting terms named in idea content (spec 5.1.1: "extract constructs & contexts").
+
+    Deterministic and lexical, like `cluster_ideas`: a content word counts only when it matches
+    `POPULATION_TERMS` or `SETTING_TERMS` exactly. A candidate list for the scholar to confirm, not a
+    guarantee that every population or setting an idea names has been found.
+    """
+    usage: dict[tuple[str, str], list[str]] = {}
+    for idea in ideas:
+        terms = content_tokens(idea.text)
+        for term in sorted(terms):
+            if term in POPULATION_TERMS:
+                kind = "population"
+            elif term in SETTING_TERMS:
+                kind = "setting"
+            else:
+                continue
+            usage.setdefault((kind, term), []).append(idea.idea_id)
+    contexts = [Context(kind=kind, term=term, idea_ids=ids) for (kind, term), ids in usage.items()]
+    contexts.sort(key=lambda c: (c.kind, -len(c.idea_ids), c.term))
+    return contexts

@@ -13,18 +13,13 @@ from app.database import Base, SessionLocal
 from app.main import app
 from app.models import AuditEvent, Cluster, ClusterMember, ClusterRun, Note, ScreeningDecision, SourceEmbedding, Task
 from app.replication_export import CHILD_TABLES, EXCLUDED_TABLES, NOT_EXPORTED, project_tables, schema_revision
-
-
-def _login(email):
-    client = TestClient(app)
-    client.post("/api/auth/development/login", json={"email": email, "display_name": "Exporter"})
-    return client
+from tests.api_helpers import sign_in
 
 
 @pytest.fixture
 def world():
     tag = uuid.uuid4().hex[:8]
-    owner = _login(f"rep-{tag}@example.com")
+    owner = sign_in(f"rep-{tag}@example.com")
     pid = owner.post("/api/projects", json={"title": "Replication"}).json()["id"]
     sid = owner.post(f"/api/projects/{pid}/sources", json={
         "title": "=HYPERLINK(\"http://evil\")", "evidence_excerpt": "Sleep improves recall.", "locator": "p. 3"}).json()["id"]
@@ -128,14 +123,14 @@ def test_only_the_owner_may_export_a_co_author_and_a_stranger_may_not(world):
     screening decisions, so only the owner may download it."""
     from app.models import ProjectMember, ProjectRole
 
-    co_author = _login(f"co-author-{uuid.uuid4().hex[:8]}@example.com")
+    co_author = sign_in(f"co-author-{uuid.uuid4().hex[:8]}@example.com")
     me = co_author.get("/api/auth/me").json()["id"]
     with SessionLocal() as db:
         db.add(ProjectMember(project_id=uuid.UUID(world["pid"]), user_id=uuid.UUID(me), role=ProjectRole.co_author))
         db.commit()
     assert co_author.get(f"/api/projects/{world['pid']}/export/replication").status_code == 403
 
-    stranger = _login(f"stranger-{uuid.uuid4().hex[:8]}@example.com")
+    stranger = sign_in(f"stranger-{uuid.uuid4().hex[:8]}@example.com")
     assert stranger.get(f"/api/projects/{world['pid']}/export/replication").status_code in (403, 404)
 
 

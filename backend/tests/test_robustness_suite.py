@@ -100,9 +100,16 @@ def test_alternative_spec_refuses_a_variable_that_is_not_in_the_plan(run):
     assert r.status_code == 422 and "nope" in r.json()["detail"]
 
 
-def test_alternative_spec_without_a_variable_is_422(run):
+@pytest.mark.parametrize(
+    "kind",
+    [
+        pytest.param("alternative_spec", id="alternative-spec-without-a-variable"),
+        pytest.param("outlier_sensitivity", id="outlier-sensitivity-without-a-dataset"),
+    ],
+)
+def test_a_robustness_kind_missing_its_required_parameter_is_422(run, kind):
     client, pid, dataset_id, plan_id, run_id = run
-    r = client.post(f"/api/projects/{pid}/analysis-plans/{plan_id}/runs/{run_id}/robustness", json={"kind": "alternative_spec"})
+    r = client.post(f"/api/projects/{pid}/analysis-plans/{plan_id}/runs/{run_id}/robustness", json={"kind": kind})
     assert r.status_code == 422
 
 
@@ -111,12 +118,6 @@ def test_outlier_sensitivity_against_the_same_dataset_is_refused(run):
     r = client.post(f"/api/projects/{pid}/analysis-plans/{plan_id}/runs/{run_id}/robustness",
                      json={"kind": "outlier_sensitivity", "compare_dataset_id": dataset_id})
     assert r.status_code == 422 and "different dataset version" in r.json()["detail"]
-
-
-def test_outlier_sensitivity_without_a_dataset_is_422(run):
-    client, pid, dataset_id, plan_id, run_id = run
-    r = client.post(f"/api/projects/{pid}/analysis-plans/{plan_id}/runs/{run_id}/robustness", json={"kind": "outlier_sensitivity"})
-    assert r.status_code == 422
 
 
 def test_comparison_dataset_missing_a_required_column_is_refused(run):

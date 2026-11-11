@@ -8,8 +8,8 @@ This also merges the three heads the migration graph already had: 20261012_0042 
 20261013_0055 (ledger storage) and 20261013_0056 (session epoch), which were both written on top of 20261012_0047.
 It changes none of them, and it leaves `alembic upgrade head` with a single head again.
 
-Additive. `context_kind` gains `gap`, `claim`, `memo` (Postgres: ALTER TYPE in an autocommit block, as in
-20261005_0026; SQLite: VARCHAR with no CHECK constraint, so nothing to do). `research_context_items` gains
+Additive. `context_kind` gains `gap`, `claim`, `memo` (ALTER TYPE in an autocommit block, as in
+20261005_0026). `research_context_items` gains
 `promoted_from_note_id` (the note an item came from) and `related_item_id` (a decision's item, same project).
 
 Downgrade refuses while any gap/claim/memo item exists, or any item still links to a note or another item:
@@ -31,11 +31,9 @@ NEW_KINDS = ("gap", "claim", "memo")
 
 
 def upgrade() -> None:
-    bind = op.get_bind()
-    if bind.dialect.name == "postgresql":
-        with op.get_context().autocommit_block():
-            for kind in NEW_KINDS:
-                op.execute(f"ALTER TYPE context_kind ADD VALUE IF NOT EXISTS '{kind}'")
+    with op.get_context().autocommit_block():
+        for kind in NEW_KINDS:
+            op.execute(f"ALTER TYPE context_kind ADD VALUE IF NOT EXISTS '{kind}'")
     with op.batch_alter_table("research_context_items") as batch:
         batch.add_column(sa.Column("promoted_from_note_id", sa.Uuid(), nullable=True))
         batch.add_column(sa.Column("related_item_id", sa.Uuid(), nullable=True))
@@ -67,15 +65,14 @@ def downgrade() -> None:
         batch.drop_constraint("fk_context_items_promoted_from_note", type_="foreignkey")
         batch.drop_column("related_item_id")
         batch.drop_column("promoted_from_note_id")
-    if bind.dialect.name == "postgresql":
-        # Rebuild the type without the new values; the 'idea' value (20261005_0026) stays.
-        op.execute("ALTER TYPE context_kind RENAME TO context_kind_old")
-        op.execute(
-            "CREATE TYPE context_kind AS ENUM "
-            "('question','objective','hypothesis','methodology','variable','decision','idea')"
-        )
-        op.execute(
-            "ALTER TABLE research_context_items "
-            "ALTER COLUMN kind TYPE context_kind USING kind::text::context_kind"
-        )
-        op.execute("DROP TYPE context_kind_old")
+    # Rebuild the type without the new values; the 'idea' value (20261005_0026) stays.
+    op.execute("ALTER TYPE context_kind RENAME TO context_kind_old")
+    op.execute(
+        "CREATE TYPE context_kind AS ENUM "
+        "('question','objective','hypothesis','methodology','variable','decision','idea')"
+    )
+    op.execute(
+        "ALTER TABLE research_context_items "
+        "ALTER COLUMN kind TYPE context_kind USING kind::text::context_kind"
+    )
+    op.execute("DROP TYPE context_kind_old")

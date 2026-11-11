@@ -25,7 +25,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Plain DROP COLUMN (not a batch rebuild) so SQLite keeps the audit/excerpt triggers.
     op.drop_column("research_runs", "insufficient_reason")
     op.drop_column("research_runs", "insufficient_evidence")
     op.drop_column("research_runs", "confidence")

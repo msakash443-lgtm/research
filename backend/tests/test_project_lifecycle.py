@@ -10,17 +10,12 @@ from app.database import SessionLocal
 from app.main import app
 from app.models import AuditEvent, Note, NoteAttachment, NoteKind, NoteStatus, Project, ProjectMember, ProjectRole, Source, utcnow
 from app.object_storage import fulltext_key, get_object_store
+from tests.api_helpers import sign_in
 
 
 @pytest.fixture(autouse=True)
 def _scratch_object_store(tmp_path, monkeypatch):
     monkeypatch.setattr(get_settings(), "object_storage_root", str(tmp_path / "objects"))
-
-
-def _login(email):
-    client = TestClient(app)
-    assert client.post("/api/auth/development/login", json={"email": email, "display_name": "U"}).status_code == 200
-    return client
 
 
 def _bare_project(owner_id: uuid.UUID, *, title: str = "Bare") -> uuid.UUID:
@@ -34,7 +29,7 @@ def _bare_project(owner_id: uuid.UUID, *, title: str = "Bare") -> uuid.UUID:
 
 
 def test_owner_can_archive_and_unarchive():
-    owner = _login("archiver@example.com")
+    owner = sign_in("archiver@example.com")
     project_id = owner.post("/api/projects", json={"title": "Archivable"}).json()["id"]
 
     response = owner.post(f"/api/projects/{project_id}/archive")
@@ -53,14 +48,14 @@ def test_owner_can_archive_and_unarchive():
 
 
 def test_archive_and_unarchive_are_owner_only():
-    owner = _login("archive-owner@example.com")
+    owner = sign_in("archive-owner@example.com")
     project_id = owner.post("/api/projects", json={"title": "Guarded"}).json()["id"]
-    co_author = _login("archive-co-author@example.com")
+    co_author = sign_in("archive-co-author@example.com")
     with SessionLocal() as db:
         co_author_id = co_author.get("/api/auth/me").json()["id"]
         db.add(ProjectMember(project_id=uuid.UUID(project_id), user_id=uuid.UUID(co_author_id), role=ProjectRole.co_author))
         db.commit()
-    stranger = _login("archive-stranger@example.com")
+    stranger = sign_in("archive-stranger@example.com")
 
     assert co_author.post(f"/api/projects/{project_id}/archive").status_code == 403
     assert stranger.post(f"/api/projects/{project_id}/archive").status_code == 404
@@ -71,7 +66,7 @@ def test_archive_and_unarchive_are_owner_only():
 
 
 def test_archiving_twice_or_unarchiving_an_active_project_is_refused():
-    owner = _login("archive-twice@example.com")
+    owner = sign_in("archive-twice@example.com")
     project_id = owner.post("/api/projects", json={"title": "Once"}).json()["id"]
 
     assert owner.post(f"/api/projects/{project_id}/unarchive").status_code == 409
@@ -81,7 +76,7 @@ def test_archiving_twice_or_unarchiving_an_active_project_is_refused():
 
 def test_archived_project_refuses_writes_and_unarchive_restores_them():
     """Smoke: archive -> write refused -> unarchive -> write allowed."""
-    owner = _login("archive-write-boundary@example.com")
+    owner = sign_in("archive-write-boundary@example.com")
     project_id = owner.post("/api/projects", json={"title": "Write boundary"}).json()["id"]
 
     assert owner.post(f"/api/projects/{project_id}/archive").status_code == 200
@@ -112,7 +107,7 @@ def _archived_project_with_source(owner_client):
 
 
 def test_archived_project_refuses_note_highlight_filing_and_promotion():
-    owner = _login("archive-notes@example.com")
+    owner = sign_in("archive-notes@example.com")
     owner_id, project_id, source_id = _archived_project_with_source(owner)
 
     highlight = owner.post(
@@ -144,7 +139,7 @@ def test_archived_project_refuses_note_highlight_filing_and_promotion():
 
 
 def test_archived_project_refuses_edit_archive_and_lock_of_its_filed_notes():
-    owner = _login("archive-own-notes@example.com")
+    owner = sign_in("archive-own-notes@example.com")
     owner_id = uuid.UUID(owner.get("/api/auth/me").json()["id"])
     project_id = uuid.UUID(owner.post("/api/projects", json={"title": "Archived own notes"}).json()["id"])
     with SessionLocal() as db:
@@ -172,7 +167,7 @@ def test_archived_project_refuses_edit_archive_and_lock_of_its_filed_notes():
 
 
 def test_archived_project_refuses_gate_decisions_section_approval_and_provenance_reports():
-    owner = _login("archive-gates@example.com")
+    owner = sign_in("archive-gates@example.com")
     project_id = owner.post("/api/projects", json={"title": "Archived gates"}).json()["id"]
     assert owner.post(f"/api/projects/{project_id}/archive").status_code == 200
 
@@ -196,7 +191,7 @@ def test_archived_project_refuses_gate_decisions_section_approval_and_provenance
 def test_delete_fails_loudly_and_keeps_the_project_when_object_storage_fails(monkeypatch):
     from app.object_storage import LocalDiskStore, ObjectStorageError
 
-    owner_client = _login("delete-storage-fail@example.com")
+    owner_client = sign_in("delete-storage-fail@example.com")
     owner_id = uuid.UUID(owner_client.get("/api/auth/me").json()["id"])
     project_id = _bare_project(owner_id, title="Storage fails")
     store = get_object_store(get_settings())
@@ -219,14 +214,14 @@ def test_delete_fails_loudly_and_keeps_the_project_when_object_storage_fails(mon
 
 
 def test_delete_is_owner_only():
-    owner = _login("delete-owner@example.com")
+    owner = sign_in("delete-owner@example.com")
     project_id = str(_bare_project(uuid.UUID(owner.get("/api/auth/me").json()["id"])))
-    co_author = _login("delete-co-author@example.com")
+    co_author = sign_in("delete-co-author@example.com")
     with SessionLocal() as db:
         co_author_id = co_author.get("/api/auth/me").json()["id"]
         db.add(ProjectMember(project_id=uuid.UUID(project_id), user_id=uuid.UUID(co_author_id), role=ProjectRole.co_author))
         db.commit()
-    stranger = _login("delete-stranger@example.com")
+    stranger = sign_in("delete-stranger@example.com")
 
     assert co_author.delete(f"/api/projects/{project_id}").status_code == 403
     assert stranger.delete(f"/api/projects/{project_id}").status_code == 404
@@ -236,7 +231,7 @@ def test_delete_is_owner_only():
 def test_delete_refuses_a_project_with_audit_rows():
     """Every project made through the API records `project.created`; deletion must refuse cleanly
     and name the blocking table instead of losing the audit trail or hitting a guard's own error."""
-    owner = _login("delete-blocked@example.com")
+    owner = sign_in("delete-blocked@example.com")
     project_id = owner.post("/api/projects", json={"title": "Has history"}).json()["id"]
 
     response = owner.delete(f"/api/projects/{project_id}")
@@ -251,7 +246,7 @@ def test_delete_refuses_a_project_with_audit_rows():
 
 
 def test_delete_removes_rows_and_stored_objects_for_a_project_with_no_audit_rows():
-    owner_client = _login("delete-success@example.com")
+    owner_client = sign_in("delete-success@example.com")
     owner_id = uuid.UUID(owner_client.get("/api/auth/me").json()["id"])
     project_id = _bare_project(owner_id, title="No history")
 

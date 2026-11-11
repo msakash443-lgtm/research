@@ -23,6 +23,7 @@ PREFIX = "/api/projects/{project_id}"
 REQUIRED_QUERY = {
     "/stage/conditions": "target=scoped",
     "/design/method-recommendation": "goal=explore",
+    "/design/methodology-recommendation": "goal=explore",
     "/design/sample-size": "test=correlation&r=0.3",
     "/design/saturation-guidance": "design=interviews",
 }

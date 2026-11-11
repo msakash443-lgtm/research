@@ -22,17 +22,18 @@ from app import audit
 from app.agent.embeddings import OpenAICompatibleEmbeddings
 from app.agent.llm import LLMConfigurationError, LLMResponseError
 from app.ai_controls import require_ai_on
+from app.artifacts import register_artifact
 from app.config import Settings, get_settings
 from app.connectors.access import is_enabled
-from app.connectors.base import ConnectorError, SearchRequest
+from app.connectors.base import ConnectorError, PaperRecord, SearchRequest
 from app.connectors.factory import build_connector
 from app.database import get_db
 from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_access
-from app.idea_clustering import Idea, cluster_ideas
+from app.idea_clustering import Idea, cluster_ideas, extract_contexts
 from app.idea_scoping import FEASIBILITY_ITEMS, Reference, feasibility_gaps, novelty
-from app.landscape_scan import summarise
+from app.landscape_scan import dedupe_records, summarise
 from app.llm_usage import ProjectMeter
-from app.models import ContextKind, IdeaBrief, Project, ResearchContextItem, Source, User
+from app.models import ContextKind, IdeaBrief, LandscapeScanRun, Project, ProjectStage, ResearchContextItem, Source, User
 from app.semantic_novelty import VectorError, semantic_novelty
 from app.thematic_clusters import source_text
 
@@ -118,6 +119,12 @@ class ConstructRead(BaseModel):
     idea_ids: list[str]
 
 
+class ContextRead(BaseModel):
+    kind: str  # "population" | "setting"
+    term: str
+    idea_ids: list[str]
+
+
 class IdeaBriefRead(BaseModel):
     """`exists` is false until a brief is saved; `ideas` is always listed so the scholar can choose one."""
 
@@ -134,6 +141,7 @@ class IdeaBriefRead(BaseModel):
     ideas: list[IdeaRead]
     clusters: list[ClusterRead]
     constructs: list[ConstructRead]
+    contexts: list[ContextRead]
     duplicate_ideas: dict[str, str]
     updated_by: str | None = None
     updated_at: datetime | None = None
@@ -164,7 +172,9 @@ def _build(db: Session, project: Project, brief: IdeaBrief | None) -> IdeaBriefR
     open_items = feasibility_gaps(answers)
     blockers = [item for item in FEASIBILITY_ITEMS if answers.get(item) == "blocker"]
     ready = bool(brief and brief.selected_idea_id and not open_items and not blockers)
-    clustering = cluster_ideas([Idea(str(i.id), i.content) for i in ideas])
+    idea_objs = [Idea(str(i.id), i.content) for i in ideas]
+    clustering = cluster_ideas(idea_objs)
+    contexts = extract_contexts(idea_objs)
     return IdeaBriefRead(
         exists=brief is not None,
         project_id=project.id,
@@ -179,6 +189,7 @@ def _build(db: Session, project: Project, brief: IdeaBrief | None) -> IdeaBriefR
         ideas=[_idea_read(idea, references) for idea in ideas],
         clusters=[ClusterRead(member_ids=c.member_ids, shared_terms=c.shared_terms) for c in clustering.clusters],
         constructs=[ConstructRead(term=c.term, idea_ids=c.idea_ids) for c in clustering.constructs],
+        contexts=[ContextRead(kind=c.kind, term=c.term, idea_ids=c.idea_ids) for c in contexts],
         duplicate_ideas=clustering.duplicates,
         updated_by=brief.updated_by if brief else None,
         updated_at=brief.updated_at if brief else None,
@@ -297,13 +308,22 @@ def get_semantic_novelty(
     )
 
 
-LANDSCAPE_CONNECTORS = ("openalex", "crossref", "semantic_scholar")  # first enabled one is used
+LANDSCAPE_CONNECTORS = ("openalex", "crossref", "semantic_scholar")
 LANDSCAPE_NOTE = (
-    "What this one search returned, not the whole literature. The top-cited list is ranked within the returned sample, "
-    "not globally; citation counts are as the service reports them; a blank count means the service gave none, not zero. "
-    "Review titles are a heuristic: check each one. The scholar decides."
+    "What these searches returned, not the whole literature. The top-cited list is ranked within the returned, "
+    "de-duplicated sample, not globally; citation counts are as each service reports them; a blank count means "
+    "the service gave none, not zero. Review titles are a heuristic: check each one. The scholar decides."
 )
 REVIEW_WINDOW_YEARS = 5
+LANDSCAPE_SCAN_KIND = "landscape_scan"
+
+
+class ServiceScanRead(BaseModel):
+    service: str
+    status: Literal["ok", "failed"]
+    count: int
+    total_reported: int | None
+    error: str | None
 
 
 class ScanEntryRead(BaseModel):
@@ -317,9 +337,8 @@ class ScanEntryRead(BaseModel):
 
 
 class LandscapeScanRead(BaseModel):
-    connector: str | None  # None when no query was given
     query: str
-    total_reported: int | None
+    services: list[ServiceScanRead]
     reviews_since: int
     note: str = LANDSCAPE_NOTE
     sample_size: int
@@ -331,38 +350,65 @@ class LandscapeScanRead(BaseModel):
     volume_by_year_in_sample: dict[int, int]
 
 
+class LandscapeScanStoreRead(BaseModel):
+    id: uuid.UUID
+    query: str
+    services: list[ServiceScanRead]
+    reviews_since: int
+    sample_size: int
+    record_count: int
+    created_at: datetime
+    created_by: str
+
+
+def _enabled_landscape_connectors(settings: Settings) -> list[str]:
+    return [n for n in LANDSCAPE_CONNECTORS if is_enabled(n, settings.connectors_enabled, settings.connectors_allow_scraping)]
+
+
+def _search_services(names: list[str], text: str, limit: int) -> tuple[list[PaperRecord], list[ServiceScanRead]]:
+    """Search every named connector. A failure is recorded against that service and the others still run:
+    a failed service is listed, never silently dropped."""
+    records: list[PaperRecord] = []
+    services: list[ServiceScanRead] = []
+    for name in names:
+        try:
+            page = build_connector(name).search(SearchRequest(query=text, limit=limit))
+        except ConnectorError as exc:
+            logger.warning("landscape scan: %s search failed (%s)", name, type(exc).__name__)
+            services.append(ServiceScanRead(
+                service=name, status="failed", count=0, total_reported=None,
+                error="The literature service could not be reached or returned an error.",
+            ))
+            continue
+        records.extend(page.records)
+        services.append(ServiceScanRead(service=name, status="ok", count=len(page.records), total_reported=page.total, error=None))
+    return records, services
+
+
 @router.get("/landscape-scan", response_model=LandscapeScanRead)
 def get_landscape_scan(
     query: str = Query(default="", max_length=300),
     limit: int = Query(default=25, ge=1, le=25),
     project: Project = Depends(project_access(READ_ROLES)),
 ):
-    """One keyword search through the first enabled scholarly connector. Stateless: nothing is stored."""
+    """A keyword search through every enabled scholarly connector. Stateless: nothing is stored (POST stores
+    one so the brief can cite a reproducible scan)."""
     text = query.strip()
     reviews_since = datetime.now(timezone.utc).year - REVIEW_WINDOW_YEARS
     if not text:
         # Nothing to search: an empty scan, with no connector call.
         return LandscapeScanRead(
-            connector=None, query="", total_reported=None, reviews_since=reviews_since, sample_size=0, undated=0,
+            query="", services=[], reviews_since=reviews_since, sample_size=0, undated=0,
             uncounted=0, duplicates_removed=0, top_cited_in_sample=[], recent_reviews=[], volume_by_year_in_sample={},
         )
-    settings = get_settings()
-    name = next(
-        (n for n in LANDSCAPE_CONNECTORS if is_enabled(n, settings.connectors_enabled, settings.connectors_allow_scraping)),
-        None,
-    )
-    if name is None:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "No landscape connector is enabled on this server.")
-    try:
-        page = build_connector(name).search(SearchRequest(query=text, limit=limit))
-    except ConnectorError as exc:
-        logger.warning("landscape scan: %s search failed: %s", name, exc)
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "The literature service could not be reached or returned an error.") from exc
-    scan = summarise(page.records, reviews_since=reviews_since)
+    names = _enabled_landscape_connectors(get_settings())
+    if not names:
+        raise HTTPException(status.HTTP_409_CONFLICT, "No landscape connector is enabled on this server.")
+    records, services = _search_services(names, text, limit)
+    scan = summarise(records, reviews_since=reviews_since)
     return LandscapeScanRead(
-        connector=name,
         query=text,
-        total_reported=page.total,
+        services=services,
         reviews_since=reviews_since,
         sample_size=scan.sample_size,
         undated=scan.undated,
@@ -371,6 +417,58 @@ def get_landscape_scan(
         top_cited_in_sample=[ScanEntryRead(**vars(e)) for e in scan.top_cited_in_sample],
         recent_reviews=[ScanEntryRead(**vars(e)) for e in scan.recent_reviews],
         volume_by_year_in_sample=scan.volume_by_year_in_sample,
+    )
+
+
+@router.post("/landscape-scan", response_model=LandscapeScanStoreRead, status_code=status.HTTP_201_CREATED)
+def post_landscape_scan(
+    query: str = Query(..., max_length=300),
+    limit: int = Query(default=25, ge=1, le=25),
+    project: Project = Depends(project_access(WRITE_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Run the same multi-connector search as GET and store it, so the idea brief can cite a reproducible scan.
+    Only the query, per-service counts/failures and record ids are kept -- never abstracts or titles."""
+    text = query.strip()
+    if not text:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Give a search phrase.")
+    reviews_since = datetime.now(timezone.utc).year - REVIEW_WINDOW_YEARS
+    names = _enabled_landscape_connectors(get_settings())
+    if not names:
+        raise HTTPException(status.HTTP_409_CONFLICT, "No landscape connector is enabled on this server.")
+    records, services = _search_services(names, text, limit)
+    scan = summarise(records, reviews_since=reviews_since)
+    record_ids = [{"connector": r.connector, "external_id": r.external_id} for r in dedupe_records(records)]
+    actor = audit.user_actor(user)
+    run = LandscapeScanRun(
+        project_id=project.id,
+        query=text,
+        reviews_since=reviews_since,
+        services=[s.model_dump() for s in services],
+        record_ids=record_ids,
+        sample_size=scan.sample_size,
+        run_at=datetime.now(timezone.utc),
+        created_by=actor,
+    )
+    db.add(run)
+    db.flush()
+    register_artifact(db, project.id, LANDSCAPE_SCAN_KIND, str(run.id), ProjectStage.idea, actor=actor)
+    audit.record(
+        db, actor=actor, action="landscape_scan.created", project_id=project.id,
+        payload={
+            "run_id": str(run.id),
+            "services": [s.service for s in services],
+            "failed_services": [s.service for s in services if s.status == "failed"],
+            "sample_size": scan.sample_size,
+            "record_count": len(record_ids),
+        },
+    )
+    db.commit()
+    db.refresh(run)
+    return LandscapeScanStoreRead(
+        id=run.id, query=run.query, services=services, reviews_since=run.reviews_since,
+        sample_size=run.sample_size, record_count=len(record_ids), created_at=run.created_at, created_by=run.created_by,
     )
 
 

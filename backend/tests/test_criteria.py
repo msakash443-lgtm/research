@@ -9,22 +9,17 @@ from app.criteria import FRAMEWORKS
 from app.database import SessionLocal
 from app.main import app
 from app.models import AuditEvent, ProjectMember, ProjectRole, ScreeningCriterion
-
-
-def _login(email):
-    client = TestClient(app)
-    user_id = client.post("/api/auth/development/login", json={"email": email, "display_name": "C"}).json()["id"]
-    return client, user_id
+from tests.api_helpers import sign_in_user
 
 
 @pytest.fixture
 def world():
     tag = uuid.uuid4().hex[:8]
-    owner, _ = _login(f"crit-owner-{tag}@example.com")
+    owner, _ = sign_in_user(f"crit-owner-{tag}@example.com")
     pid = owner.post("/api/projects", json={"title": "Criteria"}).json()["id"]
     others = {}
     for role in ("co_author", "supervisor", "reviewer"):
-        client, uid = _login(f"crit-{role}-{tag}@example.com")
+        client, uid = sign_in_user(f"crit-{role}-{tag}@example.com")
         with SessionLocal() as db:
             db.add(ProjectMember(project_id=uuid.UUID(pid), user_id=uuid.UUID(uid), role=ProjectRole(role)))
             db.commit()
@@ -186,6 +181,6 @@ def test_criteria_are_scoped_to_their_project(world):
 
 
 def test_outsiders_get_404_and_anonymous_401(world):
-    stranger, _ = _login(f"crit-stranger-{uuid.uuid4().hex[:6]}@example.com")
+    stranger, _ = sign_in_user(f"crit-stranger-{uuid.uuid4().hex[:6]}@example.com")
     assert stranger.get(f"/api/projects/{world['pid']}/criteria").status_code == 404
     assert TestClient(app).get(f"/api/projects/{world['pid']}/criteria").status_code == 401

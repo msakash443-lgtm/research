@@ -15,7 +15,7 @@ def schema_dir(tmp_path, monkeypatch):
 
 def test_default_schema_matches_appendix_b():
     schema = xs.load_schema()
-    assert xs.schema_version(schema) == "default@1"
+    assert xs.schema_version(schema) == "default@2"
     assert [f.key for f in schema.fields] == [
         "research_question", "theory_used", "constructs", "measures", "sample", "method",
         "key_findings", "limitations", "future_research",
@@ -128,7 +128,10 @@ def test_appendix_b_nested_values_allow_declared_nulls():
     schema = xs.load_schema()
     fields = {
         "measures": [{"construct": "trust", "scale": "X", "reliability": None}],
-        "key_findings": [{"statement": "No effect", "effect_size": None, "p_or_ci": None}],
+        "key_findings": [{
+            "statement": "No effect", "effect_size": None, "p_or_ci": None,
+            "exposure": "training", "outcome": "retention", "population": "", "direction": None,
+        }],
     }
     evidence = {"measures": GOOD_SPAN, "key_findings": GOOD_SPAN}
     assert xs.check_extraction(schema, fields, evidence) == []
