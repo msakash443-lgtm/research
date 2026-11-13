@@ -25,7 +25,7 @@ step = "criteria"
 [stages.retrieved]
 title = "Records retrieved"
 meaning = "Searches have run and the records are stored with their counts, which feed the PRISMA flow diagram."
-advice = "Remove duplicates and verify metadata of auto-retrieved records before screening. Do not judge relevance yet; that is screening."
+advice = "Review duplicates and metadata as needed, then screen titles and abstracts followed by full texts. G3 is a separate human decision on the included set."
 step = "search"
 
 [stages.screened]
