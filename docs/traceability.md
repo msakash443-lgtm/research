@@ -283,6 +283,8 @@
 
 | Task / code | Justification |
 |---|---|
+| X.227 localhost end-to-end diagnostic; X.228 runtime/test prerequisite | User-requested runtime/browser verification and a separate error report; resumed 2026-11-11 with Compose local override, healthy web/PostgreSQL/worker, browser login/project/context persistence, automatic source verification and reference exports. AI answer blocked by model availability; full automated results recorded in the resumed report. No application behavior change or new spec scope. |
+| X.229 duplicate stylesheet BOM; X.230 localhost model availability; X.231 runtime migration state | Defects/prerequisites discovered by X.227 live verification: unset root theme variables, standard API without credits and unreachable local model, and database revision two migrations behind code. Corrections remain separate tasks; no new product scope. |
 | M0.1 workspace hygiene, M0.1.6 `.env.example`, M0.1.7 venv docs | Engineering hygiene; no user-facing scope. |
 | ~~M1.1 ARC web search/crawl/PDF microservice~~ | Resolved 2026-10-03 (Q11): kept, and added to spec §6, so it now maps to §5.2.2. |
 | M1.1.11–M1.1.12 ARC hardening; X.9 compose profile | Only needed because of M1.1. |

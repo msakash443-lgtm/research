@@ -1,0 +1,600 @@
+{
+  "project_id": "82112c7b-3fad-40f9-ac64-73d00a712641",
+  "source": {
+    "id": "b7eb14ce-e0b7-47f1-8047-9262f92c156f",
+    "title": "Hybrid working from home improves retention without damaging performance",
+    "doi": "10.1038/s41586-024-07500-2",
+    "url": "https://www.nature.com/articles/s41586-024-07500-2",
+    "authors": [
+      "Nicholas Bloom",
+      "Ruobing Han",
+      "James Liang"
+    ],
+    "year": 2024,
+    "source_type": "article",
+    "metadata_verified": true,
+    "verification_method": "automatic",
+    "verified_at": "2026-11-11T18:08:02.506305Z",
+    "verification": {
+      "verdict": "verified",
+      "reasons": [],
+      "matched": "openalex:W4399567465",
+      "checks": {
+        "title": true,
+        "authors": true,
+        "year": true,
+        "doi": true
+      },
+      "consulted": [
+        "openalex"
+      ],
+      "errors": [
+        "openalex"
+      ],
+      "flags": [],
+      "checked_at": "2026-11-11T18:08:02.506305+00:00"
+    },
+    "origin": "manual",
+    "is_automated": false,
+    "created_by": "43890aef-a8f5-44b7-a278-b86b9997b036",
+    "venue": "Nature",
+    "abstract": null,
+    "oa_url": null,
+    "source_ids": null,
+    "fulltext_path": null,
+    "fulltext_access": null,
+    "coverage": {
+      "level": "not_accessible",
+      "open_access_url": null,
+      "reason": null
+    },
+    "quality_flags": null,
+    "found_via": null,
+    "citation_count": null,
+    "citation_count_source": null,
+    "citation_count_at": null,
+    "language": null,
+    "evidence_excerpt": "Reading note paraphrased from the published abstract: Bloom, Han and Liang report a randomized trial at Trip.com in China comparing a hybrid work schedule with office work. Hybrid working improved job satisfaction and reduced employee departures. The study found no detectable deterioration in performance reviews, promotions or engineers' code output. These findings concern the trial setting and do not establish that every occupation or fully remote work arrangement has the same effects.",
+    "excerpt_locator": "Abstract, Nature 630, pages 920-925; paraphrased reading note (not a verbatim quotation)",
+    "created_at": "2026-11-11T18:07:57.883032Z"
+  },
+  "ai_settings": {
+    "ai_involvement": "suggestions_only",
+    "ai_model_route": "standard",
+    "local_model_configured": true
+  },
+  "ready": {
+    "status": "ready",
+    "database": "available",
+    "database_migration": {
+      "behind": 2,
+      "db_revision": "20261029_0101",
+      "code_revision": "20261110_0103",
+      "message": "database is 2 migration(s) behind the code; run `alembic upgrade head`."
+    }
+  },
+  "gates": [
+    {
+      "code": "G1",
+      "status": "pending",
+      "decided_by": null,
+      "decided_at": null,
+      "note": null,
+      "required_roles": [
+        "owner",
+        "supervisor"
+      ],
+      "can_decide": true,
+      "waiting_for": [],
+      "can_reopen": false
+    },
+    {
+      "code": "G2",
+      "status": "pending",
+      "decided_by": null,
+      "decided_at": null,
+      "note": null,
+      "required_roles": [
+        "owner",
+        "supervisor"
+      ],
+      "can_decide": false,
+      "waiting_for": [
+        "G1"
+      ],
+      "can_reopen": false
+    },
+    {
+      "code": "G3",
+      "status": "pending",
+      "decided_by": null,
+      "decided_at": null,
+      "note": null,
+      "required_roles": [
+        "owner",
+        "supervisor"
+      ],
+      "can_decide": false,
+      "waiting_for": [
+        "G1",
+        "G2"
+      ],
+      "can_reopen": false
+    },
+    {
+      "code": "G4",
+      "status": "pending",
+      "decided_by": null,
+      "decided_at": null,
+      "note": null,
+      "required_roles": [
+        "owner",
+        "supervisor"
+      ],
+      "can_decide": false,
+      "waiting_for": [
+        "G1",
+        "G2",
+        "G3"
+      ],
+      "can_reopen": false
+    },
+    {
+      "code": "G5",
+      "status": "pending",
+      "decided_by": null,
+      "decided_at": null,
+      "note": null,
+      "required_roles": [
+        "owner",
+        "supervisor"
+      ],
+      "can_decide": false,
+      "waiting_for": [
+        "G1",
+        "G2",
+        "G3",
+        "G4"
+      ],
+      "can_reopen": false
+    },
+    {
+      "code": "G6",
+      "status": "pending",
+      "decided_by": null,
+      "decided_at": null,
+      "note": null,
+      "required_roles": [
+        "owner",
+        "supervisor"
+      ],
+      "can_decide": false,
+      "waiting_for": [
+        "G1",
+        "G2",
+        "G3",
+        "G4",
+        "G5"
+      ],
+      "can_reopen": false
+    },
+    {
+      "code": "G7",
+      "status": "pending",
+      "decided_by": null,
+      "decided_at": null,
+      "note": null,
+      "required_roles": [
+        "owner"
+      ],
+      "can_decide": false,
+      "waiting_for": [
+        "G1",
+        "G2",
+        "G3",
+        "G4",
+        "G5",
+        "G6"
+      ],
+      "can_reopen": false
+    },
+    {
+      "code": "G8",
+      "status": "pending",
+      "decided_by": null,
+      "decided_at": null,
+      "note": null,
+      "required_roles": [
+        "owner"
+      ],
+      "can_decide": false,
+      "waiting_for": [
+        "G1",
+        "G2",
+        "G3",
+        "G4",
+        "G5",
+        "G6",
+        "G7"
+      ],
+      "can_reopen": false
+    },
+    {
+      "code": "G9",
+      "status": "pending",
+      "decided_by": null,
+      "decided_at": null,
+      "note": null,
+      "required_roles": [
+        "owner",
+        "supervisor"
+      ],
+      "can_decide": false,
+      "waiting_for": [
+        "G1",
+        "G2",
+        "G3",
+        "G4",
+        "G5",
+        "G6",
+        "G7",
+        "G8"
+      ],
+      "can_reopen": false
+    },
+    {
+      "code": "G10",
+      "status": "pending",
+      "decided_by": null,
+      "decided_at": null,
+      "note": null,
+      "required_roles": [
+        "owner",
+        "supervisor"
+      ],
+      "can_decide": false,
+      "waiting_for": [
+        "G1",
+        "G2",
+        "G3",
+        "G4",
+        "G5",
+        "G6",
+        "G7",
+        "G8",
+        "G9"
+      ],
+      "can_reopen": false
+    },
+    {
+      "code": "G11",
+      "status": "pending",
+      "decided_by": null,
+      "decided_at": null,
+      "note": null,
+      "required_roles": [
+        "owner"
+      ],
+      "can_decide": false,
+      "waiting_for": [
+        "G1",
+        "G2",
+        "G3",
+        "G4",
+        "G5",
+        "G6",
+        "G7",
+        "G8",
+        "G9",
+        "G10"
+      ],
+      "can_reopen": false
+    }
+  ],
+  "research-runs": [
+    {
+      "id": "dd61c91a-588e-4f00-a4cd-9f8f755d9540",
+      "question": "Using only the saved reading note, summarize what this study establishes about hybrid work, employee retention and performance. Explain the limits of generalizing it. Cite the saved source and do not add statistics absent from the note.",
+      "status": "failed",
+      "research_plan": [
+        "Confirm the population, geography, time period, and outcome implied by the question.",
+        "Use the saved project context to identify definitions, assumptions, and methodological constraints.",
+        "Assess the 1 saved source(s), prioritising primary and official evidence.",
+        "Separate directly supported findings from interpretation, and attach source markers to every factual claim.",
+        "Flag gaps, conflicting definitions, and results that cannot be established from the available evidence."
+      ],
+      "input_snapshot": {
+        "context": [
+          {
+            "kind": "question",
+            "content": "What does the saved Trip.com study establish about hybrid work, employee retention and performance, and what limits its generalizability?",
+            "rationale": "Diagnostic question for evidence synthesis using one public study; not a systematic review."
+          }
+        ],
+        "sources": [
+          {
+            "id": "b7eb14ce-e0b7-47f1-8047-9262f92c156f",
+            "title": "Hybrid working from home improves retention without damaging performance",
+            "url": "https://www.nature.com/articles/s41586-024-07500-2",
+            "year": 2024,
+            "type": "article",
+            "excerpts": [
+              {
+                "id": "b875f90b-76c4-493e-979f-cfea0155d3ff",
+                "excerpt": "Reading note paraphrased from the published abstract: Bloom, Han and Liang report a randomized trial at Trip.com in China comparing a hybrid work schedule with office work. Hybrid working improved job satisfaction and reduced employee departures. The study found no detectable deterioration in performance reviews, promotions or engineers' code output. These findings concern the trial setting and do not establish that every occupation or fully remote work arrangement has the same effects.",
+                "locator": "Abstract, Nature 630, pages 920-925; paraphrased reading note (not a verbatim quotation)"
+              }
+            ],
+            "automated": false,
+            "auto_checked": true,
+            "verified": true,
+            "quality_flags": [],
+            "retracted": false,
+            "flags": []
+          }
+        ]
+      },
+      "answer": null,
+      "error_message": "The configured LLM API account has no credits remaining. Add API credits, then retry.",
+      "provider_model": "gpt-5.6-luna",
+      "prompt_version": "evidence_synthesis@5",
+      "confidence": null,
+      "insufficient_evidence": null,
+      "insufficient_reason": null,
+      "use_web_retrieval": false,
+      "created_by": "43890aef-a8f5-44b7-a278-b86b9997b036",
+      "created_at": "2026-11-11T18:09:22.908836Z",
+      "started_at": "2026-11-11T18:09:24.101042Z",
+      "completed_at": "2026-11-11T18:09:26.146473Z"
+    }
+  ],
+  "context": [
+    {
+      "kind": "question",
+      "content": "What does the saved Trip.com study establish about hybrid work, employee retention and performance, and what limits its generalizability?",
+      "rationale": "Diagnostic question for evidence synthesis using one public study; not a systematic review.",
+      "id": "b9be8fc3-d1b7-4165-bb6e-f4d46ee3e675",
+      "created_by": "43890aef-a8f5-44b7-a278-b86b9997b036",
+      "created_at": "2026-11-11T18:08:51.650655Z",
+      "history": null,
+      "retired_at": null,
+      "used_by_agent": true,
+      "ai_locked": false,
+      "promoted_from_note_id": null,
+      "related_item_id": null
+    }
+  ],
+  "claims": [],
+  "audit": [
+    {
+      "id": "688c10b2-fd6a-466d-8959-647268f4a1ab",
+      "timestamp": "2026-11-11T18:09:51.599289Z",
+      "actor": "43890aef-a8f5-44b7-a278-b86b9997b036",
+      "action": "sources.exported",
+      "payload_json": {
+        "format": "ris",
+        "exported": 1,
+        "unverified_skipped": 0
+      },
+      "model_id": null,
+      "prompt_version": null
+    },
+    {
+      "id": "55013919-1d6c-40fe-a438-92e3024d1840",
+      "timestamp": "2026-11-11T18:09:51.535117Z",
+      "actor": "43890aef-a8f5-44b7-a278-b86b9997b036",
+      "action": "sources.exported",
+      "payload_json": {
+        "format": "bibtex",
+        "exported": 1,
+        "unverified_skipped": 0
+      },
+      "model_id": null,
+      "prompt_version": null
+    },
+    {
+      "id": "88885574-73fc-4b3d-91f0-5019ec10bb46",
+      "timestamp": "2026-11-11T18:09:26.151214Z",
+      "actor": "agent:research-run",
+      "action": "research_run.finished",
+      "payload_json": {
+        "run_id": "dd61c91a-588e-4f00-a4cd-9f8f755d9540",
+        "status": "failed",
+        "attempt": 1
+      },
+      "model_id": "gpt-5.6-luna",
+      "prompt_version": "evidence_synthesis@5"
+    },
+    {
+      "id": "320b1164-e2c2-45f3-9d45-da8628010766",
+      "timestamp": "2026-11-11T18:09:22.908836Z",
+      "actor": "43890aef-a8f5-44b7-a278-b86b9997b036",
+      "action": "research_run.queued",
+      "payload_json": {
+        "run_id": "dd61c91a-588e-4f00-a4cd-9f8f755d9540",
+        "use_web_retrieval": false
+      },
+      "model_id": null,
+      "prompt_version": null
+    },
+    {
+      "id": "1875af83-3a33-4758-92aa-9696b43656b7",
+      "timestamp": "2026-11-11T18:08:51.650655Z",
+      "actor": "43890aef-a8f5-44b7-a278-b86b9997b036",
+      "action": "context.added",
+      "payload_json": {
+        "item_id": "b9be8fc3-d1b7-4165-bb6e-f4d46ee3e675",
+        "kind": "question"
+      },
+      "model_id": null,
+      "prompt_version": null
+    },
+    {
+      "id": "dd0b3de5-d021-40f7-a650-db7391f32c03",
+      "timestamp": "2026-11-11T18:07:59.448215Z",
+      "actor": "agent:citation-verifier",
+      "action": "source.verification_checked",
+      "payload_json": {
+        "source_id": "b7eb14ce-e0b7-47f1-8047-9262f92c156f",
+        "requested_by": "43890aef-a8f5-44b7-a278-b86b9997b036",
+        "verdict": "verified",
+        "reasons": [],
+        "matched": "openalex:W4399567465",
+        "checks": {
+          "title": true,
+          "authors": true,
+          "year": true,
+          "doi": true
+        },
+        "consulted": [
+          "openalex"
+        ],
+        "errors": [
+          "openalex"
+        ],
+        "flags": []
+      },
+      "model_id": null,
+      "prompt_version": null
+    },
+    {
+      "id": "540cea8b-4a07-43c2-a5f0-d43f59da4f66",
+      "timestamp": "2026-11-11T18:07:59.448215Z",
+      "actor": "agent:citation-verifier",
+      "action": "source.verified",
+      "payload_json": {
+        "source_id": "b7eb14ce-e0b7-47f1-8047-9262f92c156f",
+        "method": "automatic",
+        "matched": "openalex:W4399567465",
+        "requested_by": "43890aef-a8f5-44b7-a278-b86b9997b036"
+      },
+      "model_id": null,
+      "prompt_version": null
+    },
+    {
+      "id": "c1a734f3-7786-480c-9a35-825ed970888c",
+      "timestamp": "2026-11-11T18:07:58.056157Z",
+      "actor": "43890aef-a8f5-44b7-a278-b86b9997b036",
+      "action": "source.check_requested",
+      "payload_json": {
+        "source_id": "b7eb14ce-e0b7-47f1-8047-9262f92c156f",
+        "task_id": "4bb616a4-d77c-4689-a54b-67023bb50d76"
+      },
+      "model_id": null,
+      "prompt_version": null
+    },
+    {
+      "id": "806d025b-3f89-4897-8042-b5a5a3a673f3",
+      "timestamp": "2026-11-11T18:07:57.883032Z",
+      "actor": "43890aef-a8f5-44b7-a278-b86b9997b036",
+      "action": "source.created",
+      "payload_json": {
+        "source_id": "b7eb14ce-e0b7-47f1-8047-9262f92c156f",
+        "has_excerpt": true
+      },
+      "model_id": null,
+      "prompt_version": null
+    },
+    {
+      "id": "3ef77131-2c10-4e69-aea5-940273206379",
+      "timestamp": "2026-11-11T18:06:46.727901Z",
+      "actor": "43890aef-a8f5-44b7-a278-b86b9997b036",
+      "action": "project.created",
+      "payload_json": {
+        "title": "LOCAL E2E 2026-11-11 \u2014 hybrid work evidence"
+      },
+      "model_id": null,
+      "prompt_version": null
+    }
+  ],
+  "obsidian_export": {
+    "status": 404,
+    "body": {
+      "detail": "Obsidian export is not enabled"
+    }
+  },
+  "authorization_check": {
+    "unsigned_status": 401
+  },
+  "gate_check": {
+    "advance_status": 409,
+    "body": {
+      "detail": {
+        "message": "Gate G1 must be approved by an owner or supervisor before the project can reach 'scoped'",
+        "gate": "G1",
+        "gate_status": "pending",
+        "required_roles": [
+          "owner",
+          "supervisor"
+        ]
+      }
+    },
+    "stage_after": "idea"
+  },
+  "sources": [
+    {
+      "id": "b7eb14ce-e0b7-47f1-8047-9262f92c156f",
+      "title": "Hybrid working from home improves retention without damaging performance",
+      "doi": "10.1038/s41586-024-07500-2",
+      "url": "https://www.nature.com/articles/s41586-024-07500-2",
+      "authors": [
+        "Nicholas Bloom",
+        "Ruobing Han",
+        "James Liang"
+      ],
+      "year": 2024,
+      "source_type": "article",
+      "metadata_verified": true,
+      "verification_method": "automatic",
+      "verified_at": "2026-11-11T18:08:02.506305Z",
+      "verification": {
+        "verdict": "verified",
+        "reasons": [],
+        "matched": "openalex:W4399567465",
+        "checks": {
+          "title": true,
+          "authors": true,
+          "year": true,
+          "doi": true
+        },
+        "consulted": [
+          "openalex"
+        ],
+        "errors": [
+          "openalex"
+        ],
+        "flags": [],
+        "checked_at": "2026-11-11T18:08:02.506305+00:00"
+      },
+      "origin": "manual",
+      "is_automated": false,
+      "created_by": "43890aef-a8f5-44b7-a278-b86b9997b036",
+      "venue": "Nature",
+      "abstract": null,
+      "oa_url": null,
+      "source_ids": null,
+      "fulltext_path": null,
+      "fulltext_access": null,
+      "coverage": {
+        "level": "not_accessible",
+        "open_access_url": null,
+        "reason": null
+      },
+      "quality_flags": null,
+      "found_via": null,
+      "citation_count": null,
+      "citation_count_source": null,
+      "citation_count_at": null,
+      "language": null,
+      "evidence_excerpt": "Reading note paraphrased from the published abstract: Bloom, Han and Liang report a randomized trial at Trip.com in China comparing a hybrid work schedule with office work. Hybrid working improved job satisfaction and reduced employee departures. The study found no detectable deterioration in performance reviews, promotions or engineers' code output. These findings concern the trial setting and do not establish that every occupation or fully remote work arrangement has the same effects.",
+      "excerpt_locator": "Abstract, Nature 630, pages 920-925; paraphrased reading note (not a verbatim quotation)",
+      "created_at": "2026-11-11T18:07:57.883032Z"
+    }
+  ],
+  "visual_check": {
+    "css_prefix_hex": "efbbbfefbbbf3a726f6f7420",
+    "root_font": "Times New Roman",
+    "root_ink_variable": "",
+    "root_navy_variable": ""
+  }
+}
