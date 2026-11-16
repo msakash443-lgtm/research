@@ -1,6 +1,9 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+
+pytestmark = pytest.mark.real_db  # `with TestClient(app)` runs the app lifespan, which uses the engine directly
 
 
 def test_dashboard_development_login_can_create_a_project():

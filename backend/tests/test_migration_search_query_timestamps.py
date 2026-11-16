@@ -1,9 +1,12 @@
+import pytest
 import sqlalchemy as sa
 from uuid import uuid4
 
 from sqlalchemy import text
 
 from alembic import command
+
+pytestmark = pytest.mark.slow  # walks the Alembic chain
 
 
 def _defaults(engine) -> dict[str, str | None]:

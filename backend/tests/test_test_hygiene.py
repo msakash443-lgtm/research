@@ -5,6 +5,8 @@ import ast
 from collections import defaultdict
 from pathlib import Path
 
+import pytest
+
 TESTS = Path(__file__).parent
 
 # Setup helpers that were copied into dozens of files (X.179). Use `tests/api_helpers.py`; a file that needs
@@ -21,6 +23,7 @@ def _parsed_test_files():
         yield path, ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
 
 
+@pytest.mark.slow
 def test_no_test_function_name_is_defined_in_more_than_one_file():
     files_by_name = defaultdict(set)
     for path, tree in _parsed_test_files():
@@ -35,6 +38,7 @@ def test_no_test_function_name_is_defined_in_more_than_one_file():
     assert not repeated, f"test names defined in more than one file (parametrize one test instead): {repeated}"
 
 
+@pytest.mark.slow
 def test_the_shared_setup_helpers_are_not_redefined_in_test_files():
     copies = {}
     for path, tree in _parsed_test_files():

@@ -4,6 +4,8 @@ import pytest
 import sqlalchemy as sa
 from alembic import command
 
+pytestmark = pytest.mark.slow  # walks the Alembic chain
+
 
 def _seed_context(connection, project, item_id, content, retired):
     connection.execute(

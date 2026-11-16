@@ -17,7 +17,7 @@ from app.database import get_db
 from app.lookups import live_source_or_404
 from app.dependencies import APPROVE_ROLES, MANAGE_ROLES, READ_ROLES, WRITE_ROLES, current_user, project_access, project_role
 from app.prescreen import confidence_level
-from app.models import AiSuggestion, AutoExcludeAudit, Project, ProjectRole, ProjectStage, ResearchQuestion, ScreeningCriterion, ScreeningDecision, SeedCheckRun, Source, Task, TaskStatus, User
+from app.models import AiSuggestion, AutoExcludeAudit, Project, ProjectRole, ProjectStage, ResearchQuestion, ScreeningCriterion, ScreeningDecision, ScreeningDiscussionNote, SeedCheckRun, Source, Task, TaskStatus, User
 from app.task_handlers import FULLTEXT_FETCH, SCREENING_PRESCREEN, SEED_FALSE_EXCLUSION_CHECK
 from app.arxiv_fulltext import ARXIV_FULLTEXT_FETCH
 from app.connectors.access import is_enabled
@@ -35,10 +35,13 @@ from app.screening import (
     autoexclude_threshold,
     check_reason,
     criterion_codes,
+    current_discussion,
     dual_screen_status,
     effective_ai_exclusion,
     final_decision,
     has_any_human_decision,
+    has_own_decision,
+    has_taken_part,
     human_decisions_by_decider,
     passed_title_abstract,
     rows_for_stage,
@@ -160,8 +163,15 @@ class QueueItem(BaseModel):
     fulltext_access: dict | None = None  # full-text stage only: last fetch/upload outcome, so a reviewer can find the PDF
     found_via: dict | None = None  # e.g. snowballing: which paper, direction and round (M1.9.2)
     coverage: dict | None = None  # full text / abstract only / not accessible (X.76)
-    ai_suggestion: SuggestionRead | None  # a suggestion only; it never counts as a decision
     matched_terms: list[str] = []  # question-match terms matched in title+abstract (X.199); empty unless sort=question_match
+
+
+class RevealedSuggestion(BaseModel):
+    """The AI's suggestion for a source the caller has already decided themselves (X.224)."""
+    your_decision: str
+    your_reason_code: str | None
+    suggestion: SuggestionRead | None  # None: the AI gave no suggestion for this source
+    agrees: bool | None  # your decision and reason match the suggestion; None when there is none
 
 
 class QueueRead(BaseModel):
@@ -316,8 +326,9 @@ def get_queue(
     """The sources still waiting for *this person's* decision at this stage, with the stage's counts.
 
     In dual-screen mode (spec 5.3.3) a source stays in a reviewer's own queue until *they* decide it,
-    even if another reviewer already has — and its AI suggestion is withheld until then, so neither
-    reviewer is biased by the other's (or the AI's) answer. Two reviewers who agree count as decided;
+    even if another reviewer already has. The queue never carries the AI's suggestion: nobody sees it
+    before deciding themselves (X.224), so no reviewer is biased by the AI's (or the other reviewer's)
+    answer; `GET /suggestion/{source_id}` shows it once the caller has decided. Two reviewers who agree count as decided;
     disagreement is a `conflict` (M2.4.2b resolves it), not a decision.
 
     `sort`: `"oldest"` (default), `"relevance"` (M2.6, spec 5.3.2) or `"question_match"` (X.199).
@@ -394,38 +405,15 @@ def get_queue(
             applied_sort = "question_match"
         else:
             sort_note = "No research questions or inclusion criteria are recorded for this project yet, so the queue falls back to oldest first."
-    suggestion_rows = {
-        row.target_id: row
-        for row in db.scalars(
-            select(AiSuggestion).where(
-                AiSuggestion.project_id == project.id,
-                AiSuggestion.target_kind == "screening",
-                AiSuggestion.target_id.in_([str(source.id) for source in waiting[offset : offset + limit]]),
-            )
-        ).all()
-    }
-    items = []
-    for source in waiting[offset : offset + limit]:
-        rows = grouped.get(source.id, [])
-        suggestion = None if project.dual_screen_enabled else ai_suggestion(rows)
-        shared = None if project.dual_screen_enabled else suggestion_rows.get(str(source.id))
-        items.append(
-            QueueItem(
-                source_id=source.id, title=source.title, authors=source.authors, year=source.year, doi=source.doi,
-                abstract=source.abstract, fulltext_access=source.fulltext_access if stage == "full_text" else None,
-                found_via=source.found_via, coverage=fulltext_coverage.coverage(source),
-                matched_terms=list(matched_terms_by_source.get(source.id, ())),
-                ai_suggestion=SuggestionRead(
-                    id=shared.id if shared else None,
-                    state=suggestions.state_of(event.kind for event in shared.events) if shared else None,
-                    decision=suggestion.decision if suggestion else "",
-                    reason_code=suggestion.reason_code if suggestion else None,
-                    confidence=suggestion.confidence if suggestion else None,
-                    rationale=suggestion.note if suggestion else None,
-                    **_stored_evidence(shared),
-                ) if suggestion or shared else None,
-            )
+    items = [
+        QueueItem(
+            source_id=source.id, title=source.title, authors=source.authors, year=source.year, doi=source.doi,
+            abstract=source.abstract, fulltext_access=source.fulltext_access if stage == "full_text" else None,
+            found_via=source.found_via, coverage=fulltext_coverage.coverage(source),
+            matched_terms=list(matched_terms_by_source.get(source.id, ())),
         )
+        for source in waiting[offset : offset + limit]
+    ]
     return QueueRead(
         stage=stage, locked=screening_locked(db, project), dual_screen_enabled=project.dual_screen_enabled,
         ai_autoexclude_enabled=project.ai_autoexclude_enabled, sort=applied_sort, sort_note=sort_note,
@@ -457,8 +445,63 @@ def list_decisions(
     rows = list(db.scalars(query.order_by(ScreeningDecision.seq)))  # oldest first, for grouping
     if project.dual_screen_enabled:
         rows = visible_rows(rows, audit.user_actor(user))
+    else:
+        rows = _without_undisclosed_ai_rows(rows, audit.user_actor(user))
     rows.sort(key=lambda r: (r.decided_at, r.seq), reverse=True)
     return rows[:limit]
+
+
+def _without_undisclosed_ai_rows(rows: list[ScreeningDecision], viewer: str) -> list[ScreeningDecision]:
+    """An AI row is withheld for a source+stage until the viewer has decided it themselves (X.224)."""
+    by_key: dict[tuple[uuid.UUID, str], list[ScreeningDecision]] = {}
+    for row in rows:
+        by_key.setdefault((row.source_id, row.stage), []).append(row)
+    kept = []
+    for group in by_key.values():
+        decided = has_own_decision(group, viewer)
+        kept.extend(row for row in group if decided or row.decided_by != "ai")
+    return kept
+
+
+@router.get("/suggestion/{source_id}", response_model=RevealedSuggestion)
+def get_revealed_suggestion(
+    source_id: uuid.UUID,
+    project: Project = Depends(project_access(READ_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """The AI's title/abstract suggestion for one source, shown only to someone who has decided it themselves.
+
+    Before that the answer is 404, the same as for a source that does not exist (X.224). It is a suggestion
+    only: the response says whether it matches the caller's decision and changes nothing.
+    """
+    source = live_source_or_404(db, project, source_id)
+    rows = rows_for_stage(db, project, "title_abstract").get(source.id, [])
+    own = human_decisions_by_decider(rows).get(audit.user_actor(user))
+    if own is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
+    suggestion = ai_suggestion(rows)
+    shared = db.scalar(
+        select(AiSuggestion).where(
+            AiSuggestion.project_id == project.id, AiSuggestion.target_kind == "screening", AiSuggestion.target_id == str(source.id)
+        ).order_by(AiSuggestion.created_at.desc()).limit(1)
+    )
+    if suggestion is None and shared is None:
+        return RevealedSuggestion(your_decision=own.decision, your_reason_code=own.reason_code, suggestion=None, agrees=None)
+    return RevealedSuggestion(
+        your_decision=own.decision,
+        your_reason_code=own.reason_code,
+        agrees=suggestion is not None and suggestion.decision == own.decision and suggestion.reason_code == own.reason_code,
+        suggestion=SuggestionRead(
+            id=shared.id if shared else None,
+            state=suggestions.state_of(event.kind for event in shared.events) if shared else None,
+            decision=suggestion.decision if suggestion else "",
+            reason_code=suggestion.reason_code if suggestion else None,
+            confidence=suggestion.confidence if suggestion else None,
+            rationale=suggestion.note if suggestion else None,
+            **_stored_evidence(shared),
+        ),
+    )
 
 
 def _append(db: Session, project: Project, source: Source, user: User, stage: str, decision: str, reason_code: str | None, note: str | None) -> ScreeningDecision:
@@ -583,6 +626,101 @@ def undo(
     return row
 
 
+class DiscussionIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: uuid.UUID
+    stage: str = "title_abstract"
+    body: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("stage")
+    @classmethod
+    def _stage(cls, value: str) -> str:
+        return _check_stage(value)
+
+    @field_validator("body")
+    @classmethod
+    def _body(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("A discussion note cannot be empty.")
+        return value.strip()
+
+
+class DiscussionNoteRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    source_id: uuid.UUID
+    stage: str
+    author: str
+    body: str
+    created_at: datetime
+
+
+def _discussion_notes(db: Session, source_id: uuid.UUID, stage: str) -> list[ScreeningDiscussionNote]:
+    return list(
+        db.scalars(
+            select(ScreeningDiscussionNote)
+            .where(ScreeningDiscussionNote.source_id == source_id, ScreeningDiscussionNote.stage == stage)
+            .order_by(ScreeningDiscussionNote.created_at, ScreeningDiscussionNote.id)
+        )
+    )
+
+
+@router.post("/discussion", response_model=DiscussionNoteRead, status_code=status.HTTP_201_CREATED)
+def add_discussion_note(
+    payload: DiscussionIn,
+    project: Project = Depends(project_access(WRITE_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """A reviewer documents the discussion of their disagreement (X.225). Only someone who currently holds a decision
+    on this source, and only while the reviewers disagree and nobody has ruled. Notes are append-only and are what an
+    independent arbiter reads before ruling; each note is audited."""
+    if screening_locked(db, project):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=LOCKED_MESSAGE)
+    if not project.dual_screen_enabled:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Dual screening is off, so there are no reviewer conflicts to discuss.")
+    source = live_source_or_404(db, project, payload.source_id)
+    rows = rows_for_stage(db, project, payload.stage).get(source.id, [])
+    if dual_screen_status(rows)[0] != "conflict":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only a source whose reviewers currently disagree, and that nobody has ruled on, can be discussed.")
+    actor = audit.user_actor(user)
+    if actor not in human_decisions_by_decider(rows):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only a reviewer who decided this source can take part in its discussion.")
+    note = ScreeningDiscussionNote(
+        project_id=project.id, source_id=source.id, stage=payload.stage, decision_seq=max(r.seq for r in rows),
+        author=actor, body=payload.body,
+    )
+    db.add(note)
+    audit.record(db, actor=actor, action="screening.discussion_noted", project_id=project.id,
+                 payload={"source_id": str(source.id), "stage": payload.stage})
+    _commit(db)
+    db.refresh(note)
+    return note
+
+
+@router.get("/discussion", response_model=list[DiscussionNoteRead])
+def list_discussion(
+    source_id: uuid.UUID,
+    stage: str = "title_abstract",
+    project: Project = Depends(project_access(READ_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """The discussion of a conflict, oldest first. Shown only to the reviewers who decided the source and to an owner
+    or supervisor who may have to rule; everyone else gets an empty list, so dual-screen blinding holds (X.225)."""
+    stage = _check_stage(stage)
+    source = live_source_or_404(db, project, source_id)
+    rows = rows_for_stage(db, project, stage).get(source.id, [])
+    actor = audit.user_actor(user)
+    if not (has_taken_part(rows, actor) or project_role(db, project, user) in APPROVE_ROLES):
+        return []
+    if dual_screen_status(rows)[0] not in ("conflict", "adjudicated") and not _discussion_notes(db, source.id, stage):
+        return []
+    return _discussion_notes(db, source.id, stage)
+
+
 @router.post("/decisions/adjudicate", response_model=DecisionRead, status_code=status.HTTP_201_CREATED)
 def adjudicate(
     payload: DecisionIn,
@@ -594,7 +732,9 @@ def adjudicate(
     can be ruled on, and only under dual-screen. The ruling is a new row (`decided_by="arbiter"`); both reviewers'
     rows stay as they are, so agreement and kappa still compare what the two of them decided. Someone who has a
     decision of their own on this source cannot rule on it. A reviewer who changes or undoes their decision
-    afterwards reopens the conflict. Ruling again replaces an earlier ruling (the earlier row stays)."""
+    afterwards reopens the conflict. Ruling again replaces an earlier ruling (the earlier row stays). The arbiter must
+    be independent (no decision of their own, even an undone one, and no discussion note) and must give a written
+    rationale; the reviewers must have documented their discussion first (`POST …/discussion`, X.225)."""
     if screening_locked(db, project):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=LOCKED_MESSAGE)
     if not project.dual_screen_enabled:
@@ -604,8 +744,16 @@ def adjudicate(
     if dual_screen_status(rows)[0] not in ("conflict", "adjudicated"):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only a source whose reviewers disagree can be ruled on.")
     actor = audit.user_actor(user)
-    if actor in human_decisions_by_decider(rows):
+    if has_taken_part(rows, actor):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="You decided this source yourself, so you can't rule on it.")
+    notes = _discussion_notes(db, source.id, payload.stage)
+    if any(n.author == actor for n in notes):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="You took part in the reviewers' discussion of this source, so you can't rule on it.")
+    discussion = current_discussion(rows, notes)
+    if not discussion:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="The reviewers must discuss this disagreement first. Record the discussion, then rule.")
+    if not (payload.note and payload.note.strip()):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="A ruling needs a written rationale in the note.")
     problem = check_reason(payload.decision, payload.reason_code, criterion_codes(db, project), payload.note)
     if problem:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=problem)
@@ -621,7 +769,8 @@ def adjudicate(
     db.add(row)
     audit.record(
         db, actor=actor, action="screening.adjudicated", project_id=project.id,
-        payload={"source_id": str(source.id), "stage": payload.stage, "decision": payload.decision, "reason_code": payload.reason_code},
+        payload={"source_id": str(source.id), "stage": payload.stage, "decision": payload.decision, "reason_code": payload.reason_code,
+                 "discussion_notes": len(discussion)},
     )
     db.flush()  # the row's id is the ref: each ruling is its own artifact
     register_artifact(db, project.id, SCREENING_KIND, str(row.id), ProjectStage.screened, actor=actor)

@@ -2,11 +2,12 @@ import { el, label, toast } from "../dom.js";
 import { request, projectApi } from "../api.js";
 import { coverageBadge, errorCard } from "./common.js";
 import { suggestionPanel } from "../suggestion.js";
-import { afterDecision, authorsText, confidenceText, countsText, fetchEntireQueue, keyAction, OTHER_EXCLUSION_REASON, runBulk, safeLink, SCREENING_STAGES, splitAtQuote, typedReason } from "./screenLogic.js";
+import { afterDecision, authorsText, confidenceText, countsText, fetchEntireQueue, keyAction, OTHER_EXCLUSION_REASON, runBulk, safeLink, SCREENING_STAGES, typedReason } from "./screenLogic.js";
 
 // Two-stage screening (M2.3.1), built from the approved wireframe docs/wireframes/screening-queue.html.
-// Every decision is a person's own: the AI suggestion is shown as a suggestion and never pre-selected.
-// Keys: I include, E exclude (then 1-9 for the reason), M maybe, J next, K previous, U undo, A show/hide the
+// Every decision is a person's own: the AI suggestion is withheld until the person has decided the record
+// themselves (X.224), then shown beside their decision as a suggestion, never pre-selected.
+// Keys: I include, E exclude (then 1-9 for the reason), M maybe, J previous, K next, U undo, A show/hide the
 // AI suggestion, O open the source link, ? help. Bulk actions and the conflict queue are M2.3.2.
 let keyHandler = null;
 
@@ -153,7 +154,7 @@ async function render(root, ctx, stage = "title_abstract", sort = "oldest") {
   }
   const criteria = ctx.summary.criteria?.criteria || [];
   const exclusions = criteria.filter((c) => c.kind === "exclude");
-  const state = { items: queue.items, counts: queue.counts, pending: queue.pending, index: 0, showAi: true, undoStack: [], busy: false, selected: new Set(), hiddenAi: new Set() };
+  const state = { items: queue.items, counts: queue.counts, pending: queue.pending, index: 0, showAi: true, undoStack: [], busy: false, selected: new Set(), revealed: null };
   const canDecide = ctx.canWrite && !queue.locked;
   const stageSelect = el("select", { attrs: { "aria-label": "Screening stage" } });
   SCREENING_STAGES.forEach((option) => {
@@ -195,7 +196,7 @@ async function render(root, ctx, stage = "title_abstract", sort = "oldest") {
   });
   const help = el("p", {
     className: "muted small",
-    text: "Keys: I include · E exclude (then the reason's number; for 10 and up, type both digits) · M maybe · J next · K previous · U undo · A show/hide AI suggestion · O open the source link",
+    text: "Keys: I include · E exclude (then the reason's number; for 10 and up, type both digits) · M maybe · J previous · K next · U undo · A show/hide AI suggestion · O open the source link",
   });
 
   if (!ctx.canWrite) notice.textContent = "You can read the queue, but only an owner or co-author can screen.";
@@ -292,16 +293,8 @@ async function render(root, ctx, stage = "title_abstract", sort = "oldest") {
       ? el("a", { href: link, target: "_blank", rel: "noopener noreferrer", text: `DOI ${item.doi}` })
       : el("span", { className: "muted small", text: "No DOI recorded" });
     const found = item.found_via ? el("p", { className: "muted small", text: `Found via ${label(item.found_via.method || "another search")}` }) : null;
-    // The AI's quoted evidence, marked where it sits in the record, only while its suggestion is showing (X.77).
-    const shown = item.ai_suggestion && state.showAi && !state.hiddenAi.has(item.source_id) && !["discarded", "locked"].includes(item.ai_suggestion.state);
-    const marked = (tag, text, where, extra = {}) => {
-      const parts = shown && item.ai_suggestion.evidence_source === where ? splitAtQuote(text, item.ai_suggestion.evidence_quote) : null;
-      return parts
-        ? el(tag, { ...extra, children: [document.createTextNode(parts[0]), el("mark", { text: parts[1], attrs: { title: "The AI's evidence" } }), document.createTextNode(parts[2])] })
-        : el(tag, { ...extra, text });
-    };
     record.replaceChildren(
-      marked("h2", item.title || "(untitled)", "title"),
+      el("h2", { text: item.title || "(untitled)" }),
       meta,
       el("p", { children: [source] }),
       ...(found ? [found] : []),
@@ -310,7 +303,7 @@ async function render(root, ctx, stage = "title_abstract", sort = "oldest") {
         ? [el("p", { className: "muted small screen-matched-terms", text: `Matched terms: ${item.matched_terms.join(", ")}` })]
         : []),
       el("h3", { text: "Abstract" }),
-      marked("p", item.abstract || "No abstract recorded for this record.", "abstract", { className: "screen-abstract" })
+      el("p", { className: "screen-abstract", text: item.abstract || "No abstract recorded for this record." })
     );
   }
 
@@ -327,8 +320,8 @@ async function render(root, ctx, stage = "title_abstract", sort = "oldest") {
     decide("include", "Include… (I)", openInclude, off);
     decide("exclude", "Exclude… (E)", openExclude, off);
     decide("maybe", "Maybe (M)", () => decideCurrent("maybe"), off);
-    decide("prev", "← Previous (K)", () => step(-1), state.index <= 0);
-    decide("next", "Next → (J)", () => step(1), state.index >= state.items.length - 1);
+    decide("prev", "← Previous (J)", () => step(-1), state.index <= 0);
+    decide("next", "Next → (K)", () => step(1), state.index >= state.items.length - 1);
     decide("undo", "Undo (U)", undo, !canDecide || state.undoStack.length === 0);
   }
 
@@ -343,69 +336,56 @@ async function render(root, ctx, stage = "title_abstract", sort = "oldest") {
       box.append(ul);
     }
     const ai = el("section", { className: "panel screen-ai", attrs: { "aria-live": "polite" } });
-    const item = current();
-    const s = item?.ai_suggestion;
-    // Next to the suggestion: how sure the AI says it is, and the words of the record it points to (X.77).
-    const evidenceBlock = () => {
+    const title = el("h3", { text: "AI suggestion, not a decision" });
+    const note = (text) => el("p", { className: "muted small", text });
+    const r = state.revealed;
+    // How sure the AI says it is, and the words of the record it points to (X.77).
+    const evidenceBlock = (s) => {
       const block = el("div", { className: "screen-evidence" });
       const level = confidenceText(s.confidence_level, s.confidence);
       if (level) block.append(el("p", { className: `small confidence-${s.confidence_level}`, text: level }));
       if (s.evidence_quote) {
-        block.append(el("p", { className: "muted small", text: `The AI points to this ${s.evidence_source || "text"} in the record:` }),
-          el("blockquote", { text: s.evidence_quote }));
-      } else if (s.decision) block.append(el("p", { className: "muted small", text: "The AI gave no quote from the record." }));
+        block.append(note(`The AI points to this ${s.evidence_source || "text"} in the record:`), el("blockquote", { text: s.evidence_quote }));
+      } else if (s.decision) block.append(note("The AI gave no quote from the record."));
       return block;
     };
-    if (!item) {
-      ai.append(el("h3", { text: "AI suggestion, not a decision" }), el("p", { className: "muted small", text: "—" }));
+    if (stage !== "title_abstract") {
+      ai.append(title, note("AI suggestions are made at title/abstract screening only."));
     } else if (!state.showAi) {
-      ai.append(el("h3", { text: "AI suggestion, not a decision" }), el("p", { className: "muted small", text: "Hidden. Press A to show it." }));
-    } else if (state.hiddenAi.has(item.source_id) || ["discarded", "locked"].includes(s?.state)) {
-      ai.append(
-        el("h3", { text: "AI suggestion, not a decision" }),
-        el("p", { className: "muted small", text: "No active AI suggestion for this record." })
-      );
-    } else if (!s) {
-      ai.append(
-        el("h3", { text: "AI suggestion, not a decision" }),
-        el("p", { className: "muted small", text: queue.dual_screen_enabled ? "Withheld until you decide." : "No AI suggestion for this record." })
-      );
+      ai.append(title, note("Hidden. Press A to show it."));
+    } else if (!r) {
+      ai.append(title, note("Withheld until you decide a record, so the suggestion cannot sway your decision. It then appears here beside your own."));
     } else {
-      // The shared panel (X.46.4): Accept records YOUR decision, Discard sets it aside, nothing is decided until you act.
-      const wanted = item.source_id;
-      ai.append(el("p", { className: "muted small", text: "Loading the AI suggestion…" }));
-      suggestionPanel({ ...ctx, canWrite: canDecide }, {
-        targetKind: "screening",
-        targetId: wanted,
-        onChange: async (path, area) => {
-          if (area === "/ai-locks" || /\/discard$/.test(path)) state.hiddenAi.add(wanted);
-          if (/\/restore$/.test(path)) state.hiddenAi.delete(wanted);
-          if (/\/(?:accept|edit-accept)$/.test(path)) state.undoStack.push({ sourceId: wanted, suggestionId: path.split("/")[1] });
-          await reloadQueue();
-        },
-      }).then((panel) => {
-        if (current()?.source_id !== wanted || !state.showAi) return;
-        if (panel.querySelector(".suggestion-card")) {
-          ai.replaceChildren(panel, evidenceBlock());
-          return;
-        }
-        if (state.hiddenAi.has(wanted)) {
-          ai.replaceChildren(
-            el("h3", { text: "AI suggestion, not a decision" }),
-            el("p", { className: "muted small", text: "No active AI suggestion for this record." })
-          );
-          return;
-        }
-        // A pre-screen row written before suggestions were stored through the panel: show it read-only.
+      const mine = `${label(r.your_decision)}${r.your_reason_code ? ` (${r.your_reason_code})` : ""}`;
+      ai.append(title, el("p", { className: "small", text: `Your decision on “${r.title}”: ${mine}` }));
+      const s = r.suggestion;
+      if (!s) ai.append(note("The AI gave no suggestion for this record."));
+      else {
         const conf = s.confidence == null ? "" : ` · confidence ${Math.round(s.confidence * 100)}%`;
-        ai.replaceChildren(
-          el("h3", { text: "AI suggestion, not a decision" }),
-          el("p", { text: `${label(s.decision)}${s.reason_code ? ` (${s.reason_code})` : ""}${conf}` }),
+        ai.append(
+          el("p", { text: `AI suggested: ${label(s.decision)}${s.reason_code ? ` (${s.reason_code})` : ""}${conf}` }),
+          el("p", { className: "small", text: r.agrees ? "It matches your decision." : "It differs from your decision. Your decision stands unless you change it." }),
           el("p", { className: "small", text: s.rationale || "No rationale recorded." }),
-          evidenceBlock(),
-          el("p", { className: "muted small", text: "A suggestion only. It counts for nothing until you decide." })
+          evidenceBlock(s),
+          note("A suggestion only. It counts for nothing unless you change your decision to it.")
         );
-      });
+        // The shared panel (X.46.4): Accept replaces YOUR decision with the suggestion, Discard sets it aside.
+        if (s.id && !r.agrees && !["discarded", "locked"].includes(s.state)) {
+          const wanted = r.sourceId;
+          suggestionPanel({ ...ctx, canWrite: canDecide }, {
+            targetKind: "screening",
+            targetId: wanted,
+            onChange: async (path) => {
+              if (/\/(?:accept|edit-accept)$/.test(path)) state.undoStack.push({ sourceId: wanted, suggestionId: path.split("/")[1] });
+              state.revealed = null;
+              await loadReveal(wanted);
+              await reloadQueue();
+            },
+          }).then((panel) => {
+            if (state.revealed?.sourceId === wanted && panel.querySelector(".suggestion-card")) ai.replaceChildren(panel, evidenceBlock(s));
+          });
+        }
+      }
     }
     const toggle = el("button", { type: "button", className: "quiet-button", text: state.showAi ? "Hide suggestion (A)" : "Show suggestion (A)" });
     toggle.addEventListener("click", () => {
@@ -463,6 +443,17 @@ async function render(root, ctx, stage = "title_abstract", sort = "oldest") {
     renderAll();
   }
 
+  // Once this person has decided a record, fetch the AI's suggestion for it; the server answers 404 before that.
+  async function loadReveal(sourceId, title = state.revealed?.title) {
+    if (stage !== "title_abstract") return;
+    try {
+      state.revealed = { ...(await request(api(`/suggestion/${sourceId}`))), sourceId, title: title || "this record" };
+    } catch (error) {
+      state.revealed = null;
+    }
+    renderSide();
+  }
+
   async function decideCurrent(decision, reasonCode = null, note = null) {
     const item = current();
     if (!item || !canDecide || state.busy) return;
@@ -484,6 +475,8 @@ async function render(root, ctx, stage = "title_abstract", sort = "oldest") {
       const back = state.items.findIndex((i) => i.source_id === keep);
       state.index = back >= 0 ? back : Math.min(state.index, Math.max(0, state.items.length - 1));
       toast(`${label(decision)} recorded.`);
+      state.revealed = null;
+      loadReveal(item.source_id, item.title);
     } catch (error) {
       toast(error.message);
     } finally {
@@ -524,6 +517,7 @@ async function render(root, ctx, stage = "title_abstract", sort = "oldest") {
         ...(undoPath ? {} : { body: JSON.stringify({ source_id: sourceId, stage }) }),
       });
       state.undoStack.pop();
+      state.revealed = null; // undecided again: the suggestion is withheld again
       // The undo has been recorded: the record is waiting again even if the reload below fails, so count it now.
       state.pending += 1;
       try {

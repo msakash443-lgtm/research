@@ -426,6 +426,31 @@ def _reject_screening_change(mapper, connection, target) -> None:
     raise ValueError("screening_decisions is append-only: rows cannot be updated or deleted")
 
 
+class ScreeningDiscussionNote(Base):
+    """One note in the reviewers' documented discussion of a conflict on one source and stage (X.225). Append-only.
+
+    `decision_seq` is the highest decision row number at the moment of writing, so a note can be told apart from
+    the discussion of an earlier, since-changed disagreement: only notes written after the latest reviewer
+    decision count towards ruling on the conflict.
+    """
+
+    __tablename__ = "screening_discussion_notes"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    source_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sources.id"), index=True)
+    stage: Mapped[str] = mapped_column(String(20))
+    decision_seq: Mapped[int]
+    author: Mapped[str] = mapped_column(String(100))
+    body: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+@event.listens_for(ScreeningDiscussionNote, "before_update")
+@event.listens_for(ScreeningDiscussionNote, "before_delete")
+def _reject_discussion_note_change(mapper, connection, target) -> None:
+    raise ValueError("screening_discussion_notes is append-only: rows cannot be updated or deleted")
+
+
 class AutoExcludeAudit(Base):
     """The human sampling audit for one AI auto-exclude (spec 5.3 human gate, plan M2.5.1).
 

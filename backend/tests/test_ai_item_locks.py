@@ -132,6 +132,8 @@ def test_a_suggestion_cannot_be_stored_about_a_locked_item_and_locking_closes_th
                 db, project_id=uuid.UUID(world["pid"]), target_kind="screening", target_id=target, content="Again",
                 model_id="m", prompt_version="p@1", producing_agent="prescreen",
             )
+    # X.224: a screening suggestion is only visible to a person who has decided that source themselves
+    assert world["owner"].post(f"/api/projects/{world['pid']}/screening/decisions", json={"source_id": target, "decision": "include"}).status_code == 201
     # a person can no longer accept what is now "never for this item"
     assert world["owner"].post(f"/api/projects/{world['pid']}/suggestions/{suggestion_id}/accept").status_code == 409
 

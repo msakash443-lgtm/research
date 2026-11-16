@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app import active_learning, ai_quality
 from app.agreement import Agreement, cohen_kappa
-from app.models import AutoExcludeAudit, Gate, GateCode, GateStatus, Project, ScreeningCriterion, ScreeningDecision, Source
+from app.models import AutoExcludeAudit, Gate, GateCode, GateStatus, Project, ScreeningCriterion, ScreeningDecision, ScreeningDiscussionNote, Source
 
 STAGES = ("title_abstract", "full_text")
 HUMAN_DECISIONS = ("include", "exclude", "maybe")
@@ -87,6 +87,12 @@ def human_decisions_by_decider(rows: list[ScreeningDecision]) -> dict[str, Scree
     return {decider: row for decider, row in latest.items() if row.decision != UNDO}
 
 
+def has_own_decision(rows: list[ScreeningDecision], decider: str) -> bool:
+    """This decider currently has a non-undone human decision on the source+stage the rows belong to.
+    It is the condition for showing them the AI's suggestion (X.224): nobody sees it before deciding themselves."""
+    return decider in human_decisions_by_decider(rows)
+
+
 def adjudication(rows: list[ScreeningDecision]) -> ScreeningDecision | None:
     """The arbiter's ruling that currently settles a conflict, or None. The latest arbiter row wins; it stands only
     while no reviewer has acted since it (a later reviewer decision or undo reopens the question). Arbiter rows
@@ -98,6 +104,19 @@ def adjudication(rows: list[ScreeningDecision]) -> ScreeningDecision | None:
     if any(r.decided_by == "human" and r.seq > last.seq for r in rows):
         return None
     return last
+
+
+def has_taken_part(rows: list[ScreeningDecision], decider: str) -> bool:
+    """This person ever made, or undid, a human decision on the source+stage the rows belong to. Taking back an
+    answer does not make someone independent of it, so an arbiter must have no such row at all (X.225)."""
+    return any(r.decided_by == "human" and r.decider == decider for r in rows)
+
+
+def current_discussion(rows: list[ScreeningDecision], notes: list[ScreeningDiscussionNote]) -> list[ScreeningDiscussionNote]:
+    """The discussion notes that belong to the disagreement as it stands now: written after the latest reviewer
+    decision or undo. When a reviewer changes their answer the earlier notes stay on record but no longer count (X.225)."""
+    last = max((r.seq for r in rows if r.decided_by == "human"), default=0)
+    return [n for n in notes if n.decision_seq >= last]
 
 
 def dual_screen_status(rows: list[ScreeningDecision]) -> tuple[str, ScreeningDecision | None]:
