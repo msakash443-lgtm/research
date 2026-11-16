@@ -4,6 +4,8 @@ import pytest
 import sqlalchemy as sa
 from alembic import command
 
+pytestmark = pytest.mark.slow  # walks the Alembic chain
+
 
 def test_suggestion_downgrade_refuses_pending_suggestions_without_events(migrator):
     config, engine = migrator

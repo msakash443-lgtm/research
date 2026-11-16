@@ -1,7 +1,7 @@
 // Run with: node --test backend/app/web/js/test   (no packages; pytest does not run these)
 import test from "node:test";
 import assert from "node:assert/strict";
-import { afterDecision, authorsText, confidenceText, countsText, fetchEntireQueue, keyAction, OTHER_EXCLUSION_REASON, runBulk, safeLink, SCREENING_STAGES, screeningStageLabel, splitAtQuote, typedReason } from "../steps/screenLogic.js";
+import { afterDecision, authorsText, confidenceText, countsText, fetchEntireQueue, keyAction, OTHER_EXCLUSION_REASON, runBulk, safeLink, SCREENING_STAGES, screeningStageLabel, typedReason } from "../steps/screenLogic.js";
 
 test("the typed any-other exclusion reason uses a distinct auditable code", () => {
   assert.equal(OTHER_EXCLUSION_REASON, "E_OTHER");
@@ -42,6 +42,13 @@ test("a decision raises its own count, lowers unscreened, floors at zero and lea
   assert.deepEqual(afterDecision(before, "exclude"), { include: 1, unscreened: 1, exclude: 1 });
   assert.deepEqual(before, { include: 1, unscreened: 2 });
   assert.equal(afterDecision({ unscreened: 0 }, "maybe").unscreened, 0);
+});
+
+test("J goes to the previous record and K to the next, in either case", () => {
+  assert.equal(keyAction({ key: "j" }), "previous");
+  assert.equal(keyAction({ key: "J" }), "previous");
+  assert.equal(keyAction({ key: "k" }), "next");
+  assert.equal(keyAction({ key: "K" }), "next");
 });
 
 test("keys map to actions in either case", () => {
@@ -120,24 +127,6 @@ test("a record that appears on two pages is kept once, and the next page is aske
   assert.equal(new Set(ids).size, ids.length, "no record twice");
   assert.equal(ids.includes("s199"), true);
   assert.deepEqual(calls, [0, 200, 400]);
-});
-
-test("the AI's quote is found in the record ignoring case and line breaks, and split around the match", () => {
-  const text = "We surveyed 200 nurses.\nWorkload was linked to burnout in every ward.";
-  assert.deepEqual(splitAtQuote(text, "workload was LINKED to burnout"),
-    ["We surveyed 200 nurses.\n", "Workload was linked to burnout", " in every ward."]);
-  assert.deepEqual(splitAtQuote(text, "nurses. workload")[1], "nurses.\nWorkload");
-});
-
-test("a quote that is not in the text, or is empty, marks nothing", () => {
-  assert.equal(splitAtQuote("Workload was linked to burnout", "Workload caused burnout"), null);
-  assert.equal(splitAtQuote("Workload", "   "), null);
-  assert.equal(splitAtQuote("", "x"), null);
-});
-
-test("quote characters that mean something in a pattern are matched as plain text", () => {
-  assert.deepEqual(splitAtQuote("Effect (n=20) was small. Done", "(n=20) was small."), ["Effect ", "(n=20) was small.", " Done"]);
-  assert.equal(splitAtQuote("abc", ".*"), null);
 });
 
 test("the confidence line names the level and the percentage, and is empty without a level", () => {

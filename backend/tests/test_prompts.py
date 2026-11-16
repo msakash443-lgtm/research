@@ -19,6 +19,8 @@ PUBLISHED_CHECKSUMS = {
     "evidence_synthesis.v1.toml": "a2825a5ca79211cf7716466f24d39b1b307c6d677c6c6e1656510ba74d518beb",
     "evidence_synthesis.v2.toml": "3f17a3de6c39c594b515ad32501d402d379357f43c86181f3b6b7db51ef978fb",
     "evidence_synthesis.v3.toml": "f94fd8fccaecf3676588012090e478198c4695ae92a5c4bb87f1b7a9d3fc702d",
+    "gap_suggestions.v1.toml": "200803db148192f1595fd6ab6b29f0faf5e809026ecb87e92e437439c5d045f4",
+    "rq_suggestions.v1.toml": "f47280394e7e7324f954d26a43b79cbd5979592fb932cfe3f474bf3d3ea85698",
     "synonym_suggestions.v1.toml": "c8d1ea6e85f3dd2290b7039141752482d8da70b24a57c4a1dcbe4c42ee6106f3",
     "evidence_synthesis.v5.toml": "12952df090def63ecf450d344a54a109d36f95c3827cc7667d3afdce84b6f2e0",
     "evidence_synthesis.v4.toml": "25cd8e1df356aae21d24746a5df38df1aede6d48d98e43f934a16ce3610015fb",

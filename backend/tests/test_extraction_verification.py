@@ -4,6 +4,7 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.database import SessionLocal
@@ -139,6 +140,7 @@ def test_approved_g4_rejects_new_sources_until_reentry():
     assert imported.status_code == 409
 
 
+@pytest.mark.slow  # starts a Python subprocess
 def test_source_guard_is_registered_when_only_models_are_imported_in_a_worker_process():
     backend = Path(__file__).resolve().parents[1]
     result = subprocess.run(
