@@ -1,0 +1,4 @@
+ImportError while loading conftest 'C:\Users\msaka\Documents\antigravity\research\backend\tests\conftest.py'.
+backend\tests\conftest.py:17: in <module>
+    raise pytest.UsageError(
+E   _pytest.config.exceptions.UsageError: TEST_DATABASE_URL is not set. Point it at a throwaway PostgreSQL database whose name ends in '_test', e.g. postgresql+psycopg://research_test:<password>@127.0.0.1:55432/research_ai_test (docker compose --profile test up -d db-test).
