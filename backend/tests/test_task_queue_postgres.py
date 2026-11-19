@@ -5,6 +5,7 @@ connections; these tests drive exactly that against the PostgreSQL test database
 """
 
 import threading
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -15,6 +16,8 @@ from app import task_queue as q
 from app.config import get_settings
 from app.database import SessionLocal
 from app.models import AuditEvent, Project, Task, TaskStatus, User
+
+pytestmark = pytest.mark.real_db  # two workers on separate connections: commits must really happen
 
 NOW = datetime(2026, 10, 5, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -65,6 +68,7 @@ def test_two_workers_on_separate_connections_never_claim_the_same_task(pg):
             start.wait()  # both begin together, so their claims overlap
             while (task := q.claim_next_task(NOW)) is not None:
                 claimed[name].append(task.id)
+                time.sleep(0.005)  # give the other worker a turn, so neither can drain the queue before the other starts
         except Exception as exc:  # surfaced below; a thread can't fail the test itself
             errors.append(exc)
 

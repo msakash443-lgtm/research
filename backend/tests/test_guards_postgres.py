@@ -22,6 +22,8 @@ from app.models import (
 from app.routers.gates import decide_gate, reopen_gate
 from app.schemas import GateReopen
 
+pytestmark = pytest.mark.real_db  # raw SQL on separate connections: commits must really happen
+
 
 @pytest.fixture
 def pg():
@@ -171,6 +173,21 @@ def _run_in_thread(fn, Session, user_id, project_id):
     return thread, outcome
 
 
+def _wait_until_a_backend_waits_on_a_lock(Session, timeout=10.0):
+    """Poll until PostgreSQL reports a backend of this database waiting on a lock, so the next assertion
+    sees the thread blocked on the row lock rather than merely not yet started."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        with Session() as probe:
+            waiting = probe.scalar(text(
+                "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'"
+            ))
+        if waiting:
+            return
+        time.sleep(0.02)
+    raise AssertionError("no backend started waiting on the project row lock")
+
+
 @pytest.mark.parametrize("action", [_approve_g2, _reopen_g1], ids=["decide", "reopen"])
 def test_decide_and_reopen_wait_for_the_project_row_lock(gated, action):
     Session, user_id, project_id = gated
@@ -178,7 +195,7 @@ def test_decide_and_reopen_wait_for_the_project_row_lock(gated, action):
         holder.refresh(holder.get(Project, project_id), with_for_update=True)  # another request holds the lock
 
         thread, outcome = _run_in_thread(action, Session, user_id, project_id)
-        time.sleep(1.5)
+        _wait_until_a_backend_waits_on_a_lock(Session)
         assert thread.is_alive() and not outcome  # blocked on the lock, not racing past it
 
         holder.commit()  # release

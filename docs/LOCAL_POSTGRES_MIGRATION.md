@@ -51,4 +51,19 @@ $env:TEST_DATABASE_URL = "postgresql+psycopg://research_test:<pick-a-password>@1
 pytest -q
 ```
 
-`TEST_DATABASE_URL` must name a database ending in `_test`; that name is only a prefix. `backend/tests/conftest.py` builds `<name>_<worker>_tpl` once per pytest process from the models, then clones it into `<name>_<worker>` before every test, and uses an extra `<name>_scratch_<worker>` database for Alembic tests. A test that waits more than 10 seconds for a row lock fails instead of hanging.
+`TEST_DATABASE_URL` must name a database ending in `_test`; that name is only a prefix. `backend/tests/conftest.py` builds `<name>_<worker>_tpl` once per pytest process from the models and keeps one working database `<name>_<worker>` per process. A test that waits more than 10 seconds for a row lock fails instead of hanging.
+
+### How each test is isolated (X.235)
+
+- **Rollback (the default).** The test runs inside an outer transaction on one connection; `SessionLocal` joins it through savepoints, so every `commit()` the test or the app makes is undone when the test ends. This costs about a millisecond instead of a `CREATE DATABASE` (about two seconds on Windows). A test that opens a connection of its own (`engine.connect()`, a second `sessionmaker`, the app lifespan) is failed with a message telling you to mark it, because it would leak committed rows into later tests.
+- **Clone.** Tests marked `@pytest.mark.real_db` (and any test using the `race_db` fixture) get a working database cloned from the template first. Use it for threads and second connections, lock contention, `FOR UPDATE SKIP LOCKED` races, and anything that needs a real `COMMIT` to be seen elsewhere. `test_guards_postgres.py`, `test_task_queue_postgres.py` and `test_dashboard.py` are marked as a whole.
+- **Alembic tests** (`migrator`, `scratch_database_url`) work on a separate scratch database. `migrator` starts an upgrade from an empty scratch database from the nearest revision this worker already migrated to, so each revision is only walked once per worker; `test_migration_chain.py` (marked `slow`) runs `upgrade head`, `check` and `downgrade base` for real.
+- `RESEARCH_TEST_ISOLATION=clone pytest -q` forces the clone mode for every test, to compare the two modes or to rule rollback out when a test fails strangely.
+- `now()` is fixed at transaction start, so the template is built with a `public.now()` that returns the clock time (the test connections put `public` ahead of `pg_catalog` in `search_path`). Without it every row a rollback-mode test writes would share one timestamp.
+- Sequences are not rolled back, so ids differ from test to test; never assert a literal generated id.
+
+### Parallel runs
+
+`pytest.ini` runs `-n auto --dist loadfile`: one worker per CPU, each test file on one worker (the role-matrix module seeds its world once per file). Each worker holds a few connections (its pool is 5 plus 10 overflow at most, one in rollback mode), so start the server with `max_connections` of at least 200 (the command above does) when you have 8 or more workers; the default of 100 is enough for fewer.
+
+On Windows the xdist workers have crashed with `INTERNALERROR`/`WinError` before. When that happens run serially: `pytest -q -n0 -o addopts=""`. While iterating, add `-m "not slow" --lf`; run the whole suite before merging.

@@ -1,5 +1,5 @@
 import uuid
-from datetime import timedelta
+from datetime import timedelta, timezone
 
 from app.config import get_settings
 from app.database import SessionLocal
@@ -98,7 +98,7 @@ def test_purge_leaves_the_answer_status_and_timestamps_untouched():
     )
     run.answer = "the synthesized answer"
     db.commit()
-    completed_at = run.completed_at.replace(tzinfo=None)
+    completed_at = run.completed_at.astimezone(timezone.utc)  # an instant: the database session may read it back in another zone
 
     purge_expired_run_snapshots(db, utcnow(), 30)
     db.commit()
@@ -107,7 +107,7 @@ def test_purge_leaves_the_answer_status_and_timestamps_untouched():
     assert run.input_snapshot is None
     assert run.answer == "the synthesized answer"
     assert run.status == ResearchRunStatus.completed
-    assert run.completed_at.replace(tzinfo=None) == completed_at
+    assert run.completed_at.astimezone(timezone.utc) == completed_at
     db.close()
 
 

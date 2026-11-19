@@ -86,14 +86,21 @@ def test_the_route_table_yields_a_meaningful_set_of_read_endpoints():
     assert {"/stage", "/sources", "/screening/queue", "/prisma", "/audit"} <= route_names
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("stage", STAGES, ids=lambda s: s.value)
 def test_every_read_endpoint_works_at_every_stage_with_gates_pending(world, monkeypatch, stage):
     client, project_id, pid, lookup_task_id = world
     monkeypatch.setattr(get_settings(), "obsidian_export_enabled", True)  # a deployment flag, not a stage lock
     _at_stage_with_gates_pending(pid, stage)
     failures = []
+    source_id = client.post(f"/api/projects/{project_id}/sources", json={"title": "A source"}).json()["id"]
     for pattern, rest in READ_PATHS:
-        query = f"task_id={lookup_task_id}" if pattern == "/sources/own/lookup" else REQUIRED_QUERY.get(pattern)
+        if pattern == "/sources/own/lookup":
+            query = f"task_id={lookup_task_id}"
+        elif pattern == "/screening/discussion":
+            query = f"source_id={source_id}"
+        else:
+            query = REQUIRED_QUERY.get(pattern)
         url = f"/api/projects/{project_id}{rest}" + (f"?{query}" if query else "")
         response = client.get(url)
         if response.status_code != 200:

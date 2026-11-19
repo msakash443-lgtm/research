@@ -1,6 +1,7 @@
 """A quote match is mechanical; a support judgment always belongs to a person."""
 
 import uuid
+from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -43,7 +44,12 @@ def test_research_run_quote_match_does_not_confirm_semantic_support(fake_llm):
     assert uuid.UUID(record["support_confirmed_by"])
     assert record["support_confirmed_at"] is not None
     assert confirmed.json()["verified"] is False  # support confirmation is distinct from claim verification
-    assert client.post(endpoint).json()["evidence"][0]["support_confirmed_at"].rstrip("Z") == record["support_confirmed_at"].rstrip("Z")
+    def as_instant(value):
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+    repeated = client.post(endpoint).json()["evidence"][0]["support_confirmed_at"]
+    assert as_instant(repeated) == as_instant(record["support_confirmed_at"])
     with SessionLocal() as db:
         events = db.scalars(select(AuditEvent).where(AuditEvent.action == "citation.support_confirmed")).all()
         assert len(events) == 1

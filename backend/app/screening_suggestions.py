@@ -4,19 +4,23 @@ The pre-screen still writes its `ScreeningDecision(decided_by="ai")` row (agreem
 read it). Next to it, `store_prescreen_suggestion` stores one `AiSuggestion` (target kind `screening`, target id =
 the source id) so the screen can show it through the shared panel. What a person does with it:
 
-* Accept / Edit then accept: records THEIR OWN human decision (the suggested decision and reason code), as if they
-  had pressed the button themselves: same checks, same audit event, same artifact. Edited text becomes the note.
+* A person sees the suggestion only after their own decision on that source (X.224), in single and dual-screen
+  projects alike: before that the queue, the suggestion endpoints and the decision history all withhold it.
+* Accept / Edit then accept: replaces THEIR OWN decision with the suggested decision and reason code ("change my
+  decision to the suggestion"), as if they had pressed the button themselves: same checks, same audit event, same
+  artifact. Edited text becomes the note. Refused while they have no decision of their own.
 * Undo: appends a human "undo" row, exactly like the Undo key. Nothing is deleted.
 * Discard / Restore only change the suggestion's state; they never write a decision.
 
-Dual screening: the screen withholds AI suggestions until a reviewer has decided (M2.4.1), so accepting is refused
-there and the suggestion list hides this kind (`app.routers.suggestions`).
+The suggestion endpoints hide this kind from anyone without their own decision (`visible_to`, used by
+`app.routers.suggestions`).
 """
 
 from __future__ import annotations
 
 import uuid
 
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -29,6 +33,8 @@ from app.screening import (
     criterion_codes,
     final_decision,
     has_any_human_decision,
+    has_own_decision,
+    human_decisions_by_decider,
     next_seq,
     rows_for_stage,
     screening_locked,
@@ -38,6 +44,34 @@ TARGET_KIND = "screening"
 STAGE = "title_abstract"
 SCREENING_ARTIFACT_KIND = "screening_decision"  # same artifact kind the decisions endpoint registers (X.42)
 LOCKED_MESSAGE = "Gate G3 is approved for this screening. Reopen the project at the screening stage to change a decision."
+
+
+def decided_target_ids(db: Session, project: Project, actor: str, target_ids: list[str]) -> set[str]:
+    """Which of these source ids (as the suggestions store them) the actor has personally decided at the stage."""
+    ids = []
+    for target_id in target_ids:
+        try:
+            ids.append(uuid.UUID(target_id))
+        except ValueError:
+            continue
+    if not ids:
+        return set()
+    by_source: dict[uuid.UUID, list[ScreeningDecision]] = {}
+    for row in db.scalars(
+        select(ScreeningDecision)
+        .where(ScreeningDecision.project_id == project.id, ScreeningDecision.stage == STAGE, ScreeningDecision.source_id.in_(ids))
+        .order_by(ScreeningDecision.seq)
+    ):
+        by_source.setdefault(row.source_id, []).append(row)
+    return {str(source_id) for source_id, rows in by_source.items() if has_own_decision(rows, actor)}
+
+
+def visible_to(db: Session, project: Project, actor: str, rows: list[AiSuggestion]) -> list[AiSuggestion]:
+    """The suggestions this person may see: every non-screening one, and a screening one only for a source they
+    have decided themselves (X.224)."""
+    screening = [row.target_id for row in rows if row.target_kind == TARGET_KIND]
+    decided = decided_target_ids(db, project, actor, screening) if screening else set()
+    return [row for row in rows if row.target_kind != TARGET_KIND or row.target_id in decided]
 
 
 def suggestion_text(decision: str, reason_code: str | None, rationale: str) -> str:
@@ -76,8 +110,6 @@ def _source_and_project(db: Session, suggestion: AiSuggestion) -> tuple[Project,
 
 def _apply(db: Session, suggestion: AiSuggestion, text: str, actor: str) -> str | None:
     project, source = _source_and_project(db, suggestion)
-    if project.dual_screen_enabled:
-        raise ValueError("Dual screening is on: AI suggestions are not shown or accepted there. Decide the record yourself.")
     if screening_locked(db, project):
         raise ValueError(LOCKED_MESSAGE)
     evidence = (suggestion.evidence_json or [{}])[0]
@@ -86,8 +118,11 @@ def _apply(db: Session, suggestion: AiSuggestion, text: str, actor: str) -> str 
     if problem:
         raise ValueError(problem)
     rows = rows_for_stage(db, project, STAGE).get(source.id, [])
-    if final_decision(rows) is not None:
-        raise ValueError("You have already decided this record. Undo that decision first.")
+    own = human_decisions_by_decider(rows).get(actor)
+    if own is None:
+        raise ValueError("Decide this record yourself first. The AI suggestion is shown only after your own decision.")
+    if own.decision == decision and own.reason_code == reason_code:
+        raise ValueError("Your decision already matches this suggestion.")
     if decision == "exclude" and has_any_human_decision(rows_for_stage(db, project, "full_text").get(source.id, [])):
         raise ValueError("This source already has a full-text decision. Undo that first.")
     note = None if text == suggestion.content else text.strip()[:2000] or None

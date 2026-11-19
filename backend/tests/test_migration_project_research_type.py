@@ -10,6 +10,8 @@ from app.database import SessionLocal
 from app.gates import GATE_STAGES
 from app.models import Project, User
 
+pytestmark = pytest.mark.slow  # walks the Alembic chain
+
 
 def _plans(engine) -> dict[uuid.UUID, tuple[str, dict]]:
     with engine.connect() as connection:

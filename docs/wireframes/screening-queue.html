@@ -99,8 +99,8 @@
       <button class="exc" data-act="exclude">Exclude… <kbd>E</kbd></button>
       <button class="may" data-act="maybe">Maybe <kbd>M</kbd></button>
       <span class="spacer"></span>
-      <button class="quiet" data-act="prev">← Previous <kbd>K</kbd></button>
-      <button class="quiet" data-act="next">Next → <kbd>J</kbd></button>
+      <button class="quiet" data-act="prev">← Previous <kbd>J</kbd></button>
+      <button class="quiet" data-act="next">Next → <kbd>K</kbd></button>
       <button class="quiet" data-act="undo">Undo <kbd>U</kbd></button>
       <span class="pin" title="Q3">Q3</span>
     </div>
@@ -134,7 +134,7 @@
   <ol>
     <li><span class="pin">Q1</span> <span><strong>Where do I approve?</strong> Is it clear that G3 lives in the bar at the top, that it opens only when nothing is left to screen and the AI-exclude audit is done, and that the supervisor (switch "View as") is the one who approves?</span></li>
     <li><span class="pin">Q2</span> <span><strong>Where do I see the source?</strong> Is "Open source record" (or <kbd>O</kbd>) enough at this stage, given full texts come only at the full-text stage?</span></li>
-    <li><span class="pin">Q3</span> <span><strong>How do I go back?</strong> <kbd>K</kbd>/Previous, Undo, the Decided tab and the browser Back button all work. Which do you expect to use? Is "Undo" (which adds a new entry, never erases) understood?</span></li>
+    <li><span class="pin">Q3</span> <span><strong>How do I go back?</strong> <kbd>J</kbd>/Previous, Undo, the Decided tab and the browser Back button all work. Which do you expect to use? Is "Undo" (which adds a new entry, never erases) understood?</span></li>
     <li><span class="pin">Q4</span> <span>The history keeps every decision, including undone ones. Useful here, or only in the audit export?</span></li>
     <li><span class="pin">Q5</span> <span>Bulk actions: should bulk <em>Exclude</em> exist at all at title/abstract, or only bulk Maybe?</span></li>
     <li><span class="pin">Q6</span> <span>Should the AI suggestion show <em>before</em> you decide, or only <em>after</em> (to avoid being nudged)? Try the switch in the AI card.</span></li>
@@ -158,7 +158,7 @@
   <div class="panel-head" id="help-title">Keyboard shortcuts</div>
   <div class="panel-body small">
     <div><kbd>I</kbd> Include · <kbd>E</kbd> Exclude (then <kbd>1</kbd>–<kbd>4</kbd> for the reason) · <kbd>M</kbd> Maybe</div>
-    <div><kbd>J</kbd> Next · <kbd>K</kbd> Previous · <kbd>U</kbd> Undo my last decision on this record</div>
+    <div><kbd>J</kbd> Previous · <kbd>K</kbd> Next · <kbd>U</kbd> Undo my last decision on this record</div>
     <div><kbd>O</kbd> Open source record · <kbd>A</kbd> Show/hide AI suggestion · <kbd>?</kbd> This help · <kbd>Esc</kbd> Close</div>
     <div class="row"><span class="spacer"></span><button id="help-close">Close</button></div>
   </div>
@@ -452,7 +452,7 @@ document.addEventListener("keydown", e => {
   if (wfTyping(e) || document.querySelector("dialog[open]") || e.ctrlKey || e.metaKey || e.altKey) return;
   const k = e.key.toLowerCase();
   if (k === "escape") return closeDrawer();
-  const map = { i: () => decide("include", null, null), e: () => openExclude(null), m: () => decide("maybe", null, null), j: () => step(1), k: () => step(-1), u: undo, o: openDrawer,
+  const map = { i: () => decide("include", null, null), e: () => openExclude(null), m: () => decide("maybe", null, null), j: () => step(-1), k: () => step(1), u: undo, o: openDrawer,
     a: () => { state.aiMode = state.aiMode === "before" ? "after" : "before"; renderAll(); }, "?": () => $("help-dialog").showModal() };
   if (map[k]) { e.preventDefault(); map[k](); }
 });

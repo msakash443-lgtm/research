@@ -6,8 +6,8 @@ const KEY_ACTIONS = {
   i: "include",
   e: "exclude",
   m: "maybe",
-  j: "next",
-  k: "previous",
+  j: "previous",
+  k: "next",
   u: "undo",
   a: "toggle-ai",
   o: "open",
@@ -104,16 +104,6 @@ export function typedReason(digits, count) {
   if (!(n >= 1 && n <= count)) return {};
   if (n * 10 <= count) return { wait: true };
   return { index: n - 1 };
-}
-
-// Where the AI's evidence quote sits in the record text (X.77): [before, match, after], or null when the words are
-// not there. Case and line breaks are ignored, as on the server, so a wrapped abstract still highlights.
-export function splitAtQuote(text, quote) {
-  const words = String(quote ?? "").trim().split(/\s+/).filter(Boolean);
-  if (!text || words.length === 0) return null;
-  const pattern = words.map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+");
-  const found = new RegExp(pattern, "i").exec(text);
-  return found ? [text.slice(0, found.index), found[0], text.slice(found.index + found[0].length)] : null;
 }
 
 // "High confidence (90%)" next to a suggestion; empty when the server gave no level.

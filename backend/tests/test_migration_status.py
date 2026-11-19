@@ -85,6 +85,7 @@ def test_ready_reports_the_migration_gap_when_the_database_is_behind(monkeypatch
     assert "alembic upgrade head" in body["database_migration"]["message"]
 
 
+@pytest.mark.real_db  # /ready queries the app engine directly
 def test_ready_says_nothing_extra_when_the_database_is_current():
     response = TestClient(app).get("/ready")
     assert response.status_code == 200

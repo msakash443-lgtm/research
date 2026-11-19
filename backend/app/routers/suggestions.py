@@ -125,9 +125,10 @@ def _read(suggestion: AiSuggestion) -> SuggestionRead:
     )
 
 
-def _load(db: Session, project: Project, suggestion_id: uuid.UUID) -> AiSuggestion:
+def _load(db: Session, project: Project, suggestion_id: uuid.UUID, user: User) -> AiSuggestion:
     suggestion = db.scalar(select(AiSuggestion).where(AiSuggestion.id == suggestion_id, AiSuggestion.project_id == project.id))
-    if suggestion is None:
+    # A screening suggestion is withheld until this person has decided the source themselves (X.224): not found.
+    if suggestion is None or not screening_suggestions.visible_to(db, project, audit.user_actor(user), [suggestion]):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Suggestion not found")
     return suggestion
 
@@ -166,15 +167,15 @@ def list_suggestions(
     target_kind: str | None = Query(default=None, max_length=40),
     target_id: str | None = Query(default=None, max_length=64),
     project: Project = Depends(project_access(READ_ROLES)),
+    user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
     # Newest first. The page limit counts what is shown, so a pile of discarded or superseded suggestions cannot push
     # a pending one out of the page; hidden rows are skipped as they are met, and the walk stops at a full page.
     query = _query(project, target_kind, target_id).order_by(AiSuggestion.created_at.desc(), AiSuggestion.id)
     shown = []
-    for row in db.scalars(query):
-        if project.dual_screen_enabled and row.target_kind == screening_suggestions.TARGET_KIND:
-            continue  # the screen withholds AI screening suggestions until a reviewer decides (M2.4.1)
+    # A screening suggestion is withheld until this person has decided the source themselves (X.224).
+    for row in screening_suggestions.visible_to(db, project, audit.user_actor(user), list(db.scalars(query))):
         read = _read(row)
         if not show_discarded and read.state in HIDDEN_STATES:
             continue
@@ -185,10 +186,13 @@ def list_suggestions(
 
 
 @router.get("/{suggestion_id}/why", response_model=SuggestionWhy)
-def why(suggestion_id: uuid.UUID, project: Project = Depends(project_access(READ_ROLES)), db: Session = Depends(get_db)):
-    suggestion = _load(db, project, suggestion_id)
-    if project.dual_screen_enabled and suggestion.target_kind == screening_suggestions.TARGET_KIND:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Suggestion not found")
+def why(
+    suggestion_id: uuid.UUID,
+    project: Project = Depends(project_access(READ_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    suggestion = _load(db, project, suggestion_id, user)
     return SuggestionWhy(
         id=suggestion.id,
         evidence=suggestion.evidence_json or [],
@@ -208,7 +212,7 @@ def _simple(kind: str):
         user: User = Depends(current_user),
         db: Session = Depends(get_db),
     ):
-        suggestion = _load(db, project, suggestion_id)
+        suggestion = _load(db, project, suggestion_id, user)
         _run(db, lambda: suggestion_store.act(db, suggestion, kind, audit.user_actor(user)))
         db.refresh(suggestion)
         return _read(suggestion)
@@ -234,7 +238,7 @@ def edit_and_accept(
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    suggestion = _load(db, project, suggestion_id)
+    suggestion = _load(db, project, suggestion_id, user)
     _run(db, lambda: suggestion_store.act(db, suggestion, suggestions.EDITED_AND_ACCEPTED, audit.user_actor(user), text=body.text))
     db.refresh(suggestion)
     return _read(suggestion)
@@ -249,7 +253,7 @@ def ask_again(
     db: Session = Depends(get_db),
 ):
     """Replace a pending suggestion with a new answer; returns the new suggestion."""
-    suggestion = _load(db, project, suggestion_id)
+    suggestion = _load(db, project, suggestion_id, user)
     child = _run(db, lambda: suggestion_store.ask_again(db, suggestion, audit.user_actor(user), body.guidance))
     db.refresh(child)
     return _read(child)
@@ -269,7 +273,9 @@ def bulk(
     def work():
         # No page limit: a bulk action that silently skipped rows past the list's page size would report success
         # while leaving pending suggestions untouched. It is one transaction over every matching suggestion.
-        rows = db.scalars(_query(project, body.target_kind, body.target_id).order_by(AiSuggestion.created_at, AiSuggestion.id)).all()
+        rows = screening_suggestions.visible_to(
+            db, project, actor, list(db.scalars(_query(project, body.target_kind, body.target_id).order_by(AiSuggestion.created_at, AiSuggestion.id)))
+        )
         by_id = {str(row.id): row for row in rows}
         plan = suggestions.plan_bulk(
             ((key, suggestion_store.state_of(row), row.confidence) for key, row in by_id.items()),
