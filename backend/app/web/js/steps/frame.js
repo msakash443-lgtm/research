@@ -77,6 +77,7 @@ function unmetConditions(options) {
 function fixHref(ctx, fix) {
   if (!fix) return null;
   if (/^Approve\b/i.test(fix)) return `#/p/${ctx.project.id}/approvals`;
+  if (/^Screening:\s*approve\s+G3\b/i.test(fix)) return `#/p/${ctx.project.id}/approvals`;
   const match = fix.match(/^([^:]+):/);
   if (!match) return null;
   const routes = {
@@ -97,6 +98,11 @@ function fixHref(ctx, fix) {
   const key = match[1].trim();
   if (!Object.hasOwn(routes, key)) return null;
   return `#/p/${ctx.project.id}/${routes[key]}`;
+}
+
+// Approving G3 is decided on Approvals, not in the Screening queue its condition is filed under (X.215).
+function fixText(fix) {
+  return /^Screening:\s*approve\s+G3\b/i.test(fix) ? "Review screening approval" : "Fix this";
 }
 
 function conditionBox(ctx, conditions) {
@@ -120,7 +126,7 @@ function conditionBox(ctx, conditions) {
         item.append(el("a", {
           className: "back-link condition-fix",
           href,
-          text: "Fix this",
+          text: fixText(condition.fix),
           attrs: { "aria-label": `Fix: ${condition.message}` },
         }));
       }
@@ -133,7 +139,7 @@ function conditionBox(ctx, conditions) {
 
 export function conditionFixLink(ctx, condition) {
   const href = fixHref(ctx, condition.fix);
-  return href ? { href, text: "Fix this" } : null;
+  return href ? { href, text: fixText(condition.fix) } : null;
 }
 
 export function renderFrame(root, ctx, { stepId, work, ai = null, next = [], stepNext = null, stepNextLabel = null }) {

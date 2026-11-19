@@ -13,7 +13,12 @@ function promoteIdea(idea) {
 
 export function renderMemory(root, ctx) {
   const items = ctx.summary.context || [];
-  const questions = items.filter((item) => item.kind === "question" || item.kind === "objective");
+  // Objectives are their own records (X.193), not context items.
+  const objectives = (ctx.summary.objectives || []).filter((item) => item.retired_at == null);
+  const questions = [
+    ...items.filter((item) => item.kind === "question"),
+    ...objectives.map((objective) => ({ content: objective.statement })),
+  ];
   const ideas = items.filter((item) => item.kind === "idea").slice().reverse(); // newest first
   const other = items.filter((item) => !["question", "objective", "idea"].includes(item.kind));
   const nonIdeaUsed = items.filter((item) => item.kind !== "idea");

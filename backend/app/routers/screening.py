@@ -17,6 +17,7 @@ from app.database import get_db
 from app.lookups import live_source_or_404
 from app.dependencies import APPROVE_ROLES, MANAGE_ROLES, READ_ROLES, WRITE_ROLES, current_user, project_access, project_role
 from app.prescreen import confidence_level
+from app.source_flags import is_preprint
 from app.models import AiSuggestion, AutoExcludeAudit, Project, ProjectRole, ProjectStage, ResearchQuestion, ScreeningCriterion, ScreeningDecision, ScreeningDiscussionNote, SeedCheckRun, Source, Task, TaskStatus, User
 from app.task_handlers import FULLTEXT_FETCH, SCREENING_PRESCREEN, SEED_FALSE_EXCLUSION_CHECK
 from app.arxiv_fulltext import ARXIV_FULLTEXT_FETCH
@@ -32,6 +33,8 @@ from app.screening import (
     ai_human_agreement,
     ai_suggestion,
     audit_statuses_by_decision,
+    included_sources,
+    settled_decision,
     autoexclude_threshold,
     check_reason,
     criterion_codes,
@@ -164,6 +167,7 @@ class QueueItem(BaseModel):
     found_via: dict | None = None  # e.g. snowballing: which paper, direction and round (M1.9.2)
     coverage: dict | None = None  # full text / abstract only / not accessible (X.76)
     matched_terms: list[str] = []  # question-match terms matched in title+abstract (X.199); empty unless sort=question_match
+    preprint: bool = False  # a service flagged this a preprint: not peer reviewed (X.196)
 
 
 class RevealedSuggestion(BaseModel):
@@ -183,6 +187,8 @@ class QueueRead(BaseModel):
     sort_note: str | None = None  # explains a fallback away from the requested sort, e.g. no research questions or criteria yet
     counts: dict[str, int]  # include / exclude / maybe / unscreened [/ conflict in dual-screen; / ai_auto_excluded if auto-exclude is on]
     pending: int  # every record waiting for this person, across all pages (not just `items`, which is one page)
+    peer_reviewed_only: bool = False  # X.196: preprints are listed separately and not citable in synthesis
+    preprint_pending: int = 0  # of `pending`, how many are preprint-flagged
     items: list[QueueItem]
 
 
@@ -312,6 +318,42 @@ def set_active_learning(
     db.commit()
     db.refresh(project)
     return ActiveLearningRead(enabled=project.active_learning_enabled)
+class PeerReviewedOnlyBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool
+
+
+class PeerReviewedOnlyRead(BaseModel):
+    enabled: bool
+
+
+@router.get("/peer-reviewed-only", response_model=PeerReviewedOnlyRead)
+def get_peer_reviewed_only(project: Project = Depends(project_access(READ_ROLES))):
+    """Whether preprint-flagged sources are barred from synthesis citations (X.196). Off by default."""
+    return PeerReviewedOnlyRead(enabled=project.peer_reviewed_only)
+
+
+@router.put("/peer-reviewed-only", response_model=PeerReviewedOnlyRead)
+def set_peer_reviewed_only(
+    payload: PeerReviewedOnlyBody,
+    project: Project = Depends(project_access(MANAGE_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Turn peer-reviewed-only on or off (owner/manage roles). On: a synthesis run that cites a preprint is
+    rejected and screening lists preprints separately. It never rewrites a decision or a stored source."""
+    before = project.peer_reviewed_only
+    project.peer_reviewed_only = payload.enabled
+    project.touch()
+    audit.record(
+        db, actor=audit.user_actor(user), action="screening.peer_reviewed_only_changed", project_id=project.id,
+        payload={"from": before, "to": payload.enabled},
+    )
+    db.commit()
+    db.refresh(project)
+    return PeerReviewedOnlyRead(enabled=project.peer_reviewed_only)
+
+
 @router.get("/queue", response_model=QueueRead)
 
 def get_queue(
@@ -410,14 +452,57 @@ def get_queue(
             source_id=source.id, title=source.title, authors=source.authors, year=source.year, doi=source.doi,
             abstract=source.abstract, fulltext_access=source.fulltext_access if stage == "full_text" else None,
             found_via=source.found_via, coverage=fulltext_coverage.coverage(source),
-            matched_terms=list(matched_terms_by_source.get(source.id, ())),
+            matched_terms=list(matched_terms_by_source.get(source.id, ())), preprint=is_preprint(source),
         )
         for source in waiting[offset : offset + limit]
     ]
     return QueueRead(
         stage=stage, locked=screening_locked(db, project), dual_screen_enabled=project.dual_screen_enabled,
         ai_autoexclude_enabled=project.ai_autoexclude_enabled, sort=applied_sort, sort_note=sort_note,
-        counts=counts, pending=len(waiting), items=items,
+        counts=counts, pending=len(waiting), peer_reviewed_only=project.peer_reviewed_only,
+        preprint_pending=sum(1 for source in waiting if is_preprint(source)), items=items,
+    )
+
+
+class IncludedItem(BaseModel):
+    source_id: uuid.UUID
+    title: str
+    authors: list | None
+    year: int | None
+    doi: str | None
+    abstract: str | None  # untrusted text from a connector: show it as text only
+    metadata_verified: bool
+    found_via: dict | None = None
+
+
+class IncludedRead(BaseModel):
+    locked: bool  # G3 is approved
+    dual_screen_enabled: bool
+    passed_title_abstract: int  # settled include or maybe at title/abstract
+    awaiting_full_text: int  # of those, no settled full-text decision yet
+    items: list[IncludedItem]  # settled full-text includes: the set G3 approves, oldest first
+
+
+@router.get("/included", response_model=IncludedRead)
+def get_included(project: Project = Depends(project_access(READ_ROLES)), db: Session = Depends(get_db)):
+    """The included set G3 asks a person to approve (X.215): sources with a settled full-text include.
+
+    Read-only. Uses the same settled-decision rule as extraction and the PRISMA flow, so under dual-screen an
+    unresolved or one-sided decision is never shown as included and no reviewer's blinded decision is revealed.
+    """
+    passed = passed_title_abstract(db, project)
+    full_text = rows_for_stage(db, project, "full_text")
+    awaiting = sum(1 for source_id in passed if settled_decision(project, full_text.get(source_id, [])) is None)
+    items = [
+        IncludedItem(
+            source_id=s.id, title=s.title, authors=s.authors, year=s.year, doi=s.doi, abstract=s.abstract,
+            metadata_verified=s.metadata_verified, found_via=s.found_via,
+        )
+        for s in included_sources(db, project)
+    ]
+    return IncludedRead(
+        locked=screening_locked(db, project), dual_screen_enabled=project.dual_screen_enabled,
+        passed_title_abstract=len(passed), awaiting_full_text=awaiting, items=items,
     )
 
 
@@ -655,6 +740,7 @@ class DiscussionNoteRead(BaseModel):
     author: str
     body: str
     created_at: datetime
+    current: bool = True  # belongs to the disagreement as it stands now; False once a reviewer changed their answer
 
 
 def _discussion_notes(db: Session, source_id: uuid.UUID, stage: str) -> list[ScreeningDiscussionNote]:
@@ -716,9 +802,11 @@ def list_discussion(
     actor = audit.user_actor(user)
     if not (has_taken_part(rows, actor) or project_role(db, project, user) in APPROVE_ROLES):
         return []
-    if dual_screen_status(rows)[0] not in ("conflict", "adjudicated") and not _discussion_notes(db, source.id, stage):
+    notes = _discussion_notes(db, source.id, stage)
+    if dual_screen_status(rows)[0] not in ("conflict", "adjudicated") and not notes:
         return []
-    return _discussion_notes(db, source.id, stage)
+    live = {n.id for n in current_discussion(rows, notes)}
+    return [DiscussionNoteRead.model_validate(n).model_copy(update={"current": n.id in live}) for n in notes]
 
 
 @router.post("/decisions/adjudicate", response_model=DecisionRead, status_code=status.HTTP_201_CREATED)
@@ -905,6 +993,7 @@ class ReviewerDecisionRead(BaseModel):
     decision: str
     reason_code: str | None
     decided_at: datetime
+    note: str | None = None  # a ruling's written rationale (X.225); None for a reviewer's own row
 
 
 class ConflictItem(BaseModel):

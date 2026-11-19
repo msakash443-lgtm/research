@@ -154,15 +154,18 @@ def ec_1_1(db: Session, project: Project) -> Condition:
 
 
 def ec_1_2(db: Session, project: Project) -> Condition:
-    # Objectives live in `research_objectives` (X.193); context items of kind `objective` still count, so an
-    # objective added through the context route is not lost to EC-1.2.
+    # A written question (a Scope context item or a structured research question) or a live objective in
+    # `research_objectives` (X.193, the only active objective record) meets it.
     count = _count(
         db,
         select(ResearchContextItem).where(
             ResearchContextItem.project_id == project.id,
-            ResearchContextItem.kind.in_([ContextKind.question, ContextKind.objective]),
+            ResearchContextItem.kind == ContextKind.question,
             ResearchContextItem.retired_at.is_(None),
         ),
+    ) + _count(
+        db,
+        select(ResearchQuestion).where(ResearchQuestion.project_id == project.id),
     ) + _count(
         db,
         select(ResearchObjective).where(

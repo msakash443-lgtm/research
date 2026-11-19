@@ -351,6 +351,7 @@ def stage_agreement(db: Session, project: Project, stage: str, viewer_decider: s
                 ],
                 "adjudication": None if ruling is None else {
                     "decider": ruling.decider, "decision": ruling.decision, "reason_code": ruling.reason_code, "decided_at": ruling.decided_at,
+                    "note": ruling.note,
                 },
             })
     two = len(pairs)

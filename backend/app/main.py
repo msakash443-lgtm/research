@@ -18,7 +18,7 @@ from app.config import get_settings
 from app.logging_config import configure_logging
 from app.middleware import ContentLengthLimitMiddleware, FixedWindowCounter, RateLimitMiddleware
 from app.pagination import NEXT_CURSOR_HEADER
-from app.routers import accuracy, ai_locks, ai_settings, audit, provenance_reports, workspace_ai, auth, bibliometrics, claims, clusters, connectors, coverage, criteria, design_tools, evidence_matrix, exports, extraction_schemas, extractions, gates, guide, integrity, members, notes, documents, prisma, profile, projects, replication, research_runs, scholar_metrics, screening, searches, alerts, seeds, snowball, sources, stage, suggestions, usage, zotero, reviews
+from app.routers import accuracy, ai_locks, ai_settings, audit, provenance_reports, workspace_ai, auth, bibliometrics, claims, clusters, connectors, coverage, criteria, design_tools, evidence_matrix, exports, literature_summary, extraction_schemas, extractions, gates, guide, integrity, members, responsibilities, notes, documents, prisma, profile, projects, replication, research_runs, scholar_metrics, screening, searches, alerts, seeds, snowball, sources, stage, suggestions, usage, zotero, reviews
 from app.routers import journals, submissions
 from app.routers import people
 from app.routers import privacy
@@ -132,6 +132,7 @@ app.include_router(research_plan.router, prefix="/api")
 app.include_router(brief.router, prefix="/api")
 app.include_router(idea_brief.router, prefix="/api")
 app.include_router(evidence_matrix.router, prefix="/api")
+app.include_router(literature_summary.router, prefix="/api")
 app.include_router(bibliometrics.router, prefix="/api")
 app.include_router(replication.router, prefix="/api")
 app.include_router(prisma.router, prefix="/api")
@@ -139,6 +140,7 @@ app.include_router(searches.router, prefix="/api")
 app.include_router(snowball.router, prefix="/api")
 app.include_router(seeds.router, prefix="/api")
 app.include_router(members.router, prefix="/api")
+app.include_router(responsibilities.router, prefix="/api")
 app.include_router(sources.router, prefix="/api")
 app.include_router(research_runs.router, prefix="/api")
 app.include_router(notes.router, prefix="/api")

@@ -34,6 +34,7 @@ _QUAL_FRAMEWORK: dict[str, tuple[str, ...]] = {
     "phenomenon_of_interest": ("exposure", "phenomenon"),
     "design": (),
     "evaluation": ("outcome",),
+    "research_type": (),
 }
 
 
@@ -45,12 +46,32 @@ def _contains_any(text: str, terms: list[str]) -> bool:
     return any(_term_pattern(term).search(text) for term in terms if term.strip())
 
 
+_LEADING_PREPOSITIONS = ("in", "on", "to", "for", "by", "with", "from", "at", "of", "among", "under", "across", "within")
+_WORD = re.compile(r"[A-Za-z']+")
+
+
+def _opens_with_question_word(question_text: str) -> bool:
+    """True when the first word, or the first word after one leading preposition ("In what ways ..."), is interrogative."""
+    words = [word.lower() for word in _WORD.findall(question_text)[:3]]
+    if not words:
+        return False
+    if words[0] in _QUESTION_WORDS:
+        return True
+    return words[0] in _LEADING_PREPOSITIONS and len(words) > 1 and words[1] in _QUESTION_WORDS
+
+
 def _check_question_form(question_text: str) -> dict[str, str]:
-    count = question_text.count("?")
+    text = question_text.strip()
+    count = text.count("?")
     if count == 0:
         return {"check": "question_form", "status": "warn", "reason": "the question text has no '?'"}
     if count > 1:
         return {"check": "question_form", "status": "warn", "reason": "the question text has more than one '?'"}
+    if not text.endswith("?"):
+        return {"check": "question_form", "status": "warn", "reason": "the question text does not end with its '?'"}
+    if not _opens_with_question_word(text):
+        return {"check": "question_form", "status": "warn",
+                "reason": "the question text does not open with an interrogative word (what, how, does, is, ...), so it reads as a statement with a '?'"}
     return {"check": "question_form", "status": "pass", "reason": "the question text is a single interrogative sentence"}
 
 
@@ -61,8 +82,18 @@ _TWO_CLAUSES = re.compile(
 )
 
 
+_PREDICATE_VERB = (
+    r"(?:also\s+)?(?:raise|reduce|increase|decrease|improve|worsen|affect|influence|change|cause|predict|explain|"
+    r"lead|mediate|moderate|differ|relate|vary|enhance|lower|boost|impair|shape|drive|determine|promote|"
+    r"prevent|limit|raises|reduces|increases|decreases|improves|affects)"
+)
+_SECOND_PREDICATE = re.compile(r"\b(?:and|or)\s+" + _PREDICATE_VERB + r"\b", re.IGNORECASE)
+
+
 def _check_double_barrelled(question_text: str) -> dict[str, str]:
-    if _JOINED_AFTER_MARK.search(question_text) or _TWO_CLAUSES.search(question_text):
+    # Heuristic, not parsing: a second interrogative clause, or a second predicate verb from a short
+    # list of common research verbs after "and"/"or". Questions it misses fall to the human reader.
+    if _JOINED_AFTER_MARK.search(question_text) or _TWO_CLAUSES.search(question_text) or _SECOND_PREDICATE.search(question_text):
         return {"check": "double_barrelled", "status": "warn",
                 "reason": "the question text joins two separate questions with 'and'/'or'"}
     return {"check": "double_barrelled", "status": "pass", "reason": "the question text asks a single thing"}
@@ -114,7 +145,8 @@ def _check_constructs(question_text: str, construct_names: list[str] | None) -> 
     if construct_names is None:
         return {"check": "constructs", "status": "human_review", "reason": "no construct registry is loaded for this project"}
     if not construct_names:
-        return {"check": "constructs", "status": "pass", "reason": "the project's construct registry is empty"}
+        return {"check": "constructs", "status": "human_review",
+                "reason": "the project's construct registry is empty, so the question's constructs were not checked against anything"}
     variants = find_spelling_variants({"registry": "; ".join(construct_names), "question": question_text})
     if variants:
         mismatched = ", ".join(variant["construct"] for variant in variants)

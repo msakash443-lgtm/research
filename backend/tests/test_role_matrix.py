@@ -184,6 +184,7 @@ MATRIX = [
     ("GET", "/api/projects/{p}/criteria", ALL, 200),
     ("GET", "/api/projects/{p}/prisma", ALL, 200),
     ("GET", "/api/projects/{p}/screening/queue", ALL, 200),
+    ("GET", "/api/projects/{p}/screening/included", ALL, 200),
     ("GET", "/api/projects/{p}/screening/decisions", ALL, 200),
     ("GET", "/api/projects/{p}/screening/suggestion/{s}", ALL, 404),  # X.224: withheld (404) until the caller has decided the source themselves
     ("POST", "/api/projects/{p}/screening/decisions", WRITE, 201),
@@ -205,6 +206,8 @@ MATRIX = [
     ("PUT", "/api/projects/{p}/screening/ai-prescreen", MANAGE, 200),  # owner only: manually disable/re-enable AI pre-screen
     ("GET", "/api/projects/{p}/screening/active-learning", ALL, 200),
     ("PUT", "/api/projects/{p}/screening/active-learning", MANAGE, 200),  # owner only: whether the queue may rank by predicted relevance
+    ("GET", "/api/projects/{p}/screening/peer-reviewed-only", ALL, 200),
+    ("PUT", "/api/projects/{p}/screening/peer-reviewed-only", MANAGE, 200),  # preprints not citable in synthesis (X.196)
     ("GET", "/api/projects/{p}/extractions", ALL, 200),
     ("GET", "/api/projects/{p}/extractions/{e}", ALL, 200),
     ("GET", "/api/projects/{p}/extractions/verification-queue", ALL, 200),
@@ -301,6 +304,9 @@ MATRIX = [
     ("PATCH", "/api/projects/{p}/hypotheses/{hp}", WRITE, 200),
     ("GET", "/api/projects/{p}/evidence-matrix", ALL, 200),
     ("GET", "/api/projects/{p}/evidence-matrix/contradictions", ALL, 200),
+    ("GET", "/api/projects/{p}/responsibilities", ALL, 200),  # who leads which area: informational (X.226)
+    ("PUT", "/api/projects/{p}/responsibilities/{area}", MANAGE, 200),
+    ("GET", "/api/projects/{p}/literature-summary", ALL, 200),  # deterministic summary of verified evidence (X.200)
     ("GET", "/api/projects/{p}/evidence-matrix/export.csv", ALL, 200),
     ("GET", "/api/projects/{p}/evidence-matrix/export.xlsx", ALL, 200),
     ("GET", "/api/projects/{p}/evidence-matrix/{e}/fields/{field_key}/source-text", ALL, 200),
@@ -413,6 +419,8 @@ BODIES = {
     ("PUT", "/api/projects/{p}/screening/auto-exclude"): {"enabled": True, "confidence_threshold": 0.9},
     ("PUT", "/api/projects/{p}/screening/ai-prescreen"): {"disabled": True},
     ("PUT", "/api/projects/{p}/screening/active-learning"): {"enabled": True},
+    ("PUT", "/api/projects/{p}/screening/peer-reviewed-only"): {"enabled": True},
+    ("PUT", "/api/projects/{p}/responsibilities/{area}"): {"assignments": []},
     ("POST", "/api/projects/{p}/extractions/{e}/verify"): {"confirmed_critical_fields": ["measures", "sample", "key_findings"],
                                                                          "confirmed_not_reported_fields": ["measures", "sample", "key_findings"]},
     ("POST", "/api/projects/{p}/extractions/ai"): {"source_id": ""},
@@ -633,7 +641,7 @@ def _seed_world(mp):
     assert owner.post(f"/api/projects/{project_id}/datasets/{dataset_id}/exclusion-rules/{rule.json()['id']}/approve").status_code == 200
     return {
         "clients": clients,
-        "ids": {"p": project_id, "s": source_id, "extract_s": extraction_source_id, "ai_s": ai_source["id"], "h": str(claim_id), "gap_id": gap_id, "rq": question_id, "hp": hypothesis_id, "field_key": "research_question", "u": removable_id, "q": str(search_id), "d": str(seed_id), "e": str(extraction_id), "plan_id": str(uuid.uuid4()), "cp": str(uuid.uuid4()), "c": str(clustering_id), "l": str(cluster_id), "n": "lab_schema", "a": str(alert_id), "k": str(audit_id), "g": _fresh_suggestion(project_id, []), "doc": doc_id, "ds": str(dataset_id), "ap": plan.json()["id"], "run": str(uuid.uuid4()), "rule_id": rule.json()["id"], "rep": _seed_report(project_id, owner_id, doc_id), "v": "1", "author": owner_id, "cr": str(removable_member_id), "lo": str(own_paper_lookup_task_id), "finding_id": str(uuid.uuid4())},
+        "ids": {"p": project_id, "s": source_id, "extract_s": extraction_source_id, "ai_s": ai_source["id"], "h": str(claim_id), "gap_id": gap_id, "rq": question_id, "hp": hypothesis_id, "field_key": "research_question", "area": "screening", "u": removable_id, "q": str(search_id), "d": str(seed_id), "e": str(extraction_id), "plan_id": str(uuid.uuid4()), "cp": str(uuid.uuid4()), "c": str(clustering_id), "l": str(cluster_id), "n": "lab_schema", "a": str(alert_id), "k": str(audit_id), "g": _fresh_suggestion(project_id, []), "doc": doc_id, "ds": str(dataset_id), "ap": plan.json()["id"], "run": str(uuid.uuid4()), "rule_id": rule.json()["id"], "rep": _seed_report(project_id, owner_id, doc_id), "v": "1", "author": owner_id, "cr": str(removable_member_id), "lo": str(own_paper_lookup_task_id), "finding_id": str(uuid.uuid4())},
         "twin": twin_id,
         "store": store,
         "invitee": f"matrix-invitee-{tag}@example.com",

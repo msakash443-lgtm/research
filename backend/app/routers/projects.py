@@ -115,6 +115,11 @@ def add_context(
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
+    if payload.kind == ContextKind.objective:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Objectives are written through the objectives route, not as context items",
+        )
     item = ResearchContextItem(project_id=project.id, created_by=audit.user_actor(user), **payload.model_dump())
     db.add(item)
     db.flush()

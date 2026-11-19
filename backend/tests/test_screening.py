@@ -985,6 +985,24 @@ def test_discussion_is_visible_to_the_two_reviewers_and_arbiters_only_and_notes_
         assert event.payload_json["discussion_notes"] == 2
 
 
+def test_discussion_notes_say_whether_they_still_belong_to_the_disagreement_as_it_stands(world):
+    p, s = _conflict(world)
+    listed = lambda: world["supervisor"].get(f"/api/projects/{p}/screening/discussion", params={"source_id": s}).json()
+    assert [n["current"] for n in listed()] == [True]
+    undo(world["owner"], p, s)
+    decide(world["owner"], p, s, "include")
+    discuss(world["owner"], p, s, body="Second look: still apart.")
+    assert [n["current"] for n in listed()] == [False, True]
+
+
+def test_the_agreement_report_carries_the_rulings_written_rationale(world):
+    p, s = _conflict(world)
+    assert adjudicate(world["supervisor"], p, s, "include", note="Adult sample per the methods.").status_code == 201
+    conflict = world["owner"].get(f"/api/projects/{p}/screening/agreement").json()["conflicts"][0]
+    assert conflict["adjudication"]["note"] == "Adult sample per the methods."
+    assert all("note" not in d or d["note"] is None for d in conflict["decisions"])
+
+
 def test_a_locked_screening_cannot_be_ruled_on(world):
     p, s = _conflict(world)
     with SessionLocal() as db:
@@ -1019,3 +1037,18 @@ def test_queue_pages_through_more_than_one_page_and_reports_every_pending_record
     assert set(seen) == everything
     decide(owner, pid, world["ids"][0], "include")
     assert queue(owner, pid)["pending"] == 204
+
+
+def test_the_included_set_for_g3_lists_only_settled_full_text_includes_and_counts_what_still_waits(world):
+    p, owner, ids = world["pid"], world["owner"], world["ids"]
+    for source_id in ids:
+        assert decide(owner, p, source_id, "include", stage="title_abstract").status_code == 201
+    assert decide(owner, p, ids[0], "include", stage="full_text").status_code == 201
+    assert decide(owner, p, ids[1], "exclude", reason_code="E2", stage="full_text").status_code == 201
+    body = world["reviewer"].get(f"/api/projects/{p}/screening/included").json()
+    assert [item["source_id"] for item in body["items"]] == [ids[0]]
+    assert body["items"][0]["title"] == "Paper 0"
+    assert (body["passed_title_abstract"], body["awaiting_full_text"], body["locked"]) == (3, 1, False)
+    assert set_dual_screen(owner, p).status_code == 200
+    # Under dual-screen one reviewer's decision is not settled, so it is not shown as included.
+    assert owner.get(f"/api/projects/{p}/screening/included").json()["items"] == []

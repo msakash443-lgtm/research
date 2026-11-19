@@ -112,3 +112,58 @@ export function confidenceText(level, confidence) {
   const percent = typeof confidence === "number" ? ` (${Math.round(confidence * 100)}%)` : "";
   return `${level[0].toUpperCase()}${level.slice(1)} confidence${percent}`;
 }
+
+// X.196: with peer-reviewed-only on, preprint-flagged records are listed apart from the rest. Returns groups of
+// positions into `items` (positions, so the reviewer's current index still points at the same record). With the
+// setting off there is one untitled group and nothing moves.
+export function groupByPreprint(items, peerReviewedOnly) {
+  const all = items.map((_, i) => i);
+  if (!peerReviewedOnly) return [{ title: null, indices: all }];
+  const preprint = all.filter((i) => items[i].preprint);
+  const rest = all.filter((i) => !items[i].preprint);
+  const groups = [];
+  if (rest.length) groups.push({ title: null, indices: rest });
+  if (preprint.length) groups.push({ title: "Preprints: not peer reviewed, not citable in synthesis", indices: preprint });
+  return groups;
+}
+
+// What the Screen step shows when this person's queue is not a list of records to decide (X.219).
+// "active": records to screen · "unloaded": the server counts waiting records that did not load ·
+// "completed": nothing waiting, and there is work behind it (decided, or other reviewers still screening) ·
+// "empty": nothing at this stage at all. Only a view rule: it never touches a decision.
+export function completionMode({ items, pending, counts }) {
+  if (items.length > 0) return "active";
+  if (pending > 0) return "unloaded";
+  const total = Object.values(counts || {}).reduce((sum, n) => sum + (Number(n) || 0), 0);
+  return total > 0 ? "completed" : "empty";
+}
+
+// The heading, sentence and one primary route for a non-active mode. `primary.action` is "stage" (open `stage`)
+// or "approvals"; null when there is nothing to do here.
+export function completionView(mode, stage, { locked = false, othersPending = false } = {}) {
+  if (mode === "unloaded") return { title: "Some records could not be loaded", text: null, primary: null };
+  if (mode === "empty") {
+    return {
+      title: "No records at this stage yet",
+      text: stage === "full_text"
+        ? "Records appear here once they pass title/abstract screening."
+        : "Add sources by searching or importing them, then screen them here.",
+      primary: null,
+    };
+  }
+  const wait = othersPending ? " Other reviewers are still screening or a conflict is open; see the disagreement panel below." : "";
+  if (stage === "title_abstract") {
+    return {
+      title: "Title and abstract screening is complete for you",
+      text: `Every record at this stage has your decision.${wait}`,
+      primary: { label: "Continue to full-text screening", action: "stage", stage: "full_text" },
+    };
+  }
+  return {
+    title: "Full-text screening is complete for you",
+    text: locked
+      ? `G3 is approved. Reopen it on Approvals to change a decision.${wait}`
+      : `Every record at this stage has your decision. Review the included set, then approve G3 on Approvals.${wait}`,
+    primary: { label: locked ? "Open Approvals" : "Review and approve G3", action: "approvals" },
+  };
+}

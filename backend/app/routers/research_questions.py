@@ -7,7 +7,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -221,7 +221,13 @@ def update_question(question_id: uuid.UUID, payload: ResearchQuestionPatch, proj
 @router.get("/research-questions/{question_id}/finer", response_model=FinerCritique)
 def critique_question(question_id: uuid.UUID, project: Project = Depends(project_access(READ_ROLES)), db: Session = Depends(get_db)):
     item = _question(db, project, question_id)
-    linked = len(item.gap_links)
+    linked = db.scalar(
+        select(func.count(Gap.id)).where(
+            Gap.project_id == project.id,
+            Gap.selected.is_(True),
+            Gap.id.in_([link.gap_id for link in item.gap_links]),
+        )
+    ) or 0
     criteria_terms: dict[str, list[str]] = {}
     for row in db.scalars(select(ScreeningCriterion).where(ScreeningCriterion.project_id == project.id, ScreeningCriterion.element.is_not(None))):
         criteria_terms.setdefault(row.element, []).append(row.text)

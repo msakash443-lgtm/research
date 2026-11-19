@@ -42,3 +42,19 @@ test("overview puts unfinished screening before G3 without hiding the gate condi
   assert.match(text(root), /Add or retrieve records before screening/);
   assert.doesNotMatch(text(root), /Waiting on you/);
 });
+
+test("the G3 approval suggestion leads to Approvals, labelled as a review rather than a Screening task", async () => {
+  const gate = { id: "EC-4.1", level: "required", met: false, message: "G3 is not approved", fix: "Screening: approve G3" };
+  const clicks = [];
+  const root = new Node("main");
+  const ctx = {
+    project: { id: "project-1" }, navigate: (step) => clicks.push(step), cache: { guide: { stages: {} } },
+    summary: { sources: [{ id: "s1" }], gates: [{ code: "G3", status: "pending", can_decide: true }], stage: {
+      stage: "retrieved", next: [{ stage: "screened", gate: "G3", gate_status: "pending", conditions: [gate] }],
+      suggestions: [{ condition_id: gate.id, level: gate.level, message: gate.message, step: "screen" }],
+    } },
+  };
+  await overview.render(root, ctx);
+  assert.match(text(root), /Review screening approval/);
+  assert.doesNotMatch(text(root), /Go to Screening/);
+});

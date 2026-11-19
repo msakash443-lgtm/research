@@ -3,6 +3,8 @@ import { request, projectApi } from "../api.js";
 import { STAGES, stageLabel } from "../workflow.js";
 import { actorName } from "../provenance.js";
 import { gateCard } from "./common.js";
+import { screeningReviewPanel } from "./screeningReview.js";
+import { focusStatus, gateGroups, stageProgress } from "../approvalsLogic.js";
 
 const HISTORY_TEXT = {
   "project.advanced": (p) => `Moved forward: ${label(p.from)} → ${label(p.to)}`,
@@ -120,12 +122,59 @@ export function openReenterDialog(ctx) {
   dialog.showModal();
 }
 
+function gateRows(ctx, gates) {
+  const list = el("ul", { className: "gate-list" });
+  gates.forEach((gate) => {
+    gateCard(ctx, gate.code).querySelectorAll("li").forEach((row) => list.append(row));
+  });
+  return list;
+}
+
+// What to decide now (X.218): the one actionable gate with its prerequisites, in full. Every other gate stays
+// reachable below; gate enforcement is the server's and is unchanged.
+function decisionPanel(ctx, groups) {
+  const panel = el("div", { className: "panel approvals-focus" });
+  panel.append(el("h2", { text: groups.focus ? "Decision needed now" : "Approvals" }));
+  panel.append(el("p", { className: "muted small", text: `${focusStatus(groups.focus)} Only a person can approve a gate.` }));
+  if (groups.focus) panel.append(gateRows(ctx, [groups.focus]));
+  if (groups.attention.length) {
+    panel.append(el("h3", { text: "Rejected gates" }), gateRows(ctx, groups.attention));
+  }
+  return panel;
+}
+
+function collapsed(title, gates, ctx, openCode) {
+  const details = el("details", { className: "approvals-collapsed" });
+  details.open = gates.some((gate) => gate.code === openCode);
+  details.append(el("summary", { text: `${title} (${gates.length})` }), gateRows(ctx, gates));
+  return details;
+}
+
+// `openCode`: a gate whose own review panel is on the page; its section starts open so the button that panel points to is in view.
+function gatesPanel(ctx, groups, openCode) {
+  const panel = el("div", { className: "panel" });
+  panel.append(el("h2", { text: "Other gates" }));
+  if (groups.done.length) panel.append(collapsed("Approved gates", groups.done, ctx, openCode));
+  if (groups.later.length) panel.append(collapsed("Later gates", groups.later, ctx, openCode));
+  if (!groups.done.length && !groups.later.length) panel.append(el("p", { className: "muted small", text: "No other gates." }));
+  return panel;
+}
+
+function stagesPanel(ctx) {
+  const progress = stageProgress(STAGES, ctx.summary.stage?.stage);
+  const panel = el("div", { className: "panel" });
+  panel.append(el("h2", { text: "Workflow stages" }));
+  panel.append(el("p", { className: "muted small", text: `${progress.done} of ${progress.total} stages done · now: ${stageLabel(STAGES[progress.currentIndex])}` }));
+  const details = el("details", { className: "approvals-collapsed" });
+  details.append(el("summary", { text: `All ${progress.total} stages` }), stageTrack(ctx));
+  panel.append(details);
+  return panel;
+}
+
 async function render(root, ctx) {
   const sections = [];
-  const trackPanel = el("div", { className: "panel" });
-  trackPanel.append(el("h2", { text: "Workflow stages" }));
-  trackPanel.append(stageTrack(ctx));
-  sections.push(trackPanel);
+  const groups = gateGroups(ctx.summary.gates, ctx.summary.stage?.stage, STAGES);
+  sections.push(decisionPanel(ctx, groups));
 
   if ((ctx.summary.staleArtifacts || []).length > 0) {
     let rerunPath = [];
@@ -137,17 +186,11 @@ async function render(root, ctx) {
     sections.push(staleWarning(ctx, rerunPath));
   }
 
-  const gatesPanel = el("div", { className: "panel" });
-  const title = el("div", { className: "section-title" });
-  title.append(el("div", { children: [el("h2", { text: "Approval gates" })] }));
-  title.append(el("p", { className: "muted small", text: "Only a person can approve a gate." }));
-  gatesPanel.append(title);
-  const list = el("ul", { className: "gate-list" });
-  (ctx.summary.gates || []).forEach((gate) => {
-    gateCard(ctx, gate.code).querySelectorAll("li").forEach((row) => list.append(row));
-  });
-  gatesPanel.append(list);
-  sections.push(gatesPanel);
+  const review = await screeningReviewPanel(ctx);
+  if (review) sections.push(review);
+
+  sections.push(gatesPanel(ctx, groups, review ? "G3" : null));
+  sections.push(stagesPanel(ctx));
 
   const currentIndex = STAGES.findIndex(([name]) => name === ctx.summary.stage?.stage);
   if (ctx.isOwner && currentIndex >= 0) {

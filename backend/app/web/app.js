@@ -227,7 +227,7 @@ async function loadSummary() {
   const endpoints = {
     stage: "/stage", gates: "/gates", context: "/context", criteria: "/criteria", seeds: "/seeds",
     searches: "/searches", sources: "/sources", runs: "/research-runs", members: "/members",
-    knownItems: "/known-items", prisma: "/prisma", staleArtifacts: "/artifacts?status=stale",
+    knownItems: "/known-items", prisma: "/prisma", staleArtifacts: "/artifacts?status=stale", objectives: "/objectives",
   };
   const keys = Object.keys(endpoints);
   const settled = await Promise.allSettled(keys.map((key) => request(projectApi(projectId, endpoints[key]))));
@@ -237,7 +237,7 @@ async function loadSummary() {
     const result = settled[index];
     if (result.status === "fulfilled") summary[key] = result.value;
     else {
-      summary[key] = key === "staleArtifacts" || key === "gates" || key === "context" || key === "seeds" || key === "sources" || key === "members" ? [] : null;
+      summary[key] = key === "staleArtifacts" || key === "gates" || key === "context" || key === "objectives" || key === "seeds" || key === "sources" || key === "members" ? [] : null;
       summary.errors[key] = result.reason.message;
     }
   });

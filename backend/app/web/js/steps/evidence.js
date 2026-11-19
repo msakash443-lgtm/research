@@ -2,6 +2,7 @@ import { el, emptyCard, toast } from "../dom.js";
 import { request, projectApi } from "../api.js";
 import { provenanceBadge } from "../provenance.js";
 import { coverageBadge } from "./common.js";
+import { COMPARISON_KINDS, comparisonGroups, directionText, gapPrefill, saveGapPrefill, skippedText } from "../comparisonLogic.js";
 import { PAPERS_AS_COLUMNS, PAPERS_AS_ROWS, aiExtractionAction, autoExtractionAction, normalizeOrientation, tableLayout } from "../evidenceTableLogic.js";
 
 function display(value) {
@@ -60,6 +61,68 @@ export async function uploadFulltext(ctx, paper, file) {
     headers: { "Content-Type": "application/pdf" },
     body: await file.arrayBuffer(),
   });
+}
+
+// Conflicts & agreements between papers (X.198): the server's deterministic comparison of verified findings, each
+// with both papers' quotes, page and a link to the source text. "Make this a gap" only prefills the gap form.
+async function comparisonPanel(ctx, base, selected, showSource) {
+  const box = el("section", { className: "panel evidence-compare", attrs: { "aria-label": "Conflicts and agreements between papers" } });
+  box.append(el("h2", { text: "Conflicts & agreements between papers" }),
+    el("p", { className: "muted small", text: "Compared only across papers whose findings a person has checked. This never decides who is right: you do, or you record the disagreement as a gap." }));
+  let result;
+  try {
+    result = await request(`${base}/contradictions?schema_name=${encodeURIComponent(selected)}`);
+  } catch (error) {
+    box.append(el("p", { className: "muted small", text: `The comparison could not be loaded: ${error.message}` }));
+    return box;
+  }
+  const chosen = new Set(COMPARISON_KINDS.map((k) => k.kind));
+  const filter = el("div", { className: "evidence-controls" });
+  const list = el("div", { className: "evidence-compare-list" });
+  const draw = () => {
+    const groups = comparisonGroups(result, [...chosen]);
+    list.replaceChildren(...(groups.length ? groups.map((group) => groupCard(ctx, group, showSource)) : [el("p", { className: "muted small", text: "Nothing to show for the selected groups." })]));
+  };
+  for (const { kind, label } of COMPARISON_KINDS) {
+    const checkbox = el("input", { type: "checkbox", attrs: { "aria-label": label } });
+    checkbox.checked = true;
+    checkbox.addEventListener("change", () => { if (checkbox.checked) chosen.add(kind); else chosen.delete(kind); draw(); });
+    filter.append(el("label", { className: "checkbox-label", children: [checkbox, el("span", { text: label })] }));
+  }
+  const skipped = skippedText(result);
+  if (skipped) filter.append(el("span", { className: "muted small", text: skipped }));
+  box.append(filter, list);
+  draw();
+  return box;
+}
+
+function groupCard(ctx, group, showSource) {
+  const card = el("article", { className: `evidence-compare-group tone-${group.tone}` });
+  const head = el("div", { className: "evidence-compare-head" });
+  head.append(el("span", { className: `chip ${group.tone}`, text: group.label }), el("strong", { text: `${group.exposure} → ${group.outcome}` }));
+  if (group.populationNote) head.append(el("span", { className: "chip warn", text: group.populationNote }));
+  if (ctx.canWrite) {
+    const make = el("button", { className: "quiet-button", text: "Make this a gap…" });
+    make.addEventListener("click", () => {
+      saveGapPrefill(sessionStorage, ctx.project.id, gapPrefill(group));
+      ctx.navigate("gaps");
+    });
+    head.append(make);
+  }
+  card.append(head);
+  for (const finding of group.findings) {
+    const cite = el("div", { className: "evidence-compare-cite" });
+    cite.append(el("p", { className: "small", children: [el("strong", { text: finding.title }), document.createTextNode(` · ${directionText(finding.direction)}`)] }),
+      el("blockquote", { text: finding.quote }),
+      el("p", { className: "muted small", text: `${finding.population || "Population not stated"}${finding.page ? ` · p. ${finding.page}` : ""}` }));
+    if (finding.source_text_url) {
+      const view = el("button", { className: "quiet-button", text: "View source text" });
+      view.addEventListener("click", () => showSource(finding.source_text_url));
+      cite.append(view);
+    }
+    card.append(cite);
+  }
+  return card;
 }
 
 async function render(root, ctx) {
@@ -188,7 +251,14 @@ async function render(root, ctx) {
   }
   scroll.append(table);
   workspace.append(scroll, panel);
+  const showSource = async (url) => {
+    panel.replaceChildren(el("p", { text: "Loading source text…" }));
+    panel.scrollIntoView?.({ block: "nearest" });
+    try { sourcePanel(panel, await request(url)); }
+    catch (error) { panel.replaceChildren(el("p", { text: error.message })); }
+  };
   root.append(workspace, el("p", { className: "muted small", text: "* Critical field. Export includes values, review status, quotes, pages and sections." }));
+  root.append(await comparisonPanel(ctx, base, selected, showSource));
 }
 
 export default { render };

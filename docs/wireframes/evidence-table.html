@@ -28,6 +28,12 @@
   .split { display:grid; grid-template-columns:1fr; gap:12px; overflow:auto; }
   .page { font-family:Georgia, "Times New Roman", serif; font-size:14.5px; line-height:1.65; background:#fbfaf6; border:1px solid var(--line); border-radius:8px; padding:14px 16px; }
   .page .pghead { font-family:system-ui, sans-serif; font-size:12px; color:var(--muted); display:flex; justify-content:space-between; margin-bottom:6px; }
+  .compare { padding:0 20px 14px; }
+  .compare h2 { font-size:16px; margin:0 0 6px; color:var(--navy); }
+  .cgroup { border:1px solid var(--line); border-radius:10px; background:#fff; margin:0 0 10px; }
+  .cgroup > header { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:8px 12px; border-bottom:1px solid var(--line); background:#f6f8f9; border-radius:10px 10px 0 0; }
+  .cgroup .cites { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:10px; padding:10px 12px; }
+  .cite q { font-family:Georgia, serif; display:block; margin:4px 0; }
   @media (max-width:980px) { .work.open { grid-template-columns:1fr; } }
 </style>
 </head>
@@ -79,6 +85,13 @@
   </section>
 </div>
 
+<section class="compare" id="compare" aria-label="Conflicts and agreements between papers">
+  <h2>Conflicts &amp; agreements between papers <span class="pin" title="Q8">Q8</span></h2>
+  <p class="small muted" style="margin:0 0 8px">Compared only across papers whose findings a person has checked. Each group shows both papers' quotes and pages. This panel never decides who is right: you do, or you record the disagreement as a gap.</p>
+  <div class="row" id="compare-filter"><label><input type="checkbox" class="cf" value="conflicts" checked> Conflicts</label><label><input type="checkbox" class="cf" value="inconsistent" checked> Inconsistent (effect vs no effect)</label><label><input type="checkbox" class="cf" value="agreements" checked> Agreements</label><span class="muted small" id="compare-skipped"></span></div>
+  <div id="compare-list"></div>
+</section>
+
 <section class="questions" aria-label="Walkthrough questions">
   <h2>Questions for the walkthrough (orange pins on the screen)</h2>
   <ol>
@@ -88,6 +101,7 @@
     <li><span class="pin">Q4</span> <span>Are the four cell states clear? Is "Not reported" different enough from "Rejected"?</span></li>
     <li><span class="pin">Q5</span> <span>Rows = papers, columns = fields. Would you rather have it the other way round, or switch?</span></li>
     <li><span class="pin">Q6</span> <span>Exports: one column per field plus a status column each? Should quotes and page numbers go into the export too?</span></li>
+    <li><span class="pin">Q8</span> <span><strong>Conflicts &amp; agreements.</strong> Are the three groups (conflict, effect vs no effect, agreement) the right ones? Is "may differ by population" enough of a warning, and should "Make this a gap" open the gap form with both papers filled in, as shown?</span></li>
     <li><span class="pin">Q7</span> <span>"Correct" makes you pick the supporting quote from the text; a value with no quote can't be saved. Is that too strict for fields like "limitations"?</span></li>
   </ol>
 </section>
@@ -280,7 +294,43 @@ function renderGate() {
   st.textContent = ` · ${done} of ${total} critical cells checked by a person` + (done < total ? " · opens when all are checked" : " · ready");
   btn.textContent = "Ask for G4 approval"; btn.disabled = done < total;
 }
-function renderAll() { renderTable(); renderGate(); }
+// Invented comparisons in the shape GET …/evidence-matrix/contradictions returns (X.197), with quote and page per paper.
+const COMPARE = {
+  unstructured_findings: 2,
+  conflicts: [{ exposure:"Remote work", outcome:"Women's wage growth", population_note:"may differ by population",
+    findings:[{ pid:"p1", direction:"negative", population:"IT employees, Kerala", page:9, quote:"wage growth 4.1 percentage points lower than comparable men" },
+              { pid:"p2", direction:"positive", population:"Clerical applicants", page:7, quote:"accepted offers with 6% higher pay when a remote option was offered" }] }],
+  inconsistent: [{ exposure:"Remote work", outcome:"Childcare share",
+    findings:[{ pid:"p4", direction:"positive", population:"Dual-earner couples", page:9, quote:"Women's share of childcare rose from 64% to 71%" },
+              { pid:"p3", direction:null, population:"Labour-force survey", page:8, quote:"no significant difference in childcare time" }] }],
+  agreements: [{ exposure:"Remote work", outcome:"Gender pay gap",
+    findings:[{ pid:"p1", direction:"negative", population:"IT employees", page:9, quote:"4.1 percentage points lower than comparable men" },
+              { pid:"p3", direction:"negative", population:"Labour-force survey", page:8, quote:"The remote-capable premium is smaller for women (11%) than for men (21%)" }] }],
+};
+const DIRECTION = { positive:"Effect: increase", negative:"Effect: decrease", null:"No effect reported" };
+function renderCompare() {
+  const wanted = [...document.querySelectorAll(".cf:checked")].map(x => x.value), list = $("compare-list"); list.innerHTML = "";
+  $("compare-skipped").textContent = COMPARE.unstructured_findings ? ` · ${COMPARE.unstructured_findings} findings skipped: extracted before the comparison fields existed` : "";
+  const label = { conflicts:["bad","Conflict"], inconsistent:["warn","Inconsistent"], agreements:["ok","Agreement"] };
+  wanted.forEach(kind => COMPARE[kind].forEach(group => {
+    const box = document.createElement("article"); box.className = "cgroup";
+    box.innerHTML = `<header><span class="chip ${label[kind][0]}">${label[kind][1]}</span><strong></strong>${group.population_note ? '<span class="chip warn">may differ by population</span>' : ""}<span class="spacer"></span><button class="quiet" data-gap>Make this a gap…</button></header><div class="cites"></div>`;
+    box.querySelector("strong").textContent = `${group.exposure} → ${group.outcome}`;
+    group.findings.forEach(f => {
+      const p = PAPERS.find(x => x.id === f.pid), c = document.createElement("div"); c.className = "cite";
+      c.innerHTML = `<div class="small"><strong></strong> · <span class="muted"></span></div><q></q><div class="small muted"></div><a href="#" data-src>View source text (p.${f.page})</a>`;
+      c.querySelector("strong").textContent = p.cite; c.querySelector(".muted").textContent = DIRECTION[f.direction];
+      c.querySelector("q").textContent = f.quote; c.querySelectorAll(".muted")[1].textContent = `${f.population} · p.${f.page}`;
+      c.querySelector("[data-src]").addEventListener("click", e => { e.preventDefault(); openCell(f.pid + ".key_findings"); });
+      box.querySelector(".cites").append(c);
+    });
+    box.querySelector("[data-gap]").addEventListener("click", () => wfToast("Would open the gap form with these two papers and their quotes filled in. Nothing is saved until you save it."));
+    list.append(box);
+  }));
+  if (!list.children.length) list.innerHTML = '<p class="muted small">Nothing to show for the selected groups.</p>';
+}
+document.getElementById("compare-filter").addEventListener("change", renderCompare);
+function renderAll() { renderTable(); renderGate(); renderCompare(); }
 
 $("gate-btn").addEventListener("click", () => {
   if (state.gate === "open") { state.gate = "requested"; wfToast("G4 requested. Switch 'View as' to Supervisor to see the approval."); }

@@ -51,6 +51,15 @@ def test_narrow_suggestion_cards_stack_provenance_labels_above_values():
     assert "@container suggestion-card (max-width:280px)" in css
     assert ".suggestion-card .provenance-badge { grid-template-columns:minmax(0,1fr)" in css
 
+
+def test_stylesheet_is_served_without_a_byte_order_mark_so_the_first_rule_applies():
+    # A BOM (even doubled) survives into the first selector as U+FEFF, so `:root` never matches and every theme variable is unset.
+    with TestClient(app) as client:
+        body = client.get("/assets/styles.css").content
+    assert not body.startswith(b"\xef\xbb\xbf")
+    assert body.lstrip().startswith(b":root")
+
+
 def test_request_body_limit_rejects_oversized_payloads():
     with TestClient(app) as client:
         response = client.post(

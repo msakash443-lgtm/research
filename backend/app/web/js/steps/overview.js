@@ -82,7 +82,12 @@ function suggestedSteps(ctx) {
       item.append(el("p", { className: "muted small", text: "You can move on without this, but you will be asked to write a reason." }));
     }
     const step = s.step && STEPS.find((candidate) => candidate.id === s.step);
-    if (step) {
+    if (s.condition_id === "EC-4.1") {
+      // The condition is filed under Screening, but the decision is made on Approvals (X.215).
+      const review = el("button", { className: "quiet-button", text: "Review screening approval" });
+      review.addEventListener("click", () => ctx.navigate("approvals"));
+      item.append(review);
+    } else if (step) {
       const go = el("button", { className: "quiet-button", text: `Go to ${step.title}` });
       go.addEventListener("click", () => ctx.navigate(step.id));
       item.append(go);

@@ -132,11 +132,7 @@ No lint/format tooling is configured in the repo (no ruff/black/flake8 config fo
 ## Runtime / Tooling Preferences
 
 - **Python 3.12**: the dev `.venv` is 3.12.10 (`.venv/pyvenv.cfg`); the Docker image (`python:3.12-slim`) and CI also use 3.12.
-- **Two separate virtualenvs, do not mix**:
-  | Venv | Python | Use for |
-  |---|---|---|
-  | `.venv` (repo root) | 3.12 | This app — pip install, pytest, uvicorn, Alembic. **Default for all work here.** |
-  | `<workspace>/.venv-retrieval` | 3.11 | ARC microservice only. Never run research-main tests in it. |
+- **Two separate virtualenvs, do not mix**: `.venv` (Python 3.12) is the default for all work here; `.venv-retrieval` (3.11) is the ARC microservice only, never for research-main tests. The table and recreate steps are in `README.md` ("Virtual environments").
 - Package manager: plain `pip` + `backend/requirements.txt` (pinned versions, e.g. `fastapi==0.115.8`, `sqlalchemy==2.0.38`, `alembic==1.14.1`, `httpx==0.28.1`, `pytest==8.3.4`). No lockfile tool (poetry/uv) in use.
 - Frontend (static UI) logic tests: `node --test backend/app/web/js/test/*.mjs`.
 - DB: SQLAlchemy 2.0 sync engine, PostgreSQL (`psycopg[binary]`) everywhere: prod, Docker, local dev and tests. SQLite is not supported.
@@ -157,22 +153,12 @@ No lint/format tooling is configured in the repo (no ruff/black/flake8 config fo
   - **Migration verification**: CI (`.github/workflows/ci.yml`) runs the whole suite on a real PostgreSQL service, then `alembic -c alembic.ini upgrade head`, `check`, `downgrade base`, `upgrade head`. `test_guards_postgres.py` and `test_task_queue_postgres.py` cover Postgres triggers, `FOR UPDATE` and `SKIP LOCKED`. Per-task manual up/down/up results go in `plan.md`'s Work Log.
   - Every migration implements both `upgrade()` and `downgrade()`; destructive ones add a safety check (e.g. refuse to drop a table that still has rows).
 
-## Research-Integrity Rules (non-negotiable, from `plan.md` §1.6)
+## Research-Integrity Rules (non-negotiable)
 
-These are enforced in code and must not be relaxed by any change:
-1. **Gates can't be bypassed** — no code path may auto-approve a gate, approve on a human's behalf, or proceed past `blocked`.
-2. **Fail loudly** — on LLM/retrieval failure, record the failure and stop; never write placeholder/canned content and mark a step done.
-3. **Retrieved text is untrusted data** — web/PDF/abstract text is fenced and labelled in prompts, never treated as instructions.
-4. **Numbers come from code; citations come from verified records** — no generated statistic or reference is stored as verified without a computed source or resolved record.
-5. **Every AI output records** `model_id`, `prompt_version`, inputs, and actor.
-6. **Never import ARC pipeline code** — call it only through its HTTP retrieval service.
+The six rules are stated once, in `plan.md` §1.6 (rules 21–26): gates can't be bypassed, fail loudly, retrieved text is untrusted data, numbers come from code and citations from verified records, every AI output records its model/prompt/inputs/actor, and ARC pipeline code is never imported. They are enforced in code; read §1.6 before touching gates, LLM or retrieval code, or prompts, and never relax them.
 
 ## Workspace Governance (required before any change)
 
-Full rules: `plan.md` §1 (claiming §1.1–1.3, editing §1.4, local working rules §1.8, review §1.9, two developers on `main` §1.10). Short form:
-- Re-read `plan.md` fresh; claim one unclaimed task whose deps are `[x]` (`[~]`, `owner`, `since`) and save before touching code.
-- Status marks: `[ ]` TODO, `[~]` IN-PROGRESS, `[?]` REVIEW, `[!]` BLOCKED, `[x]` DONE, `[-]` DROPPED.
-- Discovered work becomes a new task line, not part of your diff.
-- `[x]` only after the full `pytest -q` passes without lowering the baseline, set by a different reviewer; a different model family counts (record the builder as `owner: @claude (sonnet)`). Never review your own work.
-- Never revert others' changes; never commit, push, branch, stash or reset unless the user asks for that action.
-- Append one Work Log line per session. Done-task detail and Work Log rows older than the last 25 move to `docs/plan-archive/` via `python scripts/plan_archive.py --write`.
+The rules live in `plan.md` §1, stated once there: claiming §1.1, working §1.2, finishing §1.3 (`[x]` only by a different reviewer, rules 10–11 and 59), editing the plan §1.4, local working and git rules §1.8 (rules 33–46: never revert others' changes; never commit, push, branch, stash or reset unless the user asks for that action), review §1.9, two developers on `main` §1.10. Status marks are in §0 Legend. The Decisions log is `docs/decisions.md`.
+- Record the builder as `owner: @claude (sonnet)` so a different model family can review.
+- Done-task detail and Work Log rows older than the last 25 move to `docs/plan-archive/` via `python scripts/plan_archive.py --write`; closed milestones' one-line stubs are collapsed by `--collapse M0,M1,M2,M4,M6,X` (X.229, X.230).

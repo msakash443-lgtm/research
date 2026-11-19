@@ -134,3 +134,32 @@ test("the confidence line names the level and the percentage, and is empty witho
   assert.equal(confidenceText("low", undefined), "Low confidence");
   assert.equal(confidenceText(undefined, 0.9), "");
 });
+
+test("preprints are grouped apart only when peer-reviewed-only is on, keeping positions into the list", async () => {
+  const { groupByPreprint } = await import("../steps/screenLogic.js");
+  const items = [{ preprint: true }, { preprint: false }, { preprint: true }];
+  assert.deepEqual(groupByPreprint(items, false), [{ title: null, indices: [0, 1, 2] }]);
+  const groups = groupByPreprint(items, true);
+  assert.deepEqual(groups.map((g) => g.indices), [[1], [0, 2]]);
+  assert.match(groups[1].title, /not peer reviewed/);
+  assert.deepEqual(groupByPreprint([{ preprint: true }], true).map((g) => g.title === null), [false]);
+});
+
+test("the screening view is active with records, unloaded when the server counts more, completed or empty otherwise", async () => {
+  const { completionMode } = await import("../steps/screenLogic.js");
+  assert.equal(completionMode({ items: [{}], pending: 1, counts: {} }), "active");
+  assert.equal(completionMode({ items: [], pending: 3, counts: { unscreened: 3 } }), "unloaded");
+  assert.equal(completionMode({ items: [], pending: 0, counts: { include: 2, exclude: 1, unscreened: 0 } }), "completed");
+  assert.equal(completionMode({ items: [], pending: 0, counts: { unscreened: 2, conflict: 0 } }), "completed");
+  assert.equal(completionMode({ items: [], pending: 0, counts: { include: 0, exclude: 0, maybe: 0, unscreened: 0 } }), "empty");
+});
+
+test("completion routes: title/abstract continues to full text, full text goes to Approvals, empty has no route", async () => {
+  const { completionView } = await import("../steps/screenLogic.js");
+  assert.deepEqual(completionView("completed", "title_abstract").primary, { label: "Continue to full-text screening", action: "stage", stage: "full_text" });
+  assert.equal(completionView("completed", "full_text").primary.action, "approvals");
+  assert.match(completionView("completed", "full_text", { locked: true }).text, /G3 is approved/);
+  assert.match(completionView("completed", "full_text", { othersPending: true }).text, /conflict is open/);
+  assert.equal(completionView("empty", "title_abstract").primary, null);
+  assert.equal(completionView("unloaded", "full_text").text, null);
+});

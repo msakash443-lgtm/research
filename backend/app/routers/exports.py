@@ -11,6 +11,7 @@ from app import audit
 from app.config import get_settings
 from app.database import get_db
 from app.dependencies import READ_ROLES, current_user, project_access
+from app.objective_context import live_objective_items
 from app.models import Project, ResearchContextItem, ResearchRun, Source, User, utcnow
 from app.obsidian_export import build_vault, safe_name
 
@@ -31,7 +32,7 @@ def export_obsidian_vault(
     sources = db.scalars(select(Source).where(Source.project_id == project.id).order_by(Source.created_at, Source.id)).all()
     context = db.scalars(
         select(ResearchContextItem).where(ResearchContextItem.project_id == project.id, ResearchContextItem.retired_at.is_(None))
-    ).all()
+    ).all() + live_objective_items(db, project.id)
     runs = db.scalars(select(ResearchRun).where(ResearchRun.project_id == project.id)).all()
     body, stats = build_vault(project, sources, context, runs, exported_at=utcnow())
 

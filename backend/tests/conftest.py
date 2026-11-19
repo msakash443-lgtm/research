@@ -6,6 +6,7 @@ import zlib
 
 import psycopg
 import pytest
+from dotenv import dotenv_values
 from psycopg import sql
 from sqlalchemy.engine import make_url
 
@@ -14,8 +15,9 @@ from sqlalchemy.engine import make_url
 # docker-compose.yml). Each pytest process (xdist worker) builds its own template database from the
 # models and keeps one working database cloned from it; see `isolated_database` for how each test is
 # isolated. The application's own DATABASE_URL is never read: the fixtures drop and recreate databases,
-# so a developer's .env must not reach them.
-_RAW_TEST_URL = os.environ.get("TEST_DATABASE_URL")
+# so a developer's .env must not reach them. The one value taken from .env is TEST_DATABASE_URL itself
+# (a process environment variable wins); `dotenv_values` returns it without touching os.environ.
+_RAW_TEST_URL = os.environ.get("TEST_DATABASE_URL") or dotenv_values(".env").get("TEST_DATABASE_URL")
 if not _RAW_TEST_URL:
     raise pytest.UsageError(
         "TEST_DATABASE_URL is not set. Point it at a throwaway PostgreSQL database whose name ends in "
