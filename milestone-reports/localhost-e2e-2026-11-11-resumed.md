@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Task / tester | X.227 / @codex |
+| Task / tester | X.236 / @codex |
 | Checkout | `Revathi`, `27466d70e8e1954a201f595d5e95fda54c9f0082` |
 | Date | 2026-11-11, Asia/Calcutta |
 | URL | http://127.0.0.1:8000/ |
@@ -52,7 +52,7 @@ The sample is Bloom, Han and Liang (2024), [Hybrid working from home improves re
 
 - Frontend Node suite: **240 passed, 0 failed, 0 skipped**, logged in [resumed-node.txt](localhost-e2e-2026-11-11-resumed-node.txt).
 - Full backend pytest: in progress at report creation; final result will be recorded before handoff. A separate PostgreSQL 16 container on loopback port 55439 uses a unique `localhost_e2e_20261111_test` prefix, generated in-memory credentials and temporary database storage. The live application database is not used by tests.
-- No test was added because application behavior was not changed. The visual defect is reproducible in the browser and is recorded as separate work, X.229.
+- No test was added because application behavior was not changed. The visual defect is reproducible in the browser and is recorded as separate work, X.238.
 - Gold-set recall, screening agreement and extraction accuracy: **not measured**. This one-paper diagnostic is not a scholar gold-set evaluation.
 
 Saved evidence:
@@ -77,11 +77,11 @@ The JSON is diagnostic evidence; it is not a built-in manuscript or vault export
 
 ## 4. Findings and remaining work
 
-### X.229 — Duplicate stylesheet BOM breaks the theme
+### X.238 — Duplicate stylesheet BOM breaks the theme
 
 `backend/app/web/styles.css` begins with `efbbbfefbbbf3a726f6f7420`: two UTF-8 byte-order marks. The live CSSOM retains U+FEFF before `:root`, so that rule does not match the document root. Browser inspection returned an empty value for both `--ink` and `--navy`, and the root font was Times New Roman. Buttons depending on those variables can have white text on transparent backgrounds and appear absent. Screenshots capture the defect. The Node suite does not establish browser styling correctness. No CSS edits were made.
 
-### X.230 — Neither configured model route currently supplies an answer
+### X.239 — Neither configured model route currently supplies an answer
 
 The standard-model run completed with status `failed`, `answer=null`, and:
 
@@ -97,7 +97,7 @@ httpx.ConnectError: [Errno 101] Network is unreachable
 
 No Ollama executable was found on PATH or in the inspected standard installation directories. This does not prove it is absent everywhere. No model was downloaded or installed, no credits were purchased, and no API credential was changed. A working model is required before a genuine answer can be demonstrated.
 
-### X.231 — Database migration tracking is behind
+### X.240 — Database migration tracking is behind
 
 `/ready` returned HTTP 200 with database available, plus:
 
@@ -115,10 +115,10 @@ Obsidian export is disabled, which is expected for its default-off configuration
 
 No product specification was changed. No application code, secret file, dependency, Git branch or commit was changed. Runtime effects are the rebuilt/started existing Compose services, the separate test container, and the new diagnostic account/project/source/context/run/audit records. No existing research data was edited or deleted. The research workflow remains at Idea, with every human gate pending.
 
-Documentation edits are limited to this report and supporting artifacts, the X.227 claim/findings/work-log entries in `plan.md`, and associated `docs/traceability.md` rows. Earlier diagnostic reports are retained unchanged.
+Documentation edits are limited to this report and supporting artifacts, the X.236 claim/findings/work-log entries in `plan.md`, and associated `docs/traceability.md` rows. Earlier diagnostic reports are retained unchanged.
 
 ## 6. Next verification
 
-After the operator restores an API balance or supplies a reachable local model, rerun Ask on the preserved diagnostic project. Verify a nonempty answer, evidence markers, stored claims and provenance; inspect the content against the saved reading note. X.229 and X.231 are separate repairs. Further stage progression requires actual human gate decisions. No full research lifecycle, successful manuscript export or publication-ready result is certified by this diagnostic.
+After the operator restores an API balance or supplies a reachable local model, rerun Ask on the preserved diagnostic project. Verify a nonempty answer, evidence markers, stored claims and provenance; inspect the content against the saved reading note. X.238 and X.240 are separate repairs. Further stage progression requires actual human gate decisions. No full research lifecycle, successful manuscript export or publication-ready result is certified by this diagnostic.
 
-Suggested documentation commit message, not executed: `X.227: record live localhost workflow results and runtime blockers`.
+Suggested documentation commit message, not executed: `X.236: record live localhost workflow results and runtime blockers`.

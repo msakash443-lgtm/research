@@ -1,6 +1,6 @@
 # Localhost diagnostic and end-to-end error log
 
-Date: 2026-11-11 (Asia/Calcutta). Task: X.227. Tester: @codex.
+Date: 2026-11-11 (Asia/Calcutta). Task: X.236. Tester: @codex.
 
 **Result: blocked before live end-to-end workflows. The website is not verified working.** The frontend logic suite passed, but the configured backend could not start and the PostgreSQL test prerequisite was missing. No application fixes, commits, pushes, merges, or branch changes were performed.
 
@@ -117,10 +117,10 @@ Recorded duration: approximately 21.6 seconds. Full output: [localhost-e2e-2026-
 - The elevated app startup exited with code 1. The original sandbox startup attempt was cancelled. No functioning web server or worker was left running by this diagnostic.
 - No user research data, secret files, or existing database schema were changed. No live project or test account was created.
 - Existing untracked `local_e2e.cookies` was left untouched and unread.
-- Documentation added/updated: this report, the two test-output files, own X.227/X.228 task and Work Log entries in `plan.md`, and the related traceability row.
+- Documentation added/updated: this report, the two test-output files, own X.236/X.237 task and Work Log entries in `plan.md`, and the related traceability row.
 
 ## Follow-up
 
-X.228 tracks restoring an authorized, reachable local PostgreSQL/Compose runtime and dedicated test configuration. Once that prerequisite is available, repeat normal startup and health/readiness checks, then the browser workflow matrix and full PostgreSQL suite. X.227 remains blocked; this report does not certify end-to-end success.
+X.237 tracks restoring an authorized, reachable local PostgreSQL/Compose runtime and dedicated test configuration. Once that prerequisite is available, repeat normal startup and health/readiness checks, then the browser workflow matrix and full PostgreSQL suite. X.236 remains blocked; this report does not certify end-to-end success.
 
-Suggested eventual documentation commit message (not executed): `X.227: record localhost diagnostic blockers and test results`.
+Suggested eventual documentation commit message (not executed): `X.236: record localhost diagnostic blockers and test results`.
