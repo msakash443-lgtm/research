@@ -13,6 +13,19 @@ function progressLine(ctx) {
   return `Stage ${idx + 1} of ${STAGES.length} · ${idx >= 0 ? stageLabel(STAGES[idx]) : label(stage || "")}`;
 }
 
+function screeningPreparation(ctx) {
+  if (ctx.summary.stage?.stage !== "retrieved") return null;
+  const option = (ctx.summary.stage.next || []).find((item) => item.gate === "G3");
+  if (!option) return null;
+  const conditions = option.conditions || [];
+  const pending = conditions.filter((item) =>
+    ["EC-4.2", "EC-4.3", "EC-4.4", "EC-4.5"].includes(item.id) && !item.met
+  );
+  if (pending.length) return "Screen records and resolve outstanding screening reviews before considering G3 approval.";
+  if (!(ctx.summary.sources || []).length) return "Add or retrieve records before screening; G3 approval is a later decision.";
+  return null;
+}
+
 async function whereYouAre(ctx) {
   let guide;
   try {
@@ -27,7 +40,7 @@ async function whereYouAre(ctx) {
     box.append(
       el("h3", { text: stage.title }),
       el("p", { text: stage.meaning }),
-      el("p", { className: "muted", text: `What is advisable: ${stage.advice}` })
+      el("p", { className: "muted", text: `What is advisable: ${screeningPreparation(ctx) || stage.advice}` })
     );
   }
   const more = el("button", { className: "quiet-button", text: "See the whole research path" });
@@ -52,7 +65,11 @@ function suggestedSteps(ctx) {
     return panel;
   }
   const list = el("ol", { className: "suggestion-list" });
-  suggestions.forEach((s) => {
+  const preparation = screeningPreparation(ctx);
+  const ordered = preparation
+    ? [...suggestions].sort((a, b) => Number(a.condition_id === "EC-4.1") - Number(b.condition_id === "EC-4.1"))
+    : suggestions;
+  ordered.forEach((s) => {
     const item = el("li", { className: "suggestion" });
     const message = s.message.charAt(0).toUpperCase() + s.message.slice(1);
     item.append(
@@ -88,7 +105,7 @@ async function render(root, ctx) {
 
   const waiting = options.filter((option) => {
     const gate = option.gate && (ctx.summary.gates || []).find((g) => g.code === option.gate);
-    return gate && gate.status === "pending" && gate.can_decide;
+    return gate && gate.status === "pending" && gate.can_decide && !(option.gate === "G3" && screeningPreparation(ctx));
   });
   if (waiting.length) {
     const box = el("div", { className: "next-step" });

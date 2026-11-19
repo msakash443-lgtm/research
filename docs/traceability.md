@@ -277,6 +277,7 @@
 | X.208–X.209 | §5.10–§5.11: deterministic writing checks and AI section outline, critique and language review |
 | X.210–X.211 | §5.12: assembled, append-only manuscript review pinned to document versions |
 | X.212–X.213 | Wireframes and later UI for methodology advice and manuscript review (rule 32) |
+| X.215–X.221 | §5.3, §7.3, §8, §10: live-walkthrough follow-ups for screening/approval flow, next-step guidance, source verification labels, approval and screening layouts, and mobile Sources |
 
 ## 5. Work with no spec line (scope check)
 

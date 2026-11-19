@@ -53,9 +53,9 @@ function stepById(id) {
   return JOURNEY.find((step) => step.id === id) || null;
 }
 
-function stepLinkCard(ctx, step) {
+function stepLinkCard(ctx, step, heading) {
   const box = el("div", { className: "next-option" });
-  box.append(el("p", { text: `Next: ${step.title}` }));
+  box.append(el("p", { text: heading || `Next: ${step.title}` }));
   box.append(el("a", { className: "back-link", href: `#/p/${ctx.project.id}/${step.id}`, text: `Go to ${step.title}` }));
   return box;
 }
@@ -136,17 +136,18 @@ export function conditionFixLink(ctx, condition) {
   return href ? { href, text: "Fix this" } : null;
 }
 
-export function renderFrame(root, ctx, { stepId, work, ai = null, next = [], stepNext = null }) {
+export function renderFrame(root, ctx, { stepId, work, ai = null, next = [], stepNext = null, stepNextLabel = null }) {
   const options = next
     .map((stage) => (ctx.summary.stage?.next || []).find((option) => option.stage === stage))
     .filter(Boolean);
   const nodes = [];
 
   const conditions = unmetConditions(options);
-  if (conditions.length) nodes.push(conditionBox(ctx, conditions));
+  if (conditions.length && stepId !== "overview") nodes.push(conditionBox(ctx, conditions));
   const stale = staleWorkBanner(ctx, stepId);
   if (stale) nodes.push(stale);
   nodes.push(...work);
+  if (conditions.length && stepId === "overview") nodes.push(conditionBox(ctx, conditions));
   if (ai) nodes.push(ai);
 
   const footer = el("div", { className: "step-footer" });
@@ -158,7 +159,7 @@ export function renderFrame(root, ctx, { stepId, work, ai = null, next = [], ste
   if (options.length || forward) {
     const nextWrap = el("div", { className: "step-next" });
     options.forEach((option) => nextWrap.append(advanceCard(ctx, option)));
-    if (forward) nextWrap.append(stepLinkCard(ctx, forward));
+    if (forward) nextWrap.append(stepLinkCard(ctx, forward, stepNextLabel));
     footer.append(nextWrap);
   }
   if (footer.childElementCount) nodes.push(footer);
