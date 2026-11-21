@@ -787,4 +787,24 @@ async function endSession(message) {
   authenticate();
 }
 
+// Theme and light/dark choice (X.245). js/theme-init.js already applied the saved choice before first paint; these
+// controls change it and keep it in this browser (js/theme-init.js owns the storage).
+function setupThemeControls() {
+  const html = document.documentElement;
+  const select = $("#theme-select");
+  const toggle = $("#mode-toggle");
+  const theme = window.RaTheme.page;
+  select.replaceChildren(...theme.available().map((name) => el("option", { text: name[0].toUpperCase() + name.slice(1), attrs: { value: name } })));
+  const sync = () => {
+    select.value = html.getAttribute("data-theme");
+    const dark = html.getAttribute("data-mode") === "dark";
+    toggle.setAttribute("aria-pressed", String(dark));
+    toggle.textContent = dark ? "Light mode" : "Dark mode";
+  };
+  select.addEventListener("change", () => { theme.setTheme(select.value); sync(); });
+  toggle.addEventListener("click", () => { theme.setMode(html.getAttribute("data-mode") === "dark" ? "light" : "dark"); sync(); });
+  sync();
+}
+setupThemeControls();
+
 authenticate().catch((error) => toast(error.message));

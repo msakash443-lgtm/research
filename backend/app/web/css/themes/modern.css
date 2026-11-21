@@ -1,0 +1,36 @@
+/* Theme: modern. Product feel: sans-serif throughout, cool neutrals, one indigo accent, generous radii. Semantic tokens only. */
+[data-theme="modern"] {
+  --font-body: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-heading: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --font-size-base: 15px; --font-size-sm: 13px; --font-size-h1: 34px; --font-size-h2: 22px; --font-size-h3: 17px;
+  --line-height: 1.5; --heading-weight: 700; --heading-tracking: -.025em;
+  --radius-sm: 6px; --radius-md: 10px; --radius-lg: 16px;
+  --pad-y: 10px; --pad-x: 16px; --gap: 18px;
+  --color-bg: #f7f8fa; --color-surface: #ffffff; --color-surface-alt: #eef0f4;
+  --color-text: #14171f; --color-text-muted: #596172;
+  --color-border: #dcdfe6; --color-border-strong: #7c8499;
+  --color-accent: #4f46e5; --color-accent-hover: #4338ca; --color-accent-fg: #ffffff; --color-accent-soft: #eceafd;
+  --color-focus: #4f46e5;
+  --color-danger-fg: #b42318; --color-danger-bg: #feeceb;
+  --color-warning-fg: #8a4b00; --color-warning-bg: #fef3d8;
+  --color-success-fg: #11693c; --color-success-bg: #e3f6ec;
+  --color-info-fg: #1b53a5; --color-info-bg: #e7f0fd;
+  --shadow-md: 0 12px 32px rgba(20, 23, 31, .08);
+  --color-overlay: rgba(14, 17, 24, .45);
+  color-scheme: light;
+}
+[data-theme="modern"][data-mode="dark"] {
+  --color-bg: #0e1118; --color-surface: #161a23; --color-surface-alt: #1d222d;
+  --color-text: #e8ebf2; --color-text-muted: #9aa3b5;
+  --color-border: #2a3040; --color-border-strong: #6c7690;
+  --color-accent: #9aa0ff; --color-accent-hover: #b6baff; --color-accent-fg: #0e1118; --color-accent-soft: #232650;
+  --color-focus: #9aa0ff;
+  --color-danger-fg: #ffb4ae; --color-danger-bg: #3b1816;
+  --color-warning-fg: #f6c97a; --color-warning-bg: #38290b;
+  --color-success-fg: #8fdcb0; --color-success-bg: #12301f;
+  --color-info-fg: #a6c8f6; --color-info-bg: #14283f;
+  --shadow-md: 0 12px 32px rgba(0, 0, 0, .5);
+  --color-overlay: rgba(0, 0, 0, .65);
+  color-scheme: dark;
+}

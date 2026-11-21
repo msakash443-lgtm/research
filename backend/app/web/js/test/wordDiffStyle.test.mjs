@@ -1,15 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-// X.125: the word diff must stay readable on its own colours. These tests read the real stylesheet,
-// so a colour change that drops below WCAG AA (4.5:1 on the white card and editor backgrounds) fails here.
+// X.125 / X.244: the word diff must stay readable on every theme. The stylesheet only names semantic tokens,
+// so the contrast contract is checked on the values each theme gives those tokens (WCAG AA, 4.5:1).
 const css = readFileSync(fileURLToPath(new URL("../../styles.css", import.meta.url)), "utf8");
+const themeDir = fileURLToPath(new URL("../../css/themes/", import.meta.url));
 
-function colourOf(selector) {
-  const rule = css.match(new RegExp(`${selector}\\s*\\{[^}]*color:\\s*(#[0-9a-fA-F]{6})`));
-  assert.ok(rule, `no colour rule found for ${selector}`);
+function tokenOf(selector) {
+  const rule = css.match(new RegExp(`${selector}\\s*\\{[^}]*color:\\s*var\\((--[a-z-]+)\\)`));
+  assert.ok(rule, `no token colour rule found for ${selector}`);
   return rule[1];
 }
 
@@ -24,30 +25,47 @@ function contrast(a, b) {
   return (hi + 0.05) / (lo + 0.05);
 }
 
+// Every `[data-theme="x"]` / `[data-theme="x"][data-mode="dark"]` block of every real theme file (the template is skipped).
+function themeBlocks() {
+  const blocks = [];
+  for (const file of readdirSync(themeDir).filter((f) => f.endsWith(".css") && !f.startsWith("_"))) {
+    const text = readFileSync(themeDir + file, "utf8");
+    for (const m of text.matchAll(/(\[data-theme="[^"]+"\](?:\[data-mode="dark"\])?)\s*\{([^}]*)\}/g)) {
+      blocks.push({ name: `${file} ${m[1]}`, tokens: Object.fromEntries([...m[2].matchAll(/(--[a-z-]+):\s*(#[0-9a-fA-F]{6})/g)].map((t) => [t[1], t[2]])) });
+    }
+  }
+  return blocks;
+}
+
 test("the contrast helper rejects a known low-contrast pair", () => {
   // #777777 on white is about 4.48:1, just under AA, so it must not pass.
   assert.ok(contrast("#777777", "#ffffff") < 4.5);
   assert.ok(contrast("#000000", "#ffffff") > 4.5);
 });
 
-test("deleted and inserted words meet WCAG AA contrast on white", () => {
-  assert.ok(contrast(colourOf(String.raw`\.write-word-diff del`), "#ffffff") >= 4.5);
-  assert.ok(contrast(colourOf(String.raw`\.write-word-diff ins`), "#ffffff") >= 4.5);
+test("deleted and inserted words meet WCAG AA contrast on the card and editor surfaces of every theme and mode", () => {
+  const del = tokenOf(String.raw`\.write-word-diff del`);
+  const ins = tokenOf(String.raw`\.write-word-diff ins`);
+  const blocks = themeBlocks();
+  assert.ok(blocks.length >= 6, "expected the three themes in light and dark");
+  for (const { name, tokens } of blocks) {
+    for (const token of [del, ins]) {
+      for (const surface of ["--color-surface", "--color-bg"]) {
+        assert.ok(tokens[token] && tokens[surface], `${name} is missing ${token} or ${surface}`);
+        assert.ok(contrast(tokens[token], tokens[surface]) >= 4.5, `${name}: ${token} on ${surface} is below AA`);
+      }
+    }
+  }
 });
 
 test("deleted and inserted words use different colours, so the change does not depend on line style alone", () => {
-  assert.notEqual(colourOf(String.raw`\.write-word-diff del`), colourOf(String.raw`\.write-word-diff ins`));
+  assert.notEqual(tokenOf(String.raw`\.write-word-diff del`), tokenOf(String.raw`\.write-word-diff ins`));
 });
 
-test("the stylesheet keeps the light theme regardless of the system colour scheme", () => {
-  assert.doesNotMatch(css, /prefers-color-scheme:\s*dark/);
-  assert.doesNotMatch(css, /color-scheme:\s*dark/);
+test("components leave the colour scheme to the theme, so dark mode can switch every surface at once", () => {
+  assert.doesNotMatch(css, /color-scheme\s*:/);
 });
 
-test("the workspace chrome declares a light surface and text palette", () => {
-  assert.match(css, /body,\s*\.shell,\s*\.topbar,\s*\.workspace,\s*\.content\s*\{[^}]*color-scheme:light/);
-  assert.match(css, /\.topbar\s*\{[^}]*background:#fff[^}]*color:var\(--ink\)/);
-});
 test("the hidden removed/added labels have a visually-hidden rule that keeps them out of the layout", () => {
   assert.match(css, /\.sr-only\s*\{[^}]*position:absolute/);
 });

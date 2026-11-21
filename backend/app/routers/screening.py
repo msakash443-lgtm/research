@@ -616,6 +616,14 @@ def _blocked_by_full_text(db: Session, project: Project, source: Source, stage: 
     return final_decision(full_text_rows) is not None
 
 
+def _queue_fulltext_fetch_if_finally_included(db: Session, project: Project, source: Source, actor: str) -> Task | None:
+    """Queue the fetch only when the source's settled full-text decision is include (human, or arbiter ruling)."""
+    final = settled_decision(project, rows_for_stage(db, project, "full_text").get(source.id, []))
+    if final is None or final.decision != "include":
+        return None
+    return _queue_included_fulltext_fetch(db, project, source, actor)
+
+
 def _queue_included_fulltext_fetch(db: Session, project: Project, source: Source, actor: str) -> Task | None:
     """Queue one licence-checked fetch after a source becomes finally included at full text."""
     if source.fulltext_path:
@@ -673,10 +681,8 @@ def decide(
     )
     db.flush()  # the row's id is the ref: each decision is its own artifact
     register_artifact(db, project.id, SCREENING_KIND, str(row.id), ProjectStage.screened, actor=audit.user_actor(user))
-    if payload.stage == "full_text" and payload.decision == "include":
-        current = rows_for_stage(db, project, "full_text").get(source.id, [])
-        if final_decision(current) is not None and final_decision(current).decision == "include":
-            _queue_included_fulltext_fetch(db, project, source, audit.user_actor(user))
+    if payload.stage == "full_text":
+        _queue_fulltext_fetch_if_finally_included(db, project, source, audit.user_actor(user))
     _commit(db)
     db.refresh(row)
     return row
@@ -862,6 +868,8 @@ def adjudicate(
     )
     db.flush()  # the row's id is the ref: each ruling is its own artifact
     register_artifact(db, project.id, SCREENING_KIND, str(row.id), ProjectStage.screened, actor=actor)
+    if payload.stage == "full_text":
+        _queue_fulltext_fetch_if_finally_included(db, project, source, actor)
     _commit(db)
     db.refresh(row)
     return row

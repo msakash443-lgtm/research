@@ -1,5 +1,5 @@
-const CACHE = "research-workspace-shell-v1";
-const SHELL = ["/", "/manifest.webmanifest", "/assets/styles.css", "/assets/app.js"];
+const CACHE = "research-workspace-shell-v2";
+const SHELL = ["/", "/manifest.webmanifest", "/assets/js/theme-init.js", "/assets/css/tokens.primitive.css", "/assets/css/themes/scholarly.css", "/assets/css/themes/modern.css", "/assets/css/themes/dense.css", "/assets/styles.css", "/assets/app.js"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting()));
