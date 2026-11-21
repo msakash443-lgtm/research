@@ -204,7 +204,7 @@
 | Reliability (idempotent, resumable, no loss) | M0.2.1, M0.6.2, M0.6.4 | `test_worker_reaper.py` | `[?]` / `[ ]` |
 | Security (roles, encryption, secrets) | M0.3.1–M0.3.5, X.4; existing sign-in (`/api/auth/*`) | `test_auth.py`, `test_project_access.py`, `test_role_matrix.py`, `test_project_members*.py`, `test_dashboard.py` (body limit) | `[?]` / `[ ]` |
 | Auditability (immutable, exportable) | M0.4.1–M0.4.5 | `test_audit_*.py` | `[?]` |
-| **Performance** (screening reference 113.8 abstracts/h local Ollama, re-scoped 2026-10-21; 500 papers indexed < 1 h) | X.19 | `backend/tests/test_performance_benchmark.py` (app overhead < 1% of the 31.6 s/abstract reference; model latency itself not measured in tests, see `milestone-reports/X.19-real-model-benchmark-2026-10-19.md`) | `[?]` |
+| **Performance** (screening reference 113.8 abstracts/h local Ollama, re-scoped 2026-10-21; 500 papers indexed < 1 h) | X.19 | `backend/tests/test_performance_benchmark.py` (app overhead < 1% of the 31.6 s/abstract reference; model latency itself not measured in tests; the source benchmark report `X.19-real-model-benchmark-2026-10-19.md` was deleted 2026-11-21) | `[?]` |
 | Scalability (multi-user, queue workers) | M0.3, M0.6 | — | `[ ]` |
 | Usability (keyboard screening, side-by-side, diffs) | M2.3.1, M3.6.1, M6.8, X.14, X.32 | frontend suite, authenticated browser smoke | `[x]` for M2 keyboard/workspace UI; M3/M6 screens remain open |
 | Portability (open export formats) | X.8, M1.11, M3.5.2, M6.5, X.34 (Obsidian vault, verified-only) | `test_obsidian_export.py` (X.34.1), `test_manuscript_export.py` (M6.5 md/docx/latex/json/bibtex) | `[ ]` (X.34.1 `[?]`; M6.5 `[?]`, built 2026-10-18 needs review) |

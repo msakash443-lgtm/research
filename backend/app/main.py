@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from sqlalchemy import text
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.staticfiles import StaticFiles
@@ -15,6 +15,7 @@ from app.source_gate_guard import ExtractionGateLocked
 from app.migration_status import database_migration_status
 from app.stage_order import StageNotInChain
 from app.config import get_settings
+from app.ui_themes import registered_themes
 from app.logging_config import configure_logging
 from app.middleware import ContentLengthLimitMiddleware, FixedWindowCounter, RateLimitMiddleware
 from app.pagination import NEXT_CURSOR_HEADER
@@ -208,8 +209,12 @@ def readiness() -> JSONResponse:
 
 
 @app.get("/", include_in_schema=False)
-def dashboard() -> FileResponse:
-    return FileResponse(Path(__file__).parent / "web" / "index.html")
+def dashboard() -> HTMLResponse:
+    # X.245: the page carries the configured default theme and the registered ones; web/js/theme-init.js
+    # applies the user's saved choice on top before first paint.
+    page = (Path(__file__).parent / "web" / "index.html").read_text(encoding="utf-8")
+    page = page.replace("__UI_THEME__", settings.ui_theme).replace("__UI_THEMES__", " ".join(registered_themes()))
+    return HTMLResponse(page)
 
 @app.get("/sw.js", include_in_schema=False)
 def service_worker() -> FileResponse:

@@ -1052,3 +1052,66 @@ def test_the_included_set_for_g3_lists_only_settled_full_text_includes_and_count
     assert set_dual_screen(owner, p).status_code == 200
     # Under dual-screen one reviewer's decision is not settled, so it is not shown as included.
     assert owner.get(f"/api/projects/{p}/screening/included").json()["items"] == []
+
+
+# ---- X.170: a final full-text include queues the licence-checked open-access fetch ---------------
+
+def _enable_unpaywall(monkeypatch):
+    import app.routers.screening as screening_router
+
+    monkeypatch.setattr(screening_router, "unpaywall_unavailable_reason", lambda: None)
+    monkeypatch.setattr(screening_router, "is_enabled", lambda name, enabled, scraping: False)
+
+
+def _fetch_tasks(pid):
+    with SessionLocal() as db:
+        return db.scalars(select(Task).where(Task.project_id == uuid.UUID(pid), Task.type.in_(("fulltext_fetch", "arxiv_fulltext_fetch")))).all()
+
+
+def _give_doi(source_id, doi="10.1000/x170"):
+    with SessionLocal() as db:
+        db.get(Source, uuid.UUID(source_id)).doi = doi
+        db.commit()
+
+
+def test_a_doi_source_finally_included_at_full_text_queues_one_fetch_even_if_decided_again(world, monkeypatch):
+    _enable_unpaywall(monkeypatch)
+    p, s = world["pid"], world["ids"][0]
+    _give_doi(s)
+    decide(world["owner"], p, s, "include")
+    assert decide(world["owner"], p, s, "include", stage="full_text").status_code == 201
+    assert decide(world["owner"], p, s, "include", stage="full_text").status_code == 201
+    (task,) = _fetch_tasks(p)
+    assert task.payload["automatic"] is True and task.payload["source_id"] == s
+    with SessionLocal() as db:
+        events = db.scalars(select(AuditEvent).where(AuditEvent.action == "source.fulltext_automatically_requested", AuditEvent.project_id == uuid.UUID(p))).all()
+        assert len(events) == 1 and events[0].payload_json["task_id"] == str(task.id)
+
+
+def test_no_fetch_is_queued_for_an_exclusion_a_title_stage_include_or_a_source_without_doi(world, monkeypatch):
+    _enable_unpaywall(monkeypatch)
+    p, ids = world["pid"], world["ids"]
+    _give_doi(ids[0])
+    _give_doi(ids[1], "10.1000/x170b")
+    decide(world["owner"], p, ids[0], "include")
+    decide(world["owner"], p, ids[1], "include")
+    decide(world["owner"], p, ids[2], "include")
+    decide(world["owner"], p, ids[0], "exclude", reason_code="E2", stage="full_text")
+    decide(world["owner"], p, ids[2], "include", stage="full_text")  # no DOI, no arXiv id: manual upload remains
+    assert _fetch_tasks(p) == []
+
+
+def test_under_dual_screening_the_fetch_waits_for_agreement_then_for_a_ruling(world, monkeypatch):
+    _enable_unpaywall(monkeypatch)
+    p, s = world["pid"], world["ids"][0]
+    _give_doi(s)
+    set_dual_screen(world["owner"], p)
+    for client in (world["owner"], world["co_author"]):
+        assert decide(client, p, s, "include").status_code == 201
+    assert decide(world["owner"], p, s, "include", stage="full_text").status_code == 201
+    assert _fetch_tasks(p) == []  # one reviewer is not a final decision
+    assert decide(world["co_author"], p, s, "maybe", stage="full_text").status_code == 201
+    assert _fetch_tasks(p) == []  # conflict
+    assert discuss(world["owner"], p, s, stage="full_text").status_code == 201
+    assert adjudicate(world["supervisor"], p, s, "include", stage="full_text").status_code == 201
+    assert len(_fetch_tasks(p)) == 1
