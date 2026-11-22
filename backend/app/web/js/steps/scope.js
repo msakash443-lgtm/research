@@ -3,9 +3,9 @@ import { request, projectApi } from "../api.js";
 import { gateCard } from "./common.js";
 import { renderFrame } from "./frame.js";
 import { canChangeResearchType, canSaveResearchType, chainRows, researchTypeLockReason, selectedResearchType } from "../researchTypeLogic.js";
-import { FEASIBILITY_FIELDS, FEASIBILITY_STATUSES, feasibilityByItem, ideaBriefPayload, landscapeScanPath, splitScopeContext } from "../strategyLogic.js";
+import { FEASIBILITY_FIELDS, FEASIBILITY_STATUSES, feasibilityByItem, ideaBriefPayload, landscapeScanPath, objectiveBody, splitScopeContext } from "../strategyLogic.js";
 
-const KIND_ORDER = ["question", "objective", "hypothesis", "methodology", "variable", "decision"];
+const KIND_ORDER = ["question", "hypothesis", "methodology", "variable", "decision"];
 
 function contextEditor(item, ctx) {
   const form = el("form", { className: "context-edit" });
@@ -267,22 +267,88 @@ function landscapeScanPanel(ctx) {
   return box;
 }
 
+// Objectives are their own records (X.193): written, corrected and retired through /objectives, never as context items.
+function objectiveForm(ctx, objective = null) {
+  const form = el("form", { className: "context-edit objective-form" });
+  const statement = el("textarea", { attrs: { name: "statement", required: "", "aria-label": "Objective statement", placeholder: "What should this research achieve?" } });
+  const measure = el("input", { attrs: { name: "measure", "aria-label": "How success is judged", placeholder: "How will success be judged? (optional)" } });
+  const deliverable = el("input", { attrs: { name: "deliverable", "aria-label": "Deliverable", placeholder: "What will it deliver? (optional)" } });
+  const target = el("input", { type: "date", attrs: { name: "target_date", "aria-label": "Target date" } });
+  const reason = el("textarea", { attrs: { name: "rationale", "aria-label": "Why does this matter?", placeholder: "Why does this matter? (optional)" } });
+  statement.value = objective?.statement || "";
+  measure.value = objective?.measure || "";
+  deliverable.value = objective?.deliverable || "";
+  target.value = objective?.target_date || "";
+  reason.value = objective?.rationale || "";
+  const save = el("button", { type: "submit", text: objective ? "Save changes" : "Add objective" });
+  const cancel = el("button", { type: "button", className: "quiet-button", text: "Cancel" });
+  cancel.addEventListener("click", () => ctx.refresh());
+  form.append(statement, measure, deliverable, target, reason, el("div", { className: "dialog-actions", children: [cancel, save] }));
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const body = objectiveBody(objective, {
+      statement: statement.value, measure: measure.value, deliverable: deliverable.value,
+      target_date: target.value, rationale: reason.value,
+    });
+    if (objective && !Object.keys(body).length) {
+      toast("Nothing changed.");
+      return;
+    }
+    save.disabled = true;
+    try {
+      await request(projectApi(ctx.project.id, objective ? `/objectives/${objective.id}` : "/objectives"), {
+        method: objective ? "PATCH" : "POST", body: JSON.stringify(body),
+      });
+      toast(objective ? "Objective updated. The earlier wording is kept in its history." : "Objective added.");
+      await ctx.refresh();
+    } catch (error) {
+      save.disabled = false;
+      toast(error.message);
+    }
+  });
+  return form;
+}
+
+function objectiveCard(objective, ctx) {
+  const card = el("article", { className: "context-card objective-card" });
+  card.append(el("span", { className: "context-kind", text: "Objective" }), el("h3", { text: objective.statement }));
+  [["Success is judged by", objective.measure], ["Deliverable", objective.deliverable], ["Target date", objective.target_date], ["Reason", objective.rationale]]
+    .filter(([, value]) => value)
+    .forEach(([name, value]) => card.append(el("p", { text: `${name}: ${value}` })));
+  if (objective.history?.length) card.append(el("p", { className: "muted small", text: `Edited ${objective.history.length} time${objective.history.length === 1 ? "" : "s"}; earlier wording is kept.` }));
+  if (ctx.canWrite) {
+    const edit = el("button", { type: "button", className: "quiet-button", text: "Edit" });
+    edit.addEventListener("click", () => card.replaceChildren(objectiveForm(ctx, objective)));
+    const retire = el("button", { type: "button", className: "quiet-button", text: "Retire" });
+    retire.addEventListener("click", async () => {
+      if (!window.confirm("Retire this objective? It is hidden from the project and from the AI, but kept in the audit record.")) return;
+      try {
+        await request(projectApi(ctx.project.id, `/objectives/${objective.id}/retire`), { method: "POST" });
+        toast("Objective retired.");
+        await ctx.refresh();
+      } catch (error) {
+        toast(error.message);
+      }
+    });
+    card.append(el("div", { className: "context-actions", children: [edit, retire] }));
+  }
+  return card;
+}
+
 function objectivesPanel(objectives, ctx) {
   const box = el("div", { className: "panel objectives-panel" });
   const heading = el("div", { className: "section-title" });
   heading.append(el("h2", { text: "Objectives" }));
+  const list = el("div", { className: "context-list" });
   if (ctx.canWrite) {
     const add = el("button", { type: "button", text: "Add objective" });
-    add.addEventListener("click", () => openAddContext("objective"));
+    add.addEventListener("click", () => list.prepend(objectiveForm(ctx)));
     heading.append(add);
   }
   box.append(heading);
   if (!objectives.length) box.append(emptyCard("No objectives recorded", "Write the outcomes this project intends to achieve."));
-  else {
-    const list = el("div", { className: "context-list" });
-    objectives.forEach((item) => list.append(contextCard(item, ctx)));
-    box.append(list);
-  }
+  objectives.forEach((objective) => list.append(objectiveCard(objective, ctx)));
+  box.append(list);
   return box;
 }
 
@@ -422,7 +488,7 @@ async function researchTypePanel(ctx) {
 }
 
 async function render(root, ctx) {
-  const { objectives, context: items } = splitScopeContext(ctx.summary.context || []);
+  const { objectives, context: items } = splitScopeContext(ctx.summary.context || [], ctx.summary.objectives || []);
   const sections = [
     await ideaBriefPanel(ctx),
     landscapeScanPanel(ctx),
@@ -442,7 +508,7 @@ async function render(root, ctx) {
     contextPanel.append(emptyCard("Capture your first research decision", "Add a question, hypothesis, or methodological choice to make this project easier to continue later."));
   } else {
     const list = el("div", { className: "context-list" });
-    KIND_ORDER.filter((kind) => kind !== "objective").forEach((kind) => {
+    KIND_ORDER.forEach((kind) => {
       items.filter((item) => item.kind === kind).forEach((item) => list.append(contextCard(item, ctx)));
     });
     contextPanel.append(list);

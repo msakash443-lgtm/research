@@ -10,6 +10,7 @@ import {
   hypothesisPayload,
   researchQuestionPayload,
 } from "../strategyLogic.js";
+import { takeGapPrefill } from "../comparisonLogic.js";
 
 function field(labelText, control) {
   const wrapper = el("label", { className: "strategy-field" });
@@ -53,14 +54,20 @@ function createGapForm(ctx, sources) {
   if (!ctx.canWrite) return null;
   if (sources.length < 2) return emptyCard("Two active sources required", "Add at least two active project sources before recording a literature gap.");
 
+  const prefill = takeGapPrefill(sessionStorage, ctx.project.id);
   const box = el("div", { className: "panel" });
   box.append(el("h2", { text: "Record a gap" }));
+  if (prefill) box.append(el("p", { className: "muted small", text: "Drafted from a comparison on the Evidence table. Read it, edit it and add the gap only if you agree; nothing is saved until you do." }));
   const form = el("form", { className: "strategy-form gap-form" });
   const type = el("select", { attrs: { name: "type", required: "" } });
   GAP_TYPES.forEach((value) => type.append(el("option", { text: label(value), attrs: { value } })));
   const statement = el("textarea", { attrs: { required: "", maxlength: "10000", "aria-label": "Describe the literature gap" } });
   const priority = el("input", { type: "number", attrs: { min: "0", max: "100", value: "0", "aria-label": "Priority" } });
-  const papers = paperChecklist(sources);
+  if (prefill) {
+    statement.value = prefill.statement;
+    if (GAP_TYPES.includes(prefill.type)) type.value = prefill.type;
+  }
+  const papers = paperChecklist(sources, prefill ? prefill.supportingPaperIds : []);
   const save = el("button", { type: "submit", text: "Add gap" });
   form.append(field("Gap type", type), field("Gap statement", statement), papers, field("Priority (0–100)", priority), save);
   form.addEventListener("submit", async (event) => {

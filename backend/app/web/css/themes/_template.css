@@ -1,0 +1,44 @@
+/* Theme template. To add a theme:
+   1. Copy this file to css/themes/<name>.css and replace `your-theme` below (lowercase letters and hyphens).
+   2. Fill EVERY token in both blocks. A missing token is a bug; test_design_system.py fails on it.
+   3. Keep WCAG AA: text, text-muted, accent, accent-fg on accent, and each status fg on its bg all need 4.5:1;
+      border-strong against surface needs 3:1.
+   4. Link the file in index.html, sw.js (SHELL) and design-system.html (+ THEMES in design-system.js). The name is
+      registered automatically from the file name; test_design_system.py fails if any of these is missed.
+   Full guide: docs/design-system.md.
+   Use semantic tokens only in components; never put raw colours in component CSS. */
+[data-theme="your-theme"] {
+  --font-body: system-ui, sans-serif;
+  --font-heading: system-ui, sans-serif;
+  --font-mono: ui-monospace, Consolas, monospace;
+  --font-size-base: 15px; --font-size-sm: 13px; --font-size-h1: 34px; --font-size-h2: 22px; --font-size-h3: 17px;
+  --line-height: 1.5; --heading-weight: 700; --heading-tracking: 0;
+  --radius-sm: 4px; --radius-md: 8px; --radius-lg: 12px;
+  --pad-y: 9px; --pad-x: 16px; --gap: 16px;
+  --color-bg: #ffffff; --color-surface: #ffffff; --color-surface-alt: #f2f2f2;
+  --color-text: #111111; --color-text-muted: #555555;
+  --color-border: #d4d4d4; --color-border-strong: #767676;
+  --color-accent: #0b5cad; --color-accent-hover: #084a8c; --color-accent-fg: #ffffff; --color-accent-soft: #e3effb;
+  --color-focus: #0b5cad;
+  --color-danger-fg: #a40e0e; --color-danger-bg: #fde8e8;
+  --color-warning-fg: #6b4300; --color-warning-bg: #fff1c9;
+  --color-success-fg: #0d5c2e; --color-success-bg: #def3e5;
+  --color-info-fg: #0b4a8f; --color-info-bg: #e1edfa;
+  --shadow-md: 0 4px 14px rgba(0, 0, 0, .1);
+  --color-overlay: rgba(0, 0, 0, .45);
+  color-scheme: light;
+}
+[data-theme="your-theme"][data-mode="dark"] {
+  --color-bg: #101214; --color-surface: #181b1e; --color-surface-alt: #202427;
+  --color-text: #ececec; --color-text-muted: #a3a8ad;
+  --color-border: #33383d; --color-border-strong: #7d858c;
+  --color-accent: #5aa9f0; --color-accent-hover: #82bdf5; --color-accent-fg: #07121f; --color-accent-soft: #12263a;
+  --color-focus: #5aa9f0;
+  --color-danger-fg: #ffb0b0; --color-danger-bg: #3a1212;
+  --color-warning-fg: #f5cb7e; --color-warning-bg: #382a08;
+  --color-success-fg: #8fdcae; --color-success-bg: #0f2f1c;
+  --color-info-fg: #a6c9f2; --color-info-bg: #102840;
+  --shadow-md: 0 4px 14px rgba(0, 0, 0, .6);
+  --color-overlay: rgba(0, 0, 0, .65);
+  color-scheme: dark;
+}

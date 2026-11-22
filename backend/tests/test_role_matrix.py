@@ -8,6 +8,7 @@ Everyone outside the allowed set must be refused: a member with the wrong role g
 a non-member 404 (existence is not revealed), and an anonymous caller 401.
 """
 
+import os
 import uuid
 
 import pytest
@@ -31,6 +32,7 @@ from app.models import (
     ProjectRole,
     ProjectStage,
     ScreeningDecision,
+    ScreeningDiscussionNote,
     SearchQuery,
     SeedPaper,
     Source,
@@ -182,10 +184,14 @@ MATRIX = [
     ("GET", "/api/projects/{p}/criteria", ALL, 200),
     ("GET", "/api/projects/{p}/prisma", ALL, 200),
     ("GET", "/api/projects/{p}/screening/queue", ALL, 200),
+    ("GET", "/api/projects/{p}/screening/included", ALL, 200),
     ("GET", "/api/projects/{p}/screening/decisions", ALL, 200),
+    ("GET", "/api/projects/{p}/screening/suggestion/{s}", ALL, 404),  # X.224: withheld (404) until the caller has decided the source themselves
     ("POST", "/api/projects/{p}/screening/decisions", WRITE, 201),
     ("POST", "/api/projects/{p}/screening/decisions/undo", WRITE, 201),
     ("POST", "/api/projects/{p}/screening/decisions/adjudicate", APPROVE_G1, 201),  # owner or supervisor rule on a reviewer conflict
+    ("GET", "/api/projects/{p}/screening/discussion", ALL, 200),  # blinded: non-participants and non-arbiters get an empty list
+    ("POST", "/api/projects/{p}/screening/discussion", WRITE, 201),  # a reviewer who holds one side of a conflict
     ("POST", "/api/projects/{p}/screening/prescreen", WRITE, 202),  # queues only; gate G2 still blocks the run
     ("POST", "/api/projects/{p}/screening/seed-check", WRITE, 202),  # queues only; gate G2 still blocks the run; writes no screening decision
     ("GET", "/api/projects/{p}/screening/seed-check", ALL, 200),
@@ -200,6 +206,8 @@ MATRIX = [
     ("PUT", "/api/projects/{p}/screening/ai-prescreen", MANAGE, 200),  # owner only: manually disable/re-enable AI pre-screen
     ("GET", "/api/projects/{p}/screening/active-learning", ALL, 200),
     ("PUT", "/api/projects/{p}/screening/active-learning", MANAGE, 200),  # owner only: whether the queue may rank by predicted relevance
+    ("GET", "/api/projects/{p}/screening/peer-reviewed-only", ALL, 200),
+    ("PUT", "/api/projects/{p}/screening/peer-reviewed-only", MANAGE, 200),  # preprints not citable in synthesis (X.196)
     ("GET", "/api/projects/{p}/extractions", ALL, 200),
     ("GET", "/api/projects/{p}/extractions/{e}", ALL, 200),
     ("GET", "/api/projects/{p}/extractions/verification-queue", ALL, 200),
@@ -274,7 +282,10 @@ MATRIX = [
     ("DELETE", "/api/projects/{p}/conceptual-model/paths/{cp}", WRITE, 204),
     ("GET", "/api/projects/{p}/gaps", ALL, 200),
     ("GET", "/api/projects/{p}/gaps/candidates", ALL, 200),
+    ("GET", "/api/projects/{p}/research-plan", ALL, 200),
     ("POST", "/api/projects/{p}/gaps", WRITE, 201),
+    ("POST", "/api/projects/{p}/gaps/suggest", WRITE, 409),  # X.192: the matrix world has no gap candidates, so the role gate passes and the request is refused before any model call
+    ("POST", "/api/projects/{p}/research-questions/suggest", WRITE, 409),  # X.192: same
     ("PATCH", "/api/projects/{p}/gaps/{gap_id}", WRITE, 200),
     ("GET", "/api/projects/{p}/research-questions", ALL, 200),
     ("POST", "/api/projects/{p}/research-questions", WRITE, 201),
@@ -293,6 +304,9 @@ MATRIX = [
     ("PATCH", "/api/projects/{p}/hypotheses/{hp}", WRITE, 200),
     ("GET", "/api/projects/{p}/evidence-matrix", ALL, 200),
     ("GET", "/api/projects/{p}/evidence-matrix/contradictions", ALL, 200),
+    ("GET", "/api/projects/{p}/responsibilities", ALL, 200),  # who leads which area: informational (X.226)
+    ("PUT", "/api/projects/{p}/responsibilities/{area}", MANAGE, 200),
+    ("GET", "/api/projects/{p}/literature-summary", ALL, 200),  # deterministic summary of verified evidence (X.200)
     ("GET", "/api/projects/{p}/evidence-matrix/export.csv", ALL, 200),
     ("GET", "/api/projects/{p}/evidence-matrix/export.xlsx", ALL, 200),
     ("GET", "/api/projects/{p}/evidence-matrix/{e}/fields/{field_key}/source-text", ALL, 200),
@@ -405,6 +419,8 @@ BODIES = {
     ("PUT", "/api/projects/{p}/screening/auto-exclude"): {"enabled": True, "confidence_threshold": 0.9},
     ("PUT", "/api/projects/{p}/screening/ai-prescreen"): {"disabled": True},
     ("PUT", "/api/projects/{p}/screening/active-learning"): {"enabled": True},
+    ("PUT", "/api/projects/{p}/screening/peer-reviewed-only"): {"enabled": True},
+    ("PUT", "/api/projects/{p}/responsibilities/{area}"): {"assignments": []},
     ("POST", "/api/projects/{p}/extractions/{e}/verify"): {"confirmed_critical_fields": ["measures", "sample", "key_findings"],
                                                                          "confirmed_not_reported_fields": ["measures", "sample", "key_findings"]},
     ("POST", "/api/projects/{p}/extractions/ai"): {"source_id": ""},
@@ -417,23 +433,55 @@ BODIES = {
 PRINCIPALS = ["owner", "owner_member", "co_author", "supervisor", "reviewer", "stranger", "anonymous"]
 
 
-@pytest.fixture
-def world(monkeypatch, fake_llm):
-    from app.config import get_settings
+def _world_scope(fixture_name, config):
+    """One seeded world per module when each test rolls back (the per-test transaction undoes whatever a
+    call changes); a fresh world per test when every test gets its own cloned database."""
+    return "function" if os.environ.get("RESEARCH_TEST_ISOLATION") == "clone" else "module"
 
+
+def _patch_matrix_runtime(mp, store=None):
+    """Settings and collaborators the matrix needs: every connector enabled but never reaching the network."""
+    from pydantic import SecretStr
+
+    from app.config import get_settings
+    from app.routers import evidence_matrix as evidence_routes
+    from app.routers import extractions as extraction_routes
+    from app.routers import idea_brief  # the landscape POST searches live connectors; the matrix must not touch the network
+
+    mp.setattr(get_settings(), "connectors_enabled", ["openalex", "unpaywall", "arxiv"])
+    mp.setattr(idea_brief, "_search_services", lambda names, text, limit: ([], []))
+    mp.setattr(get_settings(), "connector_contact_email", "matrix@example.com")
+    mp.setattr(get_settings(), "obsidian_export_enabled", True)
+    mp.setattr(get_settings(), "zotero_sync_enabled", True)
+    mp.setattr(get_settings(), "zotero_api_key", SecretStr("matrix-key"))
+    mp.setattr(get_settings(), "zotero_user_id", "12345")
+    mp.setattr(get_settings(), "embedding_model", "test-embedding")  # only POST /clusters checks it; nothing is embedded here
+    if store is not None:
+        mp.setattr(extraction_routes, "get_object_store", lambda settings: store)
+        mp.setattr(evidence_routes, "get_object_store", lambda settings: store)
+
+
+@pytest.fixture(scope=_world_scope)
+def _seeded_world(request):
+    if _world_scope(None, None) == "module":
+        request.getfixturevalue("shared_world_database")  # a clean database the module may commit into
+    mp = pytest.MonkeyPatch()
+    try:
+        yield _seed_world(mp)
+    finally:
+        mp.undo()
+
+
+@pytest.fixture
+def world(_seeded_world, monkeypatch, fake_llm):
     # Only the synonym-suggestion route calls a model here; give it a well-formed reply.
     fake_llm.handler = lambda r: {"choices": [{"message": {"content": '{"suggestions": []}'}}]}
+    _patch_matrix_runtime(monkeypatch, _seeded_world["store"])
+    return _seeded_world
 
-    monkeypatch.setattr(get_settings(), "connectors_enabled", ["openalex", "unpaywall", "arxiv"])
-    from app.routers import idea_brief  # the landscape POST searches live connectors; the matrix must not touch the network
-    monkeypatch.setattr(idea_brief, "_search_services", lambda names, text, limit: ([], []))
-    monkeypatch.setattr(get_settings(), "connector_contact_email", "matrix@example.com")
-    monkeypatch.setattr(get_settings(), "obsidian_export_enabled", True)
-    monkeypatch.setattr(get_settings(), "zotero_sync_enabled", True)
-    from pydantic import SecretStr
-    monkeypatch.setattr(get_settings(), "zotero_api_key", SecretStr("matrix-key"))
-    monkeypatch.setattr(get_settings(), "zotero_user_id", "12345")
-    monkeypatch.setattr(get_settings(), "embedding_model", "test-embedding")  # only POST /clusters checks it; nothing is embedded here
+
+def _seed_world(mp):
+    _patch_matrix_runtime(mp)
     tag = uuid.uuid4().hex[:8]
     owner, _ = sign_in_user(f"matrix-owner-{tag}@example.com")
     owner_id = owner.get("/api/auth/me").json()["id"]
@@ -450,10 +498,8 @@ def world(monkeypatch, fake_llm):
             assert requested_key == source_key
             return source_pdf
 
-    from app.routers import extractions as extraction_routes
-    monkeypatch.setattr(extraction_routes, "get_object_store", lambda settings: ExtractionStore())
-    from app.routers import evidence_matrix as evidence_routes
-    monkeypatch.setattr(evidence_routes, "get_object_store", lambda settings: ExtractionStore())
+    store = ExtractionStore()
+    _patch_matrix_runtime(mp, store)
     with SessionLocal() as db:
         db.get(Source, uuid.UUID(extraction_source_id)).fulltext_path = source_key
         db.commit()
@@ -595,8 +641,9 @@ def world(monkeypatch, fake_llm):
     assert owner.post(f"/api/projects/{project_id}/datasets/{dataset_id}/exclusion-rules/{rule.json()['id']}/approve").status_code == 200
     return {
         "clients": clients,
-        "ids": {"p": project_id, "s": source_id, "extract_s": extraction_source_id, "ai_s": ai_source["id"], "h": str(claim_id), "gap_id": gap_id, "rq": question_id, "hp": hypothesis_id, "field_key": "research_question", "u": removable_id, "q": str(search_id), "d": str(seed_id), "e": str(extraction_id), "plan_id": str(uuid.uuid4()), "cp": str(uuid.uuid4()), "c": str(clustering_id), "l": str(cluster_id), "n": "lab_schema", "a": str(alert_id), "k": str(audit_id), "g": _fresh_suggestion(project_id, []), "doc": doc_id, "ds": str(dataset_id), "ap": plan.json()["id"], "run": str(uuid.uuid4()), "rule_id": rule.json()["id"], "rep": _seed_report(project_id, owner_id, doc_id), "v": "1", "author": owner_id, "cr": str(removable_member_id), "lo": str(own_paper_lookup_task_id), "finding_id": str(uuid.uuid4())},
+        "ids": {"p": project_id, "s": source_id, "extract_s": extraction_source_id, "ai_s": ai_source["id"], "h": str(claim_id), "gap_id": gap_id, "rq": question_id, "hp": hypothesis_id, "field_key": "research_question", "area": "screening", "u": removable_id, "q": str(search_id), "d": str(seed_id), "e": str(extraction_id), "plan_id": str(uuid.uuid4()), "cp": str(uuid.uuid4()), "c": str(clustering_id), "l": str(cluster_id), "n": "lab_schema", "a": str(alert_id), "k": str(audit_id), "g": _fresh_suggestion(project_id, []), "doc": doc_id, "ds": str(dataset_id), "ap": plan.json()["id"], "run": str(uuid.uuid4()), "rule_id": rule.json()["id"], "rep": _seed_report(project_id, owner_id, doc_id), "v": "1", "author": owner_id, "cr": str(removable_member_id), "lo": str(own_paper_lookup_task_id), "finding_id": str(uuid.uuid4())},
         "twin": twin_id,
+        "store": store,
         "invitee": f"matrix-invitee-{tag}@example.com",
     }
 
@@ -890,8 +937,24 @@ def _call(world, principal, method, template):
             for seq, (who, decision) in enumerate((("reviewer-a", "include"), ("reviewer-b", "maybe")), start=1):
                 db.add(ScreeningDecision(project_id=pid, source_id=uuid.UUID(fresh["id"]), stage="title_abstract", seq=seq,
                                          decision=decision, decided_by="human", decider=who))
+            db.add(ScreeningDiscussionNote(project_id=pid, source_id=uuid.UUID(fresh["id"]), stage="title_abstract", decision_seq=2,
+                                           author="reviewer-a", body="We could not agree."))
             db.commit()
-        return world["clients"][principal].post(path, json={"source_id": fresh["id"], "decision": "include"})
+        return world["clients"][principal].post(path, json={"source_id": fresh["id"], "decision": "include", "note": "Matrix ruling."})
+    if (method, template) == ("GET", "/api/projects/{p}/screening/discussion"):
+        return world["clients"][principal].get(path, params={"source_id": world["ids"]["s"]})
+    if (method, template) == ("POST", "/api/projects/{p}/screening/discussion"):
+        # The caller holds one side of a fresh conflict, so a success can't be refused for a missing decision.
+        pid = uuid.UUID(world["ids"]["p"])
+        fresh = world["clients"]["owner"].post(f"/api/projects/{world['ids']['p']}/sources", json={"title": "Discussion target"}).json()
+        caller = world["clients"][principal].get("/api/auth/me").json().get("id")
+        with SessionLocal() as db:
+            db.get(Project, pid).dual_screen_enabled = True
+            for seq, (who, decision) in enumerate(((str(caller), "include"), ("reviewer-b", "maybe")), start=1):
+                db.add(ScreeningDecision(project_id=pid, source_id=uuid.UUID(fresh["id"]), stage="title_abstract", seq=seq,
+                                         decision=decision, decided_by="human", decider=who))
+            db.commit()
+        return world["clients"][principal].post(path, json={"source_id": fresh["id"], "body": "Matrix discussion."})
     if (method, template) == ("POST", "/api/projects/{p}/documents/{doc}/versions"):
         # Each call saves into its own section, authored by the caller, so a success can't 409 the next principal.
         author = world["clients"][principal].get("/api/auth/me").json().get("id", "anonymous")

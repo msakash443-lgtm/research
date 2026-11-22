@@ -39,6 +39,7 @@ from app.connectors.base import (
 )
 from app.connectors.http import ConnectorHttpClient, HttpPolicy, NotFoundError
 from app.doi import normalize_doi
+from app.venue_check import normalise_issn
 
 BASE_URL = "https://api.crossref.org"
 NAME = "crossref"
@@ -123,6 +124,10 @@ def to_record(item: dict[str, Any]) -> PaperRecord | None:
     if not title:
         return None
     abstract = _abstract(item.get("abstract"))
+    source_ids = {NAME: doi}
+    issn = next((i for i in (item.get("ISSN") or []) if isinstance(i, str) and normalise_issn(i)), None)
+    if issn:
+        source_ids["issn"] = normalise_issn(issn)
     flags = []
     if item.get("type") == "posted-content" or item.get("subtype") == "preprint":
         flags.append("preprint")
@@ -141,7 +146,7 @@ def to_record(item: dict[str, Any]) -> PaperRecord | None:
         abstract=abstract,
         url=clean_link(item.get("URL")),
         oa_url=None,  # Crossref has no reliable open-access location; Unpaywall (M1.4.5) does
-        source_ids={NAME: doi},
+        source_ids=source_ids,
         quality_flags=tuple(flags),
         cited_by_count=citation_count(item.get("is-referenced-by-count")),
         language=language_code(item.get("language")),

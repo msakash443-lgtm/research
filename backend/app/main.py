@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from sqlalchemy import text
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.staticfiles import StaticFiles
@@ -15,16 +15,17 @@ from app.source_gate_guard import ExtractionGateLocked
 from app.migration_status import database_migration_status
 from app.stage_order import StageNotInChain
 from app.config import get_settings
+from app.ui_themes import registered_themes
 from app.logging_config import configure_logging
 from app.middleware import ContentLengthLimitMiddleware, FixedWindowCounter, RateLimitMiddleware
 from app.pagination import NEXT_CURSOR_HEADER
-from app.routers import accuracy, ai_locks, ai_settings, audit, provenance_reports, workspace_ai, auth, bibliometrics, claims, clusters, connectors, coverage, criteria, design_tools, evidence_matrix, exports, extraction_schemas, extractions, gates, guide, integrity, members, notes, documents, prisma, profile, projects, replication, research_runs, scholar_metrics, screening, searches, alerts, seeds, snowball, sources, stage, suggestions, usage, zotero, reviews
+from app.routers import accuracy, ai_locks, ai_settings, audit, provenance_reports, workspace_ai, auth, bibliometrics, claims, clusters, connectors, coverage, criteria, design_tools, evidence_matrix, exports, literature_summary, extraction_schemas, extractions, gates, guide, integrity, members, responsibilities, notes, documents, prisma, profile, projects, replication, research_runs, scholar_metrics, screening, searches, alerts, seeds, snowball, sources, stage, suggestions, usage, zotero, reviews
 from app.routers import journals, submissions
 from app.routers import people
 from app.routers import privacy
 from app.routers import observability
 from app.routers import bias_warnings
-from app.routers import analysis_plan, brief, conceptual_model, constructs, datasets, ethics_pack, gaps, idea_brief, instrument, interpretation, meta_analysis, objectives, preregistration, qual_coding, research_questions, transcripts
+from app.routers import analysis_plan, brief, conceptual_model, constructs, datasets, ethics_pack, gap_suggestions, gaps, idea_brief, instrument, interpretation, meta_analysis, objectives, preregistration, qual_coding, research_plan, research_questions, transcripts
 
 # Production settings (session secret, HTTPS, Postgres, ...) are validated in Settings.
 settings = get_settings()
@@ -124,12 +125,15 @@ app.include_router(qual_coding.router, prefix="/api")
 app.include_router(transcripts.router, prefix="/api")
 app.include_router(constructs.router, prefix="/api")
 app.include_router(conceptual_model.router, prefix="/api")
+app.include_router(gap_suggestions.router, prefix="/api")
 app.include_router(gaps.router, prefix="/api")
 app.include_router(research_questions.router, prefix="/api")
 app.include_router(objectives.router, prefix="/api")
+app.include_router(research_plan.router, prefix="/api")
 app.include_router(brief.router, prefix="/api")
 app.include_router(idea_brief.router, prefix="/api")
 app.include_router(evidence_matrix.router, prefix="/api")
+app.include_router(literature_summary.router, prefix="/api")
 app.include_router(bibliometrics.router, prefix="/api")
 app.include_router(replication.router, prefix="/api")
 app.include_router(prisma.router, prefix="/api")
@@ -137,6 +141,7 @@ app.include_router(searches.router, prefix="/api")
 app.include_router(snowball.router, prefix="/api")
 app.include_router(seeds.router, prefix="/api")
 app.include_router(members.router, prefix="/api")
+app.include_router(responsibilities.router, prefix="/api")
 app.include_router(sources.router, prefix="/api")
 app.include_router(research_runs.router, prefix="/api")
 app.include_router(notes.router, prefix="/api")
@@ -204,8 +209,12 @@ def readiness() -> JSONResponse:
 
 
 @app.get("/", include_in_schema=False)
-def dashboard() -> FileResponse:
-    return FileResponse(Path(__file__).parent / "web" / "index.html")
+def dashboard() -> HTMLResponse:
+    # X.245: the page carries the configured default theme and the registered ones; web/js/theme-init.js
+    # applies the user's saved choice on top before first paint.
+    page = (Path(__file__).parent / "web" / "index.html").read_text(encoding="utf-8")
+    page = page.replace("__UI_THEME__", settings.ui_theme).replace("__UI_THEMES__", " ".join(registered_themes()))
+    return HTMLResponse(page)
 
 @app.get("/sw.js", include_in_schema=False)
 def service_worker() -> FileResponse:

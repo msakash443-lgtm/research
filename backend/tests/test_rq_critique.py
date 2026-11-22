@@ -179,3 +179,58 @@ def test_the_finer_critique_response_merges_rq_checks_alongside_the_original_fin
     }
     checks = {check["check"]: check["status"] for check in body["rq_checks"]}
     assert checks["answerability"] == "pass"
+
+
+def test_a_noun_phrase_with_a_stray_question_mark_does_not_pass_the_question_form_check():
+    for text in ("Impact.?", "The impact of X on Y?", "Leadership and performance?"):
+        assert _checks_for(text)["question_form"]["status"] == "warn", text
+
+
+def test_a_question_opening_with_a_preposition_then_an_interrogative_word_passes_the_question_form_check():
+    assert _checks_for("In what ways does trust affect remote collaboration?")["question_form"]["status"] == "pass"
+
+
+def test_two_predicates_joined_by_and_fail_the_double_barrelled_check_without_a_second_question_word():
+    check = _checks_for("Does flexible scheduling raise wages and reduce hours?")["double_barrelled"]
+    assert check["status"] == "warn"
+
+
+def test_an_empty_construct_registry_gets_human_review_not_a_pass_on_the_constructs_check():
+    check = _checks_for("How does self-efficacy predict performance?", construct_names=[])["constructs"]
+    assert check["status"] == "human_review"
+
+
+def test_a_qualitative_question_missing_the_saved_research_type_term_fails_the_framework_elements_check():
+    criteria_terms = {
+        "sample": ["teachers"], "phenomenon_of_interest": ["burnout"], "design": ["interviews"],
+        "evaluation": ["coping"], "research_type": ["phenomenology"],
+    }
+    check = _checks_for(
+        "How do teachers describe burnout and coping in interviews?",
+        research_type="qualitative", criteria_terms=criteria_terms,
+    )["framework_elements"]
+    assert check["status"] == "warn"
+    assert "research_type" in check["reason"]
+
+
+def test_a_gap_deselected_after_linking_no_longer_makes_the_finer_critique_answerable():
+    client = sign_in(f"rq-deselect-{uuid.uuid4().hex}@example.com")
+    project_id = create_project(client, title="Deselected gap project")
+    with SessionLocal() as db:
+        gap = Gap(project_id=uuid.UUID(project_id), type="empirical", statement="A gap later deselected",
+                  selected=True, created_by="test")
+        db.add(gap)
+        db.commit()
+        gap_id = gap.id
+    question = client.post(f"/api/projects/{project_id}/research-questions", json={
+        "text": "How does trust affect remote collaboration?", "type": "relational", "gap_ids": [str(gap_id)],
+    })
+    assert question.status_code == 201, question.text
+    with SessionLocal() as db:
+        db.get(Gap, gap_id).selected = False
+        db.commit()
+
+    body = client.get(f"/api/projects/{project_id}/research-questions/{question.json()['id']}/finer").json()
+    assert body["linked_gap_count"] == 0
+    assert {c["check"]: c["status"] for c in body["rq_checks"]}["answerability"] == "warn"
+    assert {i["criterion"]: i["status"] for i in body["items"]}["novel"] == "missing_gap_link"

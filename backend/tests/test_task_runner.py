@@ -159,6 +159,7 @@ def test_a_failing_failure_hook_does_not_break_the_queue(temp_handlers):
     assert _get(Task, task_id).status == TaskStatus.failed
 
 
+@pytest.mark.real_db  # the heartbeat runs on its own thread and session; one shared connection cannot
 def test_the_lease_is_renewed_while_a_handler_runs():
     task_id = _task(insert_project("Runner"), "x")
     claimed = q.claim_next_task()
@@ -166,7 +167,9 @@ def test_the_lease_is_renewed_while_a_handler_runs():
     stop = threading.Event()
     beat = threading.Thread(target=task_runner._heartbeat_loop, args=(claimed, stop, 0.05))
     beat.start()
-    time.sleep(0.3)  # long enough for the 0.05 s heartbeat loop to move the lease
+    deadline = time.monotonic() + 5
+    while _utc(_get(Task, task_id).lease_expires_at) <= before and time.monotonic() < deadline:
+        time.sleep(0.02)  # the 0.05 s heartbeat loop moves the lease
     stop.set()
     beat.join(timeout=2)
 
@@ -232,6 +235,7 @@ def test_a_failing_sweep_does_not_stop_queued_tasks_from_running(monkeypatch):
     assert len(ran) == 3  # every pass still ran a task claim, though a sweep failed each time
 
 
+@pytest.mark.real_db  # the reaper runs on its own thread and session; one shared connection cannot
 def test_a_hung_handler_does_not_stop_its_expired_task_being_reaped(temp_handlers, monkeypatch):
     # X.115: one worker whose only handler hangs. The claim loop is stuck inside the handler, so
     # only a reaper on its own thread can act on the lapsed lease; the task must not stay `running`.
@@ -252,7 +256,7 @@ def test_a_hung_handler_does_not_stop_its_expired_task_being_reaped(temp_handler
             task = _get(Task, task_id)
             if task.attempts > 0 and task.status != TaskStatus.running:  # claimed, then reaped
                 break
-            time.sleep(0.2)
+            time.sleep(0.05)
         assert task.status == TaskStatus.failed, (task.attempts, task.max_attempts, task.error)
         assert "lease expired" in task.error
         assert [info.id for info in hooked] == [task_id]  # the failure hook ran, so the record is not left in progress

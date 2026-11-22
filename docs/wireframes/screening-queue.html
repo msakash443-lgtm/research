@@ -99,8 +99,8 @@
       <button class="exc" data-act="exclude">Exclude… <kbd>E</kbd></button>
       <button class="may" data-act="maybe">Maybe <kbd>M</kbd></button>
       <span class="spacer"></span>
-      <button class="quiet" data-act="prev">← Previous <kbd>K</kbd></button>
-      <button class="quiet" data-act="next">Next → <kbd>J</kbd></button>
+      <button class="quiet" data-act="prev">← Previous <kbd>J</kbd></button>
+      <button class="quiet" data-act="next">Next → <kbd>K</kbd></button>
       <button class="quiet" data-act="undo">Undo <kbd>U</kbd></button>
       <span class="pin" title="Q3">Q3</span>
     </div>
@@ -134,11 +134,13 @@
   <ol>
     <li><span class="pin">Q1</span> <span><strong>Where do I approve?</strong> Is it clear that G3 lives in the bar at the top, that it opens only when nothing is left to screen and the AI-exclude audit is done, and that the supervisor (switch "View as") is the one who approves?</span></li>
     <li><span class="pin">Q2</span> <span><strong>Where do I see the source?</strong> Is "Open source record" (or <kbd>O</kbd>) enough at this stage, given full texts come only at the full-text stage?</span></li>
-    <li><span class="pin">Q3</span> <span><strong>How do I go back?</strong> <kbd>K</kbd>/Previous, Undo, the Decided tab and the browser Back button all work. Which do you expect to use? Is "Undo" (which adds a new entry, never erases) understood?</span></li>
+    <li><span class="pin">Q3</span> <span><strong>How do I go back?</strong> <kbd>J</kbd>/Previous, Undo, the Decided tab and the browser Back button all work. Which do you expect to use? Is "Undo" (which adds a new entry, never erases) understood?</span></li>
     <li><span class="pin">Q4</span> <span>The history keeps every decision, including undone ones. Useful here, or only in the audit export?</span></li>
     <li><span class="pin">Q5</span> <span>Bulk actions: should bulk <em>Exclude</em> exist at all at title/abstract, or only bulk Maybe?</span></li>
     <li><span class="pin">Q6</span> <span>Should the AI suggestion show <em>before</em> you decide, or only <em>after</em> (to avoid being nudged)? Try the switch in the AI card.</span></li>
     <li><span class="pin">Q7</span> <span>Conflicts: the two reviewers' reasons are hidden until both have decided. Is the conflict view clear enough to resolve from?</span></li>
+    <li><span class="pin">Q8</span> <span><strong>Discussion.</strong> The two reviewers write notes in a thread before anyone rules; notes can't be edited or deleted. Is a plain thread enough, or do you need to attach a quote from the abstract to a note? Should the discussion also be possible outside the app, with only a summary recorded?</span></li>
+    <li><span class="pin">Q9</span> <span><strong>Independent ruling.</strong> Anyone who decided the record or wrote in the discussion can't rule, and the ruling needs a written reason. Switch "View as" to Supervisor to try it. Is that the right bar for "independent third reviewer", and should the arbiter be chosen by name before the discussion starts?</span></li>
   </ol>
 </section>
 
@@ -158,7 +160,7 @@
   <div class="panel-head" id="help-title">Keyboard shortcuts</div>
   <div class="panel-body small">
     <div><kbd>I</kbd> Include · <kbd>E</kbd> Exclude (then <kbd>1</kbd>–<kbd>4</kbd> for the reason) · <kbd>M</kbd> Maybe</div>
-    <div><kbd>J</kbd> Next · <kbd>K</kbd> Previous · <kbd>U</kbd> Undo my last decision on this record</div>
+    <div><kbd>J</kbd> Previous · <kbd>K</kbd> Next · <kbd>U</kbd> Undo my last decision on this record</div>
     <div><kbd>O</kbd> Open source record · <kbd>A</kbd> Show/hide AI suggestion · <kbd>?</kbd> This help · <kbd>Esc</kbd> Close</div>
     <div class="row"><span class="spacer"></span><button id="help-close">Close</button></div>
   </div>
@@ -203,7 +205,7 @@ const RECORDS = [
 const AUDIT = [ { id:"a1", title:"Remote work and firm productivity in Bengaluru (example)", ai:"E3", conf:0.92, verdict:null },
                 { id:"a2", title:"Gendered effects of commuting time on job search (example)", ai:"E3", conf:0.81, verdict:null },
                 { id:"a3", title:"Teleworking teachers' wellbeing (example)", ai:"E2", conf:0.77, verdict:null } ];
-const CONFLICT = { title:"Flexible schedules and the motherhood penalty (example)", a:{ who:"Priya", d:"include", code:"I2" }, b:{ who:"Arun", d:"exclude", code:"E3" }, resolved:null };
+const CONFLICT = { title:"Flexible schedules and the motherhood penalty (example)", a:{ who:"Priya", d:"include", code:"I2" }, b:{ who:"Arun", d:"exclude", code:"E3" }, resolved:null, notes:[], ruling:null };
 
 const state = { tab:"todo", current:"r1", selected:new Set(), aiMode:"before", role:"owner", gate:"open", decisions:{} };
 RECORDS.forEach(r => { state.decisions[r.id] = []; });
@@ -283,16 +285,55 @@ function renderAudit(q) {
 }
 function renderConflict(q) {
   const box = document.createElement("div"); box.className = "panel-body small";
-  const c = CONFLICT;
+  const c = CONFLICT, role = state.role;
+  // Priya (owner view) and Arun are the two reviewers; Dr. Nair (supervisor view) decided nothing, so she may rule.
+  const isReviewer = role === "owner", wroteNote = c.notes.some(n => n.who === "Dr. Nair");
   box.innerHTML = `<p style="margin-top:0">Two reviewers disagreed. Reasons were hidden from each other until both decided. <span class="pin" title="Q7">Q7</span></p>
     <div style="font-weight:650;color:var(--navy)">${c.title}</div>
     <div class="conflict" style="margin:8px 0">
       <div class="panel panel-body"><div class="muted">${c.a.who}</div><span class="chip ok">Include · ${c.a.code}</span></div>
       <div class="panel panel-body"><div class="muted">${c.b.who}</div><span class="chip bad">Exclude · ${c.b.code}</span></div>
     </div>
-    ${c.resolved ? `<span class="chip plain">Resolved: ${c.resolved}</span>` : `<div class="row"><button class="quiet" data-r="Include (I2)">Resolve: Include</button><button class="quiet" data-r="Exclude (E3)">Resolve: Exclude</button></div>`}
+    <h3 style="margin:10px 0 4px">1 · Discussion between the reviewers <span class="pin" title="Q8">Q8</span></h3>
+    <p class="muted" style="margin:0 0 6px">Each reviewer writes what they think and why. Notes are kept in order and never edited or deleted. If a reviewer changes their decision, earlier notes stay on record but a new discussion is needed.</p>
+    <ol id="thread" style="margin:0 0 8px;padding-left:18px"></ol>
+    <div id="note-form"></div>
+    <h3 style="margin:12px 0 4px">2 · Independent ruling <span class="pin" title="Q9">Q9</span></h3>
+    <div id="ruling"></div>
     <p class="muted">Agreement so far (Cohen's kappa): 0.78 on 40 double-screened records.</p>`;
-  box.querySelectorAll("button").forEach(b => b.addEventListener("click", () => { c.resolved = b.dataset.r; wfToast("Conflict resolved. Both original decisions stay in the audit file."); renderAll(); }));
+  const thread = box.querySelector("#thread");
+  if (!c.notes.length) thread.innerHTML = '<li class="muted">No discussion recorded yet.</li>';
+  c.notes.forEach(n => { const li = document.createElement("li"); li.textContent = `${n.who} · ${n.when}: ${n.text}`; thread.appendChild(li); });
+  const form = box.querySelector("#note-form");
+  if (c.ruling) form.innerHTML = '<p class="muted" style="margin:0">The discussion is closed: a ruling has been recorded.</p>';
+  else if (isReviewer) {
+    form.innerHTML = `<textarea id="note-text" rows="2" style="width:100%;padding:8px;border:1px solid #cdd5dc;border-radius:6px" aria-label="Add to the discussion"></textarea><div class="row"><button class="quiet" id="note-add">Add to the discussion</button></div>`;
+    form.querySelector("#note-add").addEventListener("click", () => {
+      const t = form.querySelector("#note-text").value.trim();
+      if (!t) { wfToast("A note can't be empty."); return; }
+      c.notes.push({ who:"Priya", when:"now", text:t }); wfToast("Added. Notes can't be edited later; the audit file keeps them."); renderAll();
+    });
+  } else form.innerHTML = '<p class="muted" style="margin:0">Only the two reviewers write in the discussion. You read it before ruling.</p>';
+  const ruling = box.querySelector("#ruling");
+  if (c.ruling) {
+    ruling.innerHTML = `<span class="chip plain">Ruled by Dr. Nair: ${c.ruling.decision} (${c.ruling.code})</span><p style="margin:6px 0 0">Rationale: ${c.ruling.why}</p><p class="muted">Both reviewers' own decisions above stay as they are in the audit file.</p>`;
+  } else if (isReviewer) {
+    ruling.innerHTML = '<p class="muted" style="margin:0">You decided this record, so you can\'t rule on it. If you can\'t agree, an independent person (here Dr. Nair, who decided nothing and wrote nothing in the discussion) rules. Switch "View as" to Supervisor to try it.</p>';
+  } else if (wroteNote) {
+    ruling.innerHTML = '<p class="muted" style="margin:0">You took part in the discussion, so you can\'t rule on it.</p>';
+  } else if (!c.notes.length) {
+    ruling.innerHTML = '<p class="muted" style="margin:0">The reviewers must discuss the disagreement first. The ruling opens once there is a discussion.</p>';
+  } else {
+    ruling.innerHTML = `<div class="row"><label>Decision <select id="r-dec"><option value="include">Include (I2)</option><option value="exclude">Exclude (E3)</option><option value="maybe">Maybe</option></select></label></div>
+      <label class="small">Why (required, written in your own words)<textarea id="r-why" rows="3" style="width:100%;padding:8px;border:1px solid #cdd5dc;border-radius:6px"></textarea></label>
+      <div class="row"><button id="r-save">Record ruling</button></div>`;
+    ruling.querySelector("#r-save").addEventListener("click", () => {
+      const why = ruling.querySelector("#r-why").value.trim(), dec = ruling.querySelector("#r-dec");
+      if (!why) { wfToast("A ruling needs a written reason."); return; }
+      c.ruling = { decision: dec.options[dec.selectedIndex].text.split(" ")[0], code: dec.value === "include" ? "I2" : dec.value === "exclude" ? "E3" : "none", why };
+      c.resolved = c.ruling.decision; wfToast("Ruling recorded. Both original decisions and the discussion stay in the audit file."); renderAll();
+    });
+  }
   q.appendChild(box);
 }
 
@@ -452,7 +493,7 @@ document.addEventListener("keydown", e => {
   if (wfTyping(e) || document.querySelector("dialog[open]") || e.ctrlKey || e.metaKey || e.altKey) return;
   const k = e.key.toLowerCase();
   if (k === "escape") return closeDrawer();
-  const map = { i: () => decide("include", null, null), e: () => openExclude(null), m: () => decide("maybe", null, null), j: () => step(1), k: () => step(-1), u: undo, o: openDrawer,
+  const map = { i: () => decide("include", null, null), e: () => openExclude(null), m: () => decide("maybe", null, null), j: () => step(-1), k: () => step(1), u: undo, o: openDrawer,
     a: () => { state.aiMode = state.aiMode === "before" ? "after" : "before"; renderAll(); }, "?": () => $("help-dialog").showModal() };
   if (map[k]) { e.preventDefault(); map[k](); }
 });

@@ -68,6 +68,12 @@ def audit_actions(world):
     return [e["action"] for e in world["owner"].get(f"/api/projects/{world['pid']}/audit").json()]
 
 
+def _revealed_after_deciding(world, source_id):
+    decision = {"source_id": source_id, "decision": "maybe"}
+    assert world["owner"].post(f"/api/projects/{world['pid']}/screening/decisions", json=decision).status_code == 201
+    return world["owner"].get(f"/api/projects/{world['pid']}/screening/suggestion/{source_id}").json()
+
+
 def test_a_suggestion_is_stored_as_ai_and_shown_with_its_rationale(world):
     result, _ = run(world, [answer("include", "I1", 0.9, "Empirical study."), answer("exclude", "E1", 0.8), answer("maybe", None, 0.7)])
     assert (result.suggested, result.failed) == (3, 0)
@@ -75,7 +81,8 @@ def test_a_suggestion_is_stored_as_ai_and_shown_with_its_rationale(world):
     assert {r.decided_by for r in stored} == {"ai"} and {r.decider for r in stored} == {"agent:prescreen"}
     queue = world["owner"].get(f"/api/projects/{world['pid']}/screening/queue").json()
     assert queue["counts"] == {"include": 0, "exclude": 0, "maybe": 0, "unscreened": 3}  # still waiting for a person
-    shown = [i["ai_suggestion"] for i in queue["items"]]
+    assert all("ai_suggestion" not in i for i in queue["items"])  # withheld until the person decides (X.224)
+    shown = [_revealed_after_deciding(world, i["source_id"])["suggestion"] for i in queue["items"]]
     assert {(x["decision"], x["rationale"]) for x in shown if x["decision"] == "include"} == {("include", "Empirical study.")}
     assert sorted(x["decision"] for x in shown) == ["exclude", "include", "maybe"]
 
@@ -408,7 +415,7 @@ def test_the_queue_shows_the_stored_quote_where_it_was_found_and_a_confidence_le
         run_prescreen(db, db.get(Project, uuid.UUID(world["pid"])), llm=ByTitle([]), min_confidence=0.6, actor="tester")
 
     queue = world["owner"].get(f"/api/projects/{world['pid']}/screening/queue?stage=title_abstract").json()["items"]
-    by_title = {i["title"]: i["ai_suggestion"] for i in queue}
+    by_title = {i["title"]: _revealed_after_deciding(world, i["source_id"])["suggestion"] for i in queue}
     assert by_title["Paper 0"]["evidence_quote"] == "Workload was linked to burnout" and by_title["Paper 0"]["evidence_source"] == "abstract"
     assert by_title["Paper 0"]["confidence_level"] == "high"
     assert (by_title["Paper 1"]["evidence_quote"], by_title["Paper 1"]["evidence_source"], by_title["Paper 1"]["confidence_level"]) == ("Paper", "title", "medium")

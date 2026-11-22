@@ -7,6 +7,7 @@ from sqlalchemy import func, select, text
 from app.database import SessionLocal
 from app.main import app
 from app.models import AuditEvent, AutoExcludeAudit, Gate, GateCode, GateStatus, ProjectMember, ProjectRole, ScreeningDecision, Source, Task
+from app.screening import UNDO
 from tests.api_helpers import sign_in_user
 
 
@@ -128,7 +129,7 @@ def test_undo_without_a_decision_is_refused(world):
     assert undo(world["owner"], world["pid"], world["ids"][0]).status_code == 409
 
 
-def test_an_ai_suggestion_is_shown_but_never_counts_as_a_decision(world):
+def test_an_ai_suggestion_is_withheld_until_you_decide_and_never_counts_as_a_decision(world):
     p, s = world["pid"], world["ids"][0]
     with SessionLocal() as db:
         db.add(ScreeningDecision(
@@ -138,10 +139,15 @@ def test_an_ai_suggestion_is_shown_but_never_counts_as_a_decision(world):
         db.commit()
     data = queue(world["owner"], p)
     item = next(i for i in data["items"] if i["source_id"] == s)
-    assert item["ai_suggestion"] == {"decision": "exclude", "reason_code": "E1", "confidence": 0.9, "rationale": None, "confidence_level": "high"}
+    assert "ai_suggestion" not in item  # the queue never carries it (X.224)
+    assert world["owner"].get(f"/api/projects/{p}/screening/suggestion/{s}").status_code == 404
+    assert world["owner"].get(f"/api/projects/{p}/screening/decisions", params={"source_id": s}).json() == []
     assert data["counts"]["exclude"] == 0 and data["counts"]["unscreened"] == 3  # still waiting for a person
     # a person then decides; the AI row stays in the history and a person's decision is what counts
     assert decide(world["owner"], p, s, "include").json()["seq"] == 2
+    revealed = world["owner"].get(f"/api/projects/{p}/screening/suggestion/{s}").json()
+    assert revealed["suggestion"] == {"decision": "exclude", "reason_code": "E1", "confidence": 0.9, "rationale": None, "confidence_level": "high"}
+    assert (revealed["your_decision"], revealed["agrees"]) == ("include", False)
     counts = queue(world["owner"], p)["counts"]
     assert counts["include"] == 1 and counts["exclude"] == 0
 
@@ -306,7 +312,7 @@ def test_dual_screen_keeps_a_source_in_each_reviewers_queue_until_they_personall
     co_items = queue(world["co_author"], p)["items"]
     assert s in {i["source_id"] for i in co_items}
     # blinded: the co-author can't see the owner's decision, through the queue or the history
-    assert next(i for i in co_items if i["source_id"] == s)["ai_suggestion"] is None
+    assert "ai_suggestion" not in next(i for i in co_items if i["source_id"] == s)
     assert world["co_author"].get(f"/api/projects/{p}/screening/decisions", params={"source_id": s}).json() == []
     # but the owner can still see their own row
     own_history = world["owner"].get(f"/api/projects/{p}/screening/decisions", params={"source_id": s}).json()
@@ -323,7 +329,10 @@ def test_dual_screen_withholds_the_ai_suggestion_until_you_decide(world):
         ))
         db.commit()
     item = next(i for i in queue(world["owner"], p)["items"] if i["source_id"] == s)
-    assert item["ai_suggestion"] is None
+    assert "ai_suggestion" not in item
+    assert world["owner"].get(f"/api/projects/{p}/screening/suggestion/{s}").status_code == 404
+    assert decide(world["owner"], p, s, "include").status_code == 201
+    assert world["owner"].get(f"/api/projects/{p}/screening/suggestion/{s}").json()["suggestion"]["decision"] == "exclude"
 
 
 def test_dual_screen_agreement_counts_once_both_reviewers_decide_the_same_way(world):
@@ -531,7 +540,7 @@ def test_auto_exclude_leaves_a_low_confidence_exclude_for_a_person(world):
     data = queue(world["owner"], p)
     assert data["counts"]["ai_auto_excluded"] == 0 and data["counts"]["unscreened"] == 3
     item = next(i for i in data["items"] if i["source_id"] == s)
-    assert item["ai_suggestion"]["confidence"] == 0.5
+    assert "ai_suggestion" not in item
 
 
 def test_auto_exclude_is_off_unless_the_project_turns_it_on(world):
@@ -809,10 +818,16 @@ def _conflict(world, owner_says="include", co_author_says="maybe"):
     assert set_dual_screen(world["owner"], p).status_code == 200
     assert decide(world["owner"], p, s, owner_says).status_code == 201
     assert decide(world["co_author"], p, s, co_author_says).status_code == 201
+    assert discuss(world["owner"], p, s).status_code == 201  # the reviewers' documented discussion precedes any ruling
     return p, s
 
 
+def discuss(client, pid, source_id, body="We read the methods differently and could not agree.", **extra):
+    return client.post(f"/api/projects/{pid}/screening/discussion", json={"source_id": source_id, "body": body, **extra})
+
+
 def adjudicate(client, pid, source_id, decision="exclude", **extra):
+    extra.setdefault("note", "Ruled after reading the discussion.")
     return client.post(f"/api/projects/{pid}/screening/decisions/adjudicate", json={"source_id": source_id, "decision": decision, **extra})
 
 
@@ -890,6 +905,104 @@ def test_a_later_ruling_replaces_an_earlier_one(world):
     assert flow["included"] == 1 and flow["excluded"] == 0
 
 
+def _undisclosed_conflict(world):
+    """Dual-screen on; owner and co-author disagree about Paper 0; no discussion yet."""
+    p, s = world["pid"], world["ids"][0]
+    set_dual_screen(world["owner"], p)
+    decide(world["owner"], p, s, "include")
+    decide(world["co_author"], p, s, "maybe")
+    return p, s
+
+
+def test_a_ruling_is_refused_until_the_reviewers_have_documented_their_discussion(world):
+    p, s = _undisclosed_conflict(world)
+    refused = adjudicate(world["supervisor"], p, s, "include")
+    assert refused.status_code == 409 and "discuss" in refused.json()["detail"]
+    assert discuss(world["co_author"], p, s).status_code == 201
+    assert adjudicate(world["supervisor"], p, s, "include").status_code == 201
+
+
+def test_a_ruling_without_a_written_rationale_is_refused(world):
+    p, s = _conflict(world)
+    assert adjudicate(world["supervisor"], p, s, "include", note="  ").status_code == 422
+    assert adjudicate(world["supervisor"], p, s, "include").status_code == 201
+
+
+def test_only_a_reviewer_holding_a_side_of_the_conflict_can_add_to_the_discussion(world):
+    p, s = _undisclosed_conflict(world)
+    assert discuss(world["supervisor"], p, s).status_code == 403  # an arbiter must stay out of it
+    assert discuss(world["owner"], p, s, stage="full_text").status_code == 409  # no conflict at that stage
+    assert discuss(world["owner"], p, s, body="   ").status_code == 422
+
+
+def test_discussion_is_only_possible_while_the_reviewers_disagree(world):
+    p, s = world["pid"], world["ids"][0]
+    decide(world["owner"], p, s, "include")
+    assert discuss(world["owner"], p, s).status_code == 409  # dual-screen is off
+    set_dual_screen(world["owner"], p)
+    decide(world["co_author"], p, s, "include")
+    assert discuss(world["owner"], p, s).status_code == 409  # they agree
+
+
+def test_a_supervisor_who_decided_and_then_took_the_decision_back_still_cannot_rule_on_it(world):
+    # A supervisor cannot record a decision through the API (WRITE_ROLES is owner and co-author), so their earlier
+    # history is seeded directly: they decided as a co-author before being re-assigned, then took the decision back.
+    p, s = _conflict(world)
+    with SessionLocal() as db:
+        for seq, decision in ((3, "include"), (4, UNDO)):
+            db.add(ScreeningDecision(project_id=uuid.UUID(p), source_id=uuid.UUID(s), stage="title_abstract", seq=seq,
+                                     decision=decision, decided_by="human", decider=world["supervisor"].user_id))
+        db.commit()
+    refused = adjudicate(world["supervisor"], p, s, "include")  # no current decision, but they were involved
+    assert refused.status_code == 409 and "decided this source yourself" in refused.json()["detail"]
+
+
+def test_a_changed_answer_makes_the_earlier_discussion_stale_and_the_ruling_waits_for_a_new_one(world):
+    p, s = _conflict(world)
+    undo(world["owner"], p, s)
+    decide(world["owner"], p, s, "include")  # same disagreement again, but the old discussion predates it
+    refused = adjudicate(world["supervisor"], p, s, "include")
+    assert refused.status_code == 409 and "discuss" in refused.json()["detail"]
+    assert discuss(world["owner"], p, s, body="Second look: still apart.").status_code == 201
+    assert adjudicate(world["supervisor"], p, s, "include").status_code == 201
+
+
+def test_discussion_is_visible_to_the_two_reviewers_and_arbiters_only_and_notes_are_kept(world):
+    p, s = _conflict(world)
+    discuss(world["co_author"], p, s, body="I think the sample is not adults.")
+    def notes(who):
+        return who.get(f"/api/projects/{p}/screening/discussion", params={"source_id": s}).json()
+    assert [n["body"] for n in notes(world["owner"])] == ["We read the methods differently and could not agree.", "I think the sample is not adults."]
+    assert len(notes(world["co_author"])) == 2 and len(notes(world["supervisor"])) == 2
+    assert notes(world["reviewer"]) == []  # a third reviewer who has not decided stays blind
+    adjudicate(world["supervisor"], p, s, "include")
+    assert len(notes(world["owner"])) == 2  # the record stays after the ruling
+    with SessionLocal() as db:
+        event = db.scalars(
+            select(AuditEvent).where(AuditEvent.action == "screening.adjudicated", AuditEvent.project_id == uuid.UUID(p))
+            .order_by(AuditEvent.timestamp)
+        ).all()[-1]
+        assert event.payload_json["discussion_notes"] == 2
+
+
+def test_discussion_notes_say_whether_they_still_belong_to_the_disagreement_as_it_stands(world):
+    p, s = _conflict(world)
+    listed = lambda: world["supervisor"].get(f"/api/projects/{p}/screening/discussion", params={"source_id": s}).json()
+    assert [n["current"] for n in listed()] == [True]
+    undo(world["owner"], p, s)
+    decide(world["owner"], p, s, "include")
+    discuss(world["owner"], p, s, body="Second look: still apart.")
+    assert [n["current"] for n in listed()] == [False, True]
+
+
+def test_the_agreement_report_carries_the_rulings_written_rationale(world):
+    p, s = _conflict(world)
+    assert adjudicate(world["supervisor"], p, s, "include", note="Adult sample per the methods.").status_code == 201
+    conflict = world["owner"].get(f"/api/projects/{p}/screening/agreement").json()["conflicts"][0]
+    assert conflict["adjudication"]["note"] == "Adult sample per the methods."
+    assert all("note" not in d or d["note"] is None for d in conflict["decisions"])
+
+
 def test_a_locked_screening_cannot_be_ruled_on(world):
     p, s = _conflict(world)
     with SessionLocal() as db:
@@ -902,6 +1015,7 @@ def test_a_locked_screening_cannot_be_ruled_on(world):
     assert adjudicate(world["supervisor"], p, s, "include").status_code == 409
 
 
+@pytest.mark.slow  # pages through 200+ records
 def test_queue_pages_through_more_than_one_page_and_reports_every_pending_record(world):
     # M2.3.4: the screen used to load only the first 200 records and then say "Nothing left to screen".
     owner, pid = world["owner"], world["pid"]
@@ -923,3 +1037,81 @@ def test_queue_pages_through_more_than_one_page_and_reports_every_pending_record
     assert set(seen) == everything
     decide(owner, pid, world["ids"][0], "include")
     assert queue(owner, pid)["pending"] == 204
+
+
+def test_the_included_set_for_g3_lists_only_settled_full_text_includes_and_counts_what_still_waits(world):
+    p, owner, ids = world["pid"], world["owner"], world["ids"]
+    for source_id in ids:
+        assert decide(owner, p, source_id, "include", stage="title_abstract").status_code == 201
+    assert decide(owner, p, ids[0], "include", stage="full_text").status_code == 201
+    assert decide(owner, p, ids[1], "exclude", reason_code="E2", stage="full_text").status_code == 201
+    body = world["reviewer"].get(f"/api/projects/{p}/screening/included").json()
+    assert [item["source_id"] for item in body["items"]] == [ids[0]]
+    assert body["items"][0]["title"] == "Paper 0"
+    assert (body["passed_title_abstract"], body["awaiting_full_text"], body["locked"]) == (3, 1, False)
+    assert set_dual_screen(owner, p).status_code == 200
+    # Under dual-screen one reviewer's decision is not settled, so it is not shown as included.
+    assert owner.get(f"/api/projects/{p}/screening/included").json()["items"] == []
+
+
+# ---- X.170: a final full-text include queues the licence-checked open-access fetch ---------------
+
+def _enable_unpaywall(monkeypatch):
+    import app.routers.screening as screening_router
+
+    monkeypatch.setattr(screening_router, "unpaywall_unavailable_reason", lambda: None)
+    monkeypatch.setattr(screening_router, "is_enabled", lambda name, enabled, scraping: False)
+
+
+def _fetch_tasks(pid):
+    with SessionLocal() as db:
+        return db.scalars(select(Task).where(Task.project_id == uuid.UUID(pid), Task.type.in_(("fulltext_fetch", "arxiv_fulltext_fetch")))).all()
+
+
+def _give_doi(source_id, doi="10.1000/x170"):
+    with SessionLocal() as db:
+        db.get(Source, uuid.UUID(source_id)).doi = doi
+        db.commit()
+
+
+def test_a_doi_source_finally_included_at_full_text_queues_one_fetch_even_if_decided_again(world, monkeypatch):
+    _enable_unpaywall(monkeypatch)
+    p, s = world["pid"], world["ids"][0]
+    _give_doi(s)
+    decide(world["owner"], p, s, "include")
+    assert decide(world["owner"], p, s, "include", stage="full_text").status_code == 201
+    assert decide(world["owner"], p, s, "include", stage="full_text").status_code == 201
+    (task,) = _fetch_tasks(p)
+    assert task.payload["automatic"] is True and task.payload["source_id"] == s
+    with SessionLocal() as db:
+        events = db.scalars(select(AuditEvent).where(AuditEvent.action == "source.fulltext_automatically_requested", AuditEvent.project_id == uuid.UUID(p))).all()
+        assert len(events) == 1 and events[0].payload_json["task_id"] == str(task.id)
+
+
+def test_no_fetch_is_queued_for_an_exclusion_a_title_stage_include_or_a_source_without_doi(world, monkeypatch):
+    _enable_unpaywall(monkeypatch)
+    p, ids = world["pid"], world["ids"]
+    _give_doi(ids[0])
+    _give_doi(ids[1], "10.1000/x170b")
+    decide(world["owner"], p, ids[0], "include")
+    decide(world["owner"], p, ids[1], "include")
+    decide(world["owner"], p, ids[2], "include")
+    decide(world["owner"], p, ids[0], "exclude", reason_code="E2", stage="full_text")
+    decide(world["owner"], p, ids[2], "include", stage="full_text")  # no DOI, no arXiv id: manual upload remains
+    assert _fetch_tasks(p) == []
+
+
+def test_under_dual_screening_the_fetch_waits_for_agreement_then_for_a_ruling(world, monkeypatch):
+    _enable_unpaywall(monkeypatch)
+    p, s = world["pid"], world["ids"][0]
+    _give_doi(s)
+    set_dual_screen(world["owner"], p)
+    for client in (world["owner"], world["co_author"]):
+        assert decide(client, p, s, "include").status_code == 201
+    assert decide(world["owner"], p, s, "include", stage="full_text").status_code == 201
+    assert _fetch_tasks(p) == []  # one reviewer is not a final decision
+    assert decide(world["co_author"], p, s, "maybe", stage="full_text").status_code == 201
+    assert _fetch_tasks(p) == []  # conflict
+    assert discuss(world["owner"], p, s, stage="full_text").status_code == 201
+    assert adjudicate(world["supervisor"], p, s, "include", stage="full_text").status_code == 201
+    assert len(_fetch_tasks(p)) == 1

@@ -56,5 +56,13 @@
   "qual_code_suggestions@1": {
     "eval": "none",
     "reason": "Qualitative code proposals for one participant excerpt (M5.5.2, X.121). No gold dataset type exists for qualitative codes; every suggestion stays pending until a person accepts or rejects it, and the reply is schema-checked in code before it is stored."
+  },
+  "gap_suggestions@1": {
+    "eval": "none",
+    "reason": "Gap proposals the researcher accepts or rejects one by one; every cited source id is checked in code against the verified project sources, and there is no gold dataset type for gaps."
+  },
+  "rq_suggestions@1": {
+    "eval": "none",
+    "reason": "Research-question proposals the researcher edits before use; cited source ids are checked in code, and there is no gold dataset type for research questions."
   }
 }

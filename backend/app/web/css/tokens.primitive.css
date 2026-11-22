@@ -1,0 +1,21 @@
+/* Primitive design tokens (X.243): theme-independent scales. Themes (css/themes/*.css) set the semantic tokens;
+   components use semantic tokens first and these scales for spacing, weight and motion. */
+:root {
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 24px; --space-6: 32px; --space-7: 48px; --space-8: 64px;
+  --font-weight-regular: 400; --font-weight-medium: 550; --font-weight-bold: 700;
+  --font-size-xs: calc(var(--font-size-sm) - 1px);
+  --radius-pill: 999px;
+  --border-width: 1px;
+  --focus-ring-width: 3px; --focus-ring-offset: 2px;
+  --control-min-size: 44px;
+  --duration-fast: 120ms; --duration-base: 200ms;
+  --ease-standard: cubic-bezier(.2, 0, 0, 1);
+  /* Editor provenance tints (X.248): derived from each theme's semantic tokens, so they follow theme and mode. */
+  --color-prov-typed: var(--color-accent-soft);
+  --color-prov-pasted: var(--color-warning-bg);
+  --color-prov-from-note: var(--color-info-bg);
+  --color-prov-ai: var(--color-success-bg);
+}
+@media (prefers-reduced-motion: reduce) {
+  :root { --duration-fast: 0ms; --duration-base: 0ms; }
+}

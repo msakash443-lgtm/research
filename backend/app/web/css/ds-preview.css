@@ -1,0 +1,54 @@
+/* D0 reference-page styles. Components use semantic tokens only; X.244 promotes these to components.css. */
+.ds { font-family: var(--font-body); font-size: var(--font-size-base); line-height: var(--line-height); color: var(--color-text); background: var(--color-bg); }
+.ds *, .ds *::before, .ds *::after { box-sizing: border-box; }
+.ds h1, .ds h2, .ds h3 { font-family: var(--font-heading); font-weight: var(--heading-weight); letter-spacing: var(--heading-tracking); margin: 0 0 8px; line-height: 1.15; }
+.ds h1 { font-size: var(--font-size-h1); } .ds h2 { font-size: var(--font-size-h2); } .ds h3 { font-size: var(--font-size-h3); }
+.ds p { margin: 0 0 var(--gap); }
+.ds .eyebrow { color: var(--color-accent); font-size: var(--font-size-sm); letter-spacing: .12em; text-transform: uppercase; font-weight: 700; margin: 0 0 6px; }
+.ds .muted { color: var(--color-text-muted); }
+.ds a { color: var(--color-accent); }
+.ds code { font-family: var(--font-mono); font-size: .92em; }
+.ds .stack { display: grid; gap: var(--gap); }
+.ds .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+.ds .btn { font: inherit; font-weight: 650; cursor: pointer; border: 1px solid var(--color-accent); background: var(--color-accent); color: var(--color-accent-fg); border-radius: var(--radius-md); padding: var(--pad-y) var(--pad-x); }
+.ds .btn:hover { background: var(--color-accent-hover); border-color: var(--color-accent-hover); }
+.ds .btn.quiet { background: transparent; color: var(--color-accent); border-color: var(--color-border-strong); }
+.ds .btn.quiet:hover { background: var(--color-accent-soft); }
+.ds .btn:disabled { opacity: .55; cursor: not-allowed; }
+.ds .btn:focus-visible, .ds input:focus-visible, .ds select:focus-visible, .ds textarea:focus-visible, .ds a:focus-visible { outline: 3px solid var(--color-focus); outline-offset: 2px; }
+
+.ds .card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: calc(var(--gap) * 1.4); box-shadow: var(--shadow-md); }
+.ds .chip { display: inline-flex; padding: 2px 10px; border-radius: 999px; font-size: var(--font-size-sm); font-weight: 700; border: 1px solid var(--color-border); background: var(--color-surface-alt); color: var(--color-text); }
+.ds .chip.accent { background: var(--color-accent-soft); color: var(--color-accent); border-color: var(--color-accent); }
+.ds .chip.danger { background: var(--color-danger-bg); color: var(--color-danger-fg); border-color: var(--color-danger-fg); }
+.ds .chip.warning { background: var(--color-warning-bg); color: var(--color-warning-fg); border-color: var(--color-warning-fg); }
+.ds .chip.success { background: var(--color-success-bg); color: var(--color-success-fg); border-color: var(--color-success-fg); }
+.ds .chip.info { background: var(--color-info-bg); color: var(--color-info-fg); border-color: var(--color-info-fg); }
+
+.ds .notice { border-left: 4px solid currentColor; border-radius: var(--radius-sm); padding: var(--pad-y) var(--pad-x); font-size: var(--font-size-sm); }
+.ds .notice.danger { background: var(--color-danger-bg); color: var(--color-danger-fg); }
+.ds .notice.warning { background: var(--color-warning-bg); color: var(--color-warning-fg); }
+.ds .notice.success { background: var(--color-success-bg); color: var(--color-success-fg); }
+.ds .notice.info { background: var(--color-info-bg); color: var(--color-info-fg); }
+
+.ds label.field { display: grid; gap: 4px; font-size: var(--font-size-sm); font-weight: 650; }
+.ds input[type=text], .ds select, .ds textarea { font: inherit; color: var(--color-text); background: var(--color-surface); border: 1px solid var(--color-border-strong); border-radius: var(--radius-md); padding: var(--pad-y) calc(var(--pad-x) * .75); width: 100%; }
+.ds table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
+.ds th, .ds td { text-align: left; padding: calc(var(--pad-y) * .8) var(--pad-x); border-bottom: 1px solid var(--color-border); }
+.ds th { color: var(--color-text-muted); font-weight: 700; background: var(--color-surface-alt); }
+
+/* Page chrome and token table */
+.ds-page { padding: 24px; display: grid; gap: 28px; max-width: 1180px; margin: 0 auto; }
+.ds-controls { display: flex; flex-wrap: wrap; gap: 16px; align-items: end; padding: 14px; border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); }
+.ds-controls label { display: grid; gap: 4px; font-size: var(--font-size-sm); font-weight: 650; }
+.ds-compare { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 14px; }
+.ds-cell { border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: 16px; }
+.ds-cell > .ds-label { font-family: var(--font-mono); font-size: 12px; margin: 0 0 10px; color: var(--color-text-muted); }
+.ds-tokens { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 6px 18px; }
+.ds-token { display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 12px; }
+.ds-swatch { width: 22px; height: 22px; border-radius: var(--radius-sm); border: 1px solid var(--color-border-strong); flex: none; }
+body.ds { margin: 0; min-height: 100vh; }
+.ds-cell, .ds-sample { font-family: var(--font-body); font-size: var(--font-size-base); line-height: var(--line-height); color: var(--color-text); background: var(--color-bg); }
+.ds-sample { padding: 16px; border: 1px solid var(--color-border); border-radius: var(--radius-lg); }
+.ds-cell { background: var(--color-bg); }

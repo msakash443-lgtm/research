@@ -111,3 +111,13 @@ test("Sources offers Ask as optional exploration instead of the required next st
   assert.equal(next.children[1].href, "#/p/project-3/ask");
 });
 
+
+test("the G3 approval condition links to Approvals with an explicit review label", async () => {
+  const { conditionFixLink } = await import("../steps/frame.js");
+  const ctx = { project: { id: "project-3" } };
+  assert.deepEqual(conditionFixLink(ctx, { fix: "Screening: approve G3" }), {
+    href: "#/p/project-3/approvals",
+    text: "Review screening approval",
+  });
+  assert.deepEqual(conditionFixLink(ctx, { fix: "Screening: conflict queue" }), { href: "#/p/project-3/screen", text: "Fix this" });
+});

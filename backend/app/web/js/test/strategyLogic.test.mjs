@@ -11,18 +11,33 @@ import {
   landscapeScanPath,
   researchQuestionPayload,
   selectedGapIds,
+  objectiveBody,
   splitScopeContext,
 } from "../strategyLogic.js";
 
-test("Scope separates active objectives from other context without surfacing ideas twice", () => {
-  const split = splitScopeContext([
-    { id: "idea", kind: "idea", content: "Project idea" },
-    { id: "objective", kind: "objective", content: "Measure the outcome" },
-    { id: "decision", kind: "decision", content: "Use interviews" },
-    { id: "retired", kind: "objective", content: "Old objective", retired_at: "2026-01-01" },
-  ]);
+test("Scope takes objectives from the objectives records and never shows a legacy objective context item", () => {
+  const split = splitScopeContext(
+    [
+      { id: "idea", kind: "idea", content: "Project idea" },
+      { id: "legacy", kind: "objective", content: "Legacy copy" },
+      { id: "decision", kind: "decision", content: "Use interviews" },
+    ],
+    [
+      { id: "objective", statement: "Measure the outcome" },
+      { id: "retired", statement: "Old objective", retired_at: "2026-01-01" },
+    ],
+  );
   assert.deepEqual(split.objectives.map((item) => item.id), ["objective"]);
   assert.deepEqual(split.context.map((item) => item.id), ["decision"]);
+});
+
+test("An objective correction sends only the changed fields, and blank optional fields become null", () => {
+  const existing = { statement: "Map output", measure: "Papers per year", deliverable: null, target_date: "2027-01-01", rationale: null };
+  const values = { statement: "Map output ", measure: "", deliverable: "", target_date: "2027-01-01", rationale: "" };
+  assert.deepEqual(objectiveBody(existing, values), { measure: null });
+  assert.deepEqual(objectiveBody(null, values), {
+    statement: "Map output", rationale: null, measure: null, deliverable: null, target_date: "2027-01-01",
+  });
 });
 
 test("Idea brief saves preserve every feasibility item and leave unanswered items explicitly unsure", () => {

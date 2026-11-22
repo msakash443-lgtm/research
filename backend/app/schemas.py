@@ -638,6 +638,7 @@ class JournalCandidateCreate(BaseModel):
     review_days: int | None = Field(default=None, ge=0)
     source_url: HttpUrl
     checked_at: str = Field(min_length=1, max_length=64)
+    issns: list[str] = Field(default_factory=list, max_length=20)
 
 
 class JournalCandidateRead(JournalCandidateCreate):

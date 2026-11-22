@@ -145,3 +145,15 @@ def test_contradictions_route_returns_a_conflict_for_opposing_verified_findings_
     findings = body["conflicts"][0]["findings"]
     assert {finding["source_id"] for finding in findings} == {first_source, second_source}
     assert {finding["quote"] for finding in findings} == {"Retention rose", "Retention fell"}
+
+
+def test_a_paper_reporting_opposite_directions_for_two_populations_is_compared_on_both_findings():
+    papers = [_paper("a", [_finding("Training", "Retention", "positive", "Nurses"),
+                           _finding("Training", "Retention", "negative", "Teachers")], "Retention by group"),
+              _paper("b", [_finding("Training", "Retention", "negative", "Nurses")], "Retention fell"),
+              _paper("c", [_finding("Training", "Retention", "positive", "Teachers")], "Retention rose")]
+    result = detect({"papers": papers})
+    pairs = {frozenset((f["source_id"], f["direction"]) for f in group["findings"]) for group in result["conflicts"]}
+    assert frozenset({("a", "positive"), ("b", "negative")}) in pairs
+    assert frozenset({("a", "negative"), ("c", "positive")}) in pairs
+    assert all(len({f["source_id"] for f in group["findings"]}) == 2 for group in result["conflicts"])

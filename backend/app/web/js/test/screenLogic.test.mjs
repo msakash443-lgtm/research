@@ -1,7 +1,7 @@
 // Run with: node --test backend/app/web/js/test   (no packages; pytest does not run these)
 import test from "node:test";
 import assert from "node:assert/strict";
-import { afterDecision, authorsText, confidenceText, countsText, fetchEntireQueue, keyAction, OTHER_EXCLUSION_REASON, runBulk, safeLink, SCREENING_STAGES, screeningStageLabel, splitAtQuote, typedReason } from "../steps/screenLogic.js";
+import { afterDecision, authorsText, confidenceText, countsText, fetchEntireQueue, keyAction, OTHER_EXCLUSION_REASON, runBulk, safeLink, SCREENING_STAGES, screeningStageLabel, typedReason } from "../steps/screenLogic.js";
 
 test("the typed any-other exclusion reason uses a distinct auditable code", () => {
   assert.equal(OTHER_EXCLUSION_REASON, "E_OTHER");
@@ -42,6 +42,13 @@ test("a decision raises its own count, lowers unscreened, floors at zero and lea
   assert.deepEqual(afterDecision(before, "exclude"), { include: 1, unscreened: 1, exclude: 1 });
   assert.deepEqual(before, { include: 1, unscreened: 2 });
   assert.equal(afterDecision({ unscreened: 0 }, "maybe").unscreened, 0);
+});
+
+test("J goes to the previous record and K to the next, in either case", () => {
+  assert.equal(keyAction({ key: "j" }), "previous");
+  assert.equal(keyAction({ key: "J" }), "previous");
+  assert.equal(keyAction({ key: "k" }), "next");
+  assert.equal(keyAction({ key: "K" }), "next");
 });
 
 test("keys map to actions in either case", () => {
@@ -122,26 +129,37 @@ test("a record that appears on two pages is kept once, and the next page is aske
   assert.deepEqual(calls, [0, 200, 400]);
 });
 
-test("the AI's quote is found in the record ignoring case and line breaks, and split around the match", () => {
-  const text = "We surveyed 200 nurses.\nWorkload was linked to burnout in every ward.";
-  assert.deepEqual(splitAtQuote(text, "workload was LINKED to burnout"),
-    ["We surveyed 200 nurses.\n", "Workload was linked to burnout", " in every ward."]);
-  assert.deepEqual(splitAtQuote(text, "nurses. workload")[1], "nurses.\nWorkload");
-});
-
-test("a quote that is not in the text, or is empty, marks nothing", () => {
-  assert.equal(splitAtQuote("Workload was linked to burnout", "Workload caused burnout"), null);
-  assert.equal(splitAtQuote("Workload", "   "), null);
-  assert.equal(splitAtQuote("", "x"), null);
-});
-
-test("quote characters that mean something in a pattern are matched as plain text", () => {
-  assert.deepEqual(splitAtQuote("Effect (n=20) was small. Done", "(n=20) was small."), ["Effect ", "(n=20) was small.", " Done"]);
-  assert.equal(splitAtQuote("abc", ".*"), null);
-});
-
 test("the confidence line names the level and the percentage, and is empty without a level", () => {
   assert.equal(confidenceText("high", 0.9), "High confidence (90%)");
   assert.equal(confidenceText("low", undefined), "Low confidence");
   assert.equal(confidenceText(undefined, 0.9), "");
+});
+
+test("preprints are grouped apart only when peer-reviewed-only is on, keeping positions into the list", async () => {
+  const { groupByPreprint } = await import("../steps/screenLogic.js");
+  const items = [{ preprint: true }, { preprint: false }, { preprint: true }];
+  assert.deepEqual(groupByPreprint(items, false), [{ title: null, indices: [0, 1, 2] }]);
+  const groups = groupByPreprint(items, true);
+  assert.deepEqual(groups.map((g) => g.indices), [[1], [0, 2]]);
+  assert.match(groups[1].title, /not peer reviewed/);
+  assert.deepEqual(groupByPreprint([{ preprint: true }], true).map((g) => g.title === null), [false]);
+});
+
+test("the screening view is active with records, unloaded when the server counts more, completed or empty otherwise", async () => {
+  const { completionMode } = await import("../steps/screenLogic.js");
+  assert.equal(completionMode({ items: [{}], pending: 1, counts: {} }), "active");
+  assert.equal(completionMode({ items: [], pending: 3, counts: { unscreened: 3 } }), "unloaded");
+  assert.equal(completionMode({ items: [], pending: 0, counts: { include: 2, exclude: 1, unscreened: 0 } }), "completed");
+  assert.equal(completionMode({ items: [], pending: 0, counts: { unscreened: 2, conflict: 0 } }), "completed");
+  assert.equal(completionMode({ items: [], pending: 0, counts: { include: 0, exclude: 0, maybe: 0, unscreened: 0 } }), "empty");
+});
+
+test("completion routes: title/abstract continues to full text, full text goes to Approvals, empty has no route", async () => {
+  const { completionView } = await import("../steps/screenLogic.js");
+  assert.deepEqual(completionView("completed", "title_abstract").primary, { label: "Continue to full-text screening", action: "stage", stage: "full_text" });
+  assert.equal(completionView("completed", "full_text").primary.action, "approvals");
+  assert.match(completionView("completed", "full_text", { locked: true }).text, /G3 is approved/);
+  assert.match(completionView("completed", "full_text", { othersPending: true }).text, /conflict is open/);
+  assert.equal(completionView("empty", "title_abstract").primary, null);
+  assert.equal(completionView("unloaded", "full_text").text, null);
 });

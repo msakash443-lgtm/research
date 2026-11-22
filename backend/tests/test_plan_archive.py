@@ -101,3 +101,52 @@ def test_archive_clips_long_titles_and_handles_missing_priority():
 def test_archive_rejects_text_without_the_task_sections():
     with pytest.raises(ValueError, match="## 2"):
         plan_archive.archive("## 0. Legend\n")
+
+
+STUB = " — done; " + plan_archive.STUB_MARK
+COLLAPSIBLE = f"""## 2. Tasks
+### M1 — Literature · status: `[x]`
+- [x] **M1.1** First — `P1`{STUB}
+- [x] **M1.2** Parent — `P2`{STUB}
+  - [ ] **M1.2.1** Open child
+- [x] **M1.3** Third — `P1`{STUB}
+- [?] **M1.4** In review
+- [-] **M1.5** Dropped — `P3` — dropped; {plan_archive.STUB_MARK}
+### M2 — Screening
+- [x] **M2.1** Other milestone — `P1`{STUB}
+## 3. Decisions
+"""
+ARCHIVED = "- [x] **M1.1** First\\n- [x] **M1.2** Parent\\n- [x] **M1.3** Third\\n- [x] **M2.1** Other\\n".replace("\\n", "\n")
+
+
+def test_collapse_replaces_closed_stubs_with_one_pointer_that_lists_their_ids():
+    result = plan_archive.collapse(COLLAPSIBLE, ARCHIVED, ("M1",))
+    assert result.collapsed_ids == ["M1.1", "M1.3"]
+    assert "(2). IDs: M1.1, M1.3" in result.plan_text
+    assert "**M1.1**" not in result.plan_text.replace("IDs: M1.1", "")
+    assert result.missing_from_archive == []
+
+
+def test_collapse_keeps_open_review_and_dropped_lines_and_a_parent_with_an_open_child():
+    text = plan_archive.collapse(COLLAPSIBLE, ARCHIVED, ("M1",)).plan_text
+    for kept in ("- [x] **M1.2** Parent", "  - [ ] **M1.2.1** Open child", "- [?] **M1.4** In review", "- [-] **M1.5** Dropped"):
+        assert kept in text
+    assert "- [x] **M2.1** Other milestone" in text  # a milestone that was not named is untouched
+
+
+def test_collapse_is_repeatable_and_adds_later_closures_to_the_same_pointer():
+    first = plan_archive.collapse(COLLAPSIBLE, ARCHIVED, ("M1",))
+    assert plan_archive.collapse(first.plan_text, ARCHIVED, ("M1",)).plan_text == first.plan_text
+    later = first.plan_text.replace("- [?] **M1.4** In review", f"- [x] **M1.4** In review{STUB}")
+    second = plan_archive.collapse(later, ARCHIVED + "- [x] **M1.4** In review\n", ("M1",))
+    assert "(3). IDs: M1.1, M1.3, M1.4" in second.plan_text
+
+
+def test_collapse_reports_a_stub_whose_id_is_not_in_the_archive_so_no_id_is_lost():
+    result = plan_archive.collapse(COLLAPSIBLE, "- [x] **M1.1** First\n", ("M1",))
+    assert [line.split("**")[1] for line in result.missing_from_archive] == ["M1.3"]
+
+
+def test_collapse_names_a_missing_milestone_instead_of_silently_doing_nothing():
+    with pytest.raises(ValueError, match="### M9"):
+        plan_archive.collapse(COLLAPSIBLE, ARCHIVED, ("M9",))

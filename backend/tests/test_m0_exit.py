@@ -33,7 +33,9 @@ def _trail(project_id):
     """The project's audit events in the order they were written."""
     with SessionLocal() as db:
         rows = db.scalars(
-            select(AuditEvent).where(AuditEvent.project_id == uuid.UUID(project_id)).order_by(text("ctid"))  # insertion order; the table is append-only
+            # The clock time each row was written (the test schema's now() reads the clock); ctid only breaks a tie,
+            # because after earlier tests roll back and autovacuum frees their rows, a new row can land in an older slot.
+            select(AuditEvent).where(AuditEvent.project_id == uuid.UUID(project_id)).order_by(AuditEvent.timestamp, text("ctid"))
         ).all()
         return [(e.action, e.actor, e.payload_json) for e in rows]
 

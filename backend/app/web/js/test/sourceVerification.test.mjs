@@ -17,3 +17,17 @@ test("source verification labels distinguish automatic checks from human review 
   assert.match(revoked, /Metadata not verified/);
   assert.match(revoked, /metadata conflict requires review/);
 });
+
+test("a preprint source says it is not peer reviewed", () => {
+  assert.match(verificationText({ metadata_verified: true, quality_flags: ["preprint"] }), /Preprint, not peer reviewed/);
+  assert.doesNotMatch(verificationText({ metadata_verified: true, quality_flags: [] }), /Preprint/);
+});
+
+test("a predatory-list venue match is shown as a warning with its list and reason, not a block", () => {
+  const text = verificationText({
+    metadata_verified: true, quality_flags: ["predatory_venue_match"],
+    verification: { verdict: "verified", venue_check: { list: "https://lists.example/p", reason: "issn", issn: "1234-5678" } },
+  });
+  assert.match(text, /WARNING: venue matches a supplied predatory list \(https:\/\/lists\.example\/p; ISSN 1234-5678\)/);
+  assert.doesNotMatch(text, /do not cite/i);
+});

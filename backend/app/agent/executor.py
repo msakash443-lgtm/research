@@ -18,6 +18,9 @@ from app.agent.context import select_agent_context
 from app.agent.llm import LLMConfigurationError, LLMResponseError
 from app.ai_controls import AI_OFF_MESSAGE, llm_for_project
 from app.ai_item_locks import CONTEXT_ITEM_KIND, locked_ids, locked_uuids
+from app.objective_context import live_objective_items
+from app.source_flags import PREPRINT_LABEL, is_preprint
+from app.venue_check import PREDATORY_FLAG
 from app.output_schemas import EVIDENCE_SYNTHESIS_SCHEMA
 from app.prompt_registry import Prompt, load_prompt
 from app.answer_guard import check_answer
@@ -89,6 +92,12 @@ def _source_snapshot(source: Source) -> dict[str, Any]:
         "verified": bool(source.metadata_verified),
         "quality_flags": list(source.quality_flags or []),
         "retracted": "retracted" in (source.quality_flags or []),
+        # A service flagged it a preprint (X.196): informational unless the project is peer-reviewed-only, when
+        # the run sets `preprint_blocked` and the citation guard rejects any citation of it.
+        "preprint": is_preprint(source),
+        "preprint_blocked": False,
+        # The venue/ISSN matched the owner-supplied predatory list (X.201): a warning for a person, never a block.
+        "predatory_venue": PREDATORY_FLAG in (source.quality_flags or []),
         # What cleaning removed or noticed (hidden text, chat markup, instruction-like phrases).
         "flags": sorted({flag for part in parts for flag in part.flags}),
     }
@@ -178,6 +187,8 @@ def _citation_problem(answer: str, sources: list[dict[str, Any]]) -> tuple[int, 
             return index, "unknown_citation_index"
         if sources[index - 1].get("retracted"):
             return index, "retracted_citation"
+        if sources[index - 1].get("preprint_blocked"):
+            return index, "preprint_citation"
         if not sources[index - 1].get("verified"):
             return index, "unverified_citation"
     return None
@@ -403,6 +414,8 @@ def _source_status(source: dict[str, Any], *, explicit_verification: bool = Fals
         status = "added by a researcher"
     if source.get("retracted"):
         status = "RETRACTED — do not cite"
+    elif source.get("preprint_blocked"):
+        status = f"PREPRINT ({PREPRINT_LABEL}); this project allows peer-reviewed sources only — do not cite"
     elif explicit_verification:
         # v3+: an explicit, uniform signal the model can key off directly (plan M1.10.5).
         status += (
@@ -410,6 +423,10 @@ def _source_status(source: dict[str, Any], *, explicit_verification: bool = Fals
             if source.get("verified")
             else " | NOT VERIFIED — do not cite this source."
         )
+    if source.get("preprint") and not source.get("retracted") and not source.get("preprint_blocked"):
+        status += f" | PREPRINT — {PREPRINT_LABEL}; say so when citing it"
+    if source.get("predatory_venue"):
+        status += " | WARNING: this source's venue matches a predatory-journal list supplied by the project owner; judge it before relying on it"
     if source.get("flags"):
         status += (
             " | NOTICE: hidden content or instruction-like text was found in this source "
@@ -557,7 +574,10 @@ def execute_research_run(
 
         # Items set to "never for this item" are left out before anything is built from them (X.46.3).
         context_rows = select_agent_context(
-            db.scalars(select(ResearchContextItem).where(ResearchContextItem.project_id == project.id)).all(),
+            [
+                *db.scalars(select(ResearchContextItem).where(ResearchContextItem.project_id == project.id)).all(),
+                *live_objective_items(db, project.id),
+            ],
             locked_ids=locked_ids(db, project.id, CONTEXT_ITEM_KIND),
         )
         # Researcher-entered (or reviewed) sources take priority over auto-retrieved ones,
@@ -588,6 +608,7 @@ def execute_research_run(
         remaining_evidence_chars = MAX_TOTAL_EVIDENCE_CHARS
         for source in sorted(sources, key=lambda item: (item.is_automated, item.created_at)):
             snapshot = _source_snapshot(source)
+            snapshot["preprint_blocked"] = bool(project.peer_reviewed_only and snapshot["preprint"])
             kept = []
             for item in snapshot["excerpts"]:
                 if remaining_evidence_chars <= 0:
@@ -661,6 +682,11 @@ def execute_research_run(
                         run.error_message = (
                             "The answer contains a bracketed reference that looks like a source citation "
                             "but isn't in a form that could be checked. It was rejected rather than guessed."
+                        )
+                    elif reason == "preprint_citation":
+                        run.error_message = (
+                            f"The answer cited a preprint ([S{index}]), which is not peer reviewed. This project allows "
+                            "peer-reviewed sources only."
                         )
                     elif reason == "retracted_citation":
                         run.error_message = (
