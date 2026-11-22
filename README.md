@@ -107,6 +107,8 @@ LLM_API_BASE_URL=https://your-provider.example/v1
 LLM_MODEL=your-model-name
 ```
 
+To retry standard-model calls through a configured local OpenAI-compatible model only when the API reports exhausted credits or quota, configure `LOCAL_LLM_API_BASE_URL` and `LOCAL_LLM_MODEL`, then set `LLM_QUOTA_FALLBACK_TO_LOCAL=true`. Transport errors and invalid model responses still fail visibly; participant-data routes never use this fallback.
+
 The server sends a low-temperature, evidence-only prompt. Source excerpts are treated as untrusted material, and the prompt instructs the model not to follow instructions found inside them. This lowers risk; it does not replace human review.
 
 ## Google sign-in

@@ -21,6 +21,11 @@ export function autoExtractionAction(canWrite) {
   return canWrite ? { enabled: true, message: "Fetch permitted OA PDFs and queue extraction for final included papers." } : null;
 }
 
+export function manualExtractionAction(paper, canWrite, includedSourceIds) {
+  if (!canWrite || paper.extraction_id || paper.coverage?.level !== "full_text" || !includedSourceIds.has(paper.source_id)) return null;
+  return { enabled: true, message: "Create a human-entered, unverified extraction from the stored full-text PDF." };
+}
+
 // -> { headers: [{ paper? | field? }], rows: [{ head: { paper? | field? }, cells: [{ paper, field, cell }] }] }
 export function tableLayout(matrix, orientation) {
   const entry = (paper, field) => ({ paper, field, cell: paper.cells[field.key] });

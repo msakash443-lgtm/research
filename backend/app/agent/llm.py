@@ -28,6 +28,10 @@ class LLMResponseError(RuntimeError):
     pass
 
 
+class LLMQuotaError(LLMResponseError):
+    """The standard provider explicitly refused a request for lack of quota or credits."""
+
+
 class LLMSchemaError(LLMResponseError):
     """The model never produced output that satisfies the required schema."""
 
@@ -97,6 +101,16 @@ def _api_error_code(response: httpx.Response) -> str | None:
     return code if isinstance(code, str) else None
 
 
+def _quota_exhausted(response: httpx.Response) -> bool:
+    return response.status_code == 429 and _api_error_code(response) in {
+        "credit_balance_exhausted",
+        "insufficient_quota",
+        "organization_usage_limit_exceeded",
+        "organization_spend_limit_exceeded",
+        "project_spend_limit_exceeded",
+    }
+
+
 def _http_error_message(exc: HTTPStatusError) -> str:
     """Return a short, actionable failure that is safe to persist and show to users."""
     code = _api_error_code(exc.response)
@@ -142,6 +156,7 @@ class OpenAICompatibleLLM:
         model: str | None = None,
         timeout_seconds: float | None = None,
         require_api_key: bool = True,
+        allow_local_quota_fallback: bool | None = None,
         meter: Any = None,
     ):
         self.settings = settings
@@ -150,6 +165,11 @@ class OpenAICompatibleLLM:
         self._model = model if model is not None else settings.llm_model
         self._timeout_seconds = timeout_seconds if timeout_seconds is not None else settings.llm_timeout_seconds
         self._require_api_key = require_api_key
+        self._allow_local_quota_fallback = (
+            settings.llm_quota_fallback_to_local
+            if allow_local_quota_fallback is None
+            else allow_local_quota_fallback
+        )
         self._meter = meter  # optional: .before_call() may refuse, .after_call(model, response) records usage
         self._last_model = self._model
 
@@ -175,6 +195,7 @@ class OpenAICompatibleLLM:
                 model=settings.local_llm_model,
                 timeout_seconds=settings.local_llm_timeout_seconds,
                 require_api_key=False,
+                allow_local_quota_fallback=False,
                 meter=meter,
             )
         if settings.participant_data_requires_local_model:
@@ -184,7 +205,7 @@ class OpenAICompatibleLLM:
                 "PARTICIPANT_DATA_REQUIRES_LOCAL_MODEL=false to explicitly allow the "
                 "third-party model configured in LLM_API_BASE_URL to see participant data."
             )
-        return cls(settings, meter=meter)
+        return cls(settings, allow_local_quota_fallback=False, meter=meter)
 
     @classmethod
     def local(cls, settings: Settings, *, meter: Any = None) -> "OpenAICompatibleLLM":
@@ -201,6 +222,7 @@ class OpenAICompatibleLLM:
             model=settings.local_llm_model,
             timeout_seconds=settings.local_llm_timeout_seconds,
             require_api_key=False,
+            allow_local_quota_fallback=False,
             meter=meter,
         )
 
@@ -210,6 +232,18 @@ class OpenAICompatibleLLM:
         return self._last_model
 
     def complete(self, system_prompt: str, user_prompt: str, *, max_tokens: int = 1800) -> str:
+        try:
+            return self._complete(system_prompt, user_prompt, max_tokens=max_tokens)
+        except LLMQuotaError:
+            if not self._allow_local_quota_fallback:
+                raise
+            fallback = self.local(self.settings, meter=self._meter)
+            self._last_model = fallback.model
+            answer = fallback.complete(system_prompt, user_prompt, max_tokens=max_tokens)
+            self._last_model = fallback.model
+            return answer
+
+    def _complete(self, system_prompt: str, user_prompt: str, *, max_tokens: int) -> str:
         self.validate_configuration()
         self._last_model = self._model
 
@@ -241,6 +275,8 @@ class OpenAICompatibleLLM:
                         _sleep(_retry_delay(exc, attempt))
                         continue
                     if isinstance(exc, HTTPStatusError):
+                        if _quota_exhausted(exc.response):
+                            raise LLMQuotaError(_http_error_message(exc)) from exc
                         raise LLMResponseError(_http_error_message(exc)) from exc
                     raise LLMResponseError("The configured LLM service could not be reached.") from exc
                 except ValueError as exc:
