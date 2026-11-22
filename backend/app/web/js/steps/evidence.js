@@ -1,8 +1,9 @@
-import { el, emptyCard, toast } from "../dom.js";
+import { el, emptyCard, label, saveOnce, toast } from "../dom.js";
 import { request, projectApi } from "../api.js";
 import { provenanceBadge } from "../provenance.js";
 import { coverageBadge } from "./common.js";
-import { PAPERS_AS_COLUMNS, PAPERS_AS_ROWS, aiExtractionAction, autoExtractionAction, normalizeOrientation, tableLayout } from "../evidenceTableLogic.js";
+import { PAPERS_AS_COLUMNS, PAPERS_AS_ROWS, aiExtractionAction, autoExtractionAction, manualExtractionAction, normalizeOrientation, tableLayout } from "../evidenceTableLogic.js";
+import { buildManualExtractionPayload, manualExtractionError, submitManualExtraction, valueShape } from "../manualExtractionLogic.js";
 
 function display(value) {
   if (value === null || value === undefined) return "Not reported";
@@ -62,12 +63,87 @@ export async function uploadFulltext(ctx, paper, file) {
   });
 }
 
+function manualField(field) {
+  const row = el("fieldset", { className: "manual-extraction-field" });
+  row.append(el("legend", { text: `${label(field.key)}${field.critical ? " (critical)" : ""}` }),
+    el("p", { className: "muted small", text: `${field.description} · ${valueShape(field)}` }));
+  const notReported = el("input", { attrs: { type: "checkbox", name: `${field.key}-not-reported` } });
+  const value = el(field.type === "string" ? "textarea" : field.type === "integer" || field.type === "number" ? "input" : "textarea", {
+    attrs: { name: `${field.key}-value`, "aria-label": `${field.key} value`, placeholder: field.type === "list" || field.type === "object" ? valueShape(field) : "Value from the stored PDF" },
+  });
+  if (field.type === "integer" || field.type === "number") value.type = "number";
+  const quote = el("textarea", { attrs: { name: `${field.key}-quote`, "aria-label": `${field.key} supporting quote`, placeholder: "Exact quote from the stored PDF" } });
+  const page = el("input", { attrs: { name: `${field.key}-page`, "aria-label": `${field.key} page number`, placeholder: "Page number" } });
+  const section = el("input", { attrs: { name: `${field.key}-section`, "aria-label": `${field.key} section`, placeholder: "Or section" } });
+  const evidence = el("div", { className: "form-grid" });
+  evidence.append(el("label", { children: [document.createTextNode("Exact supporting PDF quote"), quote] }),
+    el("label", { children: [document.createTextNode("Page number"), page] }),
+    el("label", { children: [document.createTextNode("Section"), section] }));
+  const toggle = () => {
+    const disabled = notReported.checked;
+    [value, quote, page, section].forEach((input) => { input.disabled = disabled; });
+  };
+  notReported.addEventListener("change", toggle);
+  row.append(el("label", { className: "check-row", children: [notReported, document.createTextNode(" Not reported in this paper")] }),
+    el("label", { children: [document.createTextNode("Value"), value] }), evidence);
+  return row;
+}
+
+function manualExtractionForm(ctx, root, paper, schema) {
+  const card = el("section", { className: "panel manual-extraction" });
+  const form = el("form");
+  const error = el("p", { className: "form-error", attrs: { role: "alert", hidden: "hidden" } });
+  form.append(el("h3", { text: `Enter extraction manually: ${paper.title}` }),
+    el("p", { className: "muted", text: "Enter only what the stored PDF reports. Every reported field needs its exact PDF quote and a page number or section. This creates an unverified extraction for human review." }),
+    el("p", { className: "muted small", text: `Schema: ${schema.label} (${schema.schema_version})` }));
+  schema.fields.forEach((field) => form.append(manualField(field)));
+  const cancel = el("button", { type: "button", className: "quiet-button", text: "Cancel" });
+  cancel.addEventListener("click", () => { delete root.dataset.manualSource; render(root, ctx).catch((cause) => toast(cause.message)); });
+  form.append(error, el("div", { className: "source-actions", children: [
+    el("button", { type: "submit", text: "Save unverified extraction" }), cancel,
+  ] }));
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    saveOnce(form, async () => {
+      error.hidden = true;
+      try {
+        const fields = schema.fields.map((field) => ({
+          field,
+          notReported: form.elements[`${field.key}-not-reported`].checked,
+          value: form.elements[`${field.key}-value`].value,
+          quote: form.elements[`${field.key}-quote`].value,
+          page: form.elements[`${field.key}-page`].value,
+          section: form.elements[`${field.key}-section`].value,
+        }));
+        const payload = buildManualExtractionPayload({ sourceId: paper.source_id, schemaName: schema.ref, fields });
+        await submitManualExtraction(request, projectApi(ctx.project.id, "/extractions"), payload);
+        delete root.dataset.manualSource;
+        toast("Manual extraction saved. It still needs human verification.");
+        await render(root, ctx);
+      } catch (cause) {
+        error.textContent = manualExtractionError(cause);
+        error.hidden = false;
+      }
+    });
+  });
+  card.append(form);
+  return card;
+}
+
 async function render(root, ctx) {
   const base = projectApi(ctx.project.id, "/evidence-matrix");
   const schemas = await request(projectApi(ctx.project.id, "/extraction-schemas"));
   const selected = root.dataset.schemaName || "default";
   const orientation = normalizeOrientation(root.dataset.orientation);
   const matrix = await request(`${base}?schema_name=${encodeURIComponent(selected)}`);
+  const includedSourceIds = ctx.canWrite
+    ? new Set((await request(projectApi(ctx.project.id, "/extractions/verification-queue"))).map((item) => item.source_id))
+    : new Set();
+  const manualSource = root.dataset.manualSource;
+  const manualPaper = matrix.papers.find((paper) => paper.source_id === manualSource);
+  const manualSchema = manualPaper
+    ? await request(projectApi(ctx.project.id, `/extraction-schemas/${encodeURIComponent(selected)}`))
+    : null;
   const heading = el("div", { className: "panel" });
   heading.append(el("h2", { text: "Evidence table" }),
     el("p", { className: "muted", text: "One extraction per paper for the selected schema version. Checked means a person verified it; matched means the quote was checked against the stored PDF but awaits human review." }));
@@ -98,6 +174,7 @@ async function render(root, ctx) {
       href: `${base}/export.${extension}?schema_name=${encodeURIComponent(selected)}` }));
   }
   root.replaceChildren(heading);
+  if (manualPaper && manualSchema) root.append(manualExtractionForm(ctx, root, manualPaper, manualSchema));
   if (!matrix.papers.length) {
     root.append(emptyCard("No extracted papers yet", "Add extractions for this schema, then return to compare their fields."));
     return;
@@ -150,6 +227,16 @@ async function render(root, ctx) {
       } else {
         title.append(extract, el("p", { className: "muted small", text: action.message }));
       }
+    }
+    const manualAction = manualExtractionAction(paper, ctx.canWrite, includedSourceIds);
+    if (manualAction) {
+      const manual = el("button", { className: "quiet-button", text: "Enter extraction manually" });
+      manual.title = manualAction.message;
+      manual.addEventListener("click", () => {
+        root.dataset.manualSource = paper.source_id;
+        render(root, ctx).catch((error) => toast(error.message));
+      });
+      title.append(manual);
     }
     if (paper.extracted_by === "ai") title.append(provenanceBadge({ producer: "AI extraction", model: paper.model_id,
       promptVersion: paper.prompt_version, date: paper.created_at,

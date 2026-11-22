@@ -2,9 +2,10 @@
 
 import httpx
 import pytest
+from pydantic import SecretStr
 
 from app.agent import llm
-from app.agent.llm import LLMResponseError, OpenAICompatibleLLM
+from app.agent.llm import LLMConfigurationError, LLMResponseError, OpenAICompatibleLLM
 from app.config import get_settings
 
 
@@ -71,6 +72,52 @@ def test_an_exhausted_api_quota_fails_once_with_an_actionable_message(fake_llm):
         _complete()
     assert len(fake_llm.requests) == 1
     assert fake_llm.sleeps == []
+
+
+def test_an_exhausted_standard_api_quota_uses_the_configured_local_model_when_enabled(fake_llm, monkeypatch):
+    """Without the fallback, a credit-exhausted API leaves this AI request failed."""
+    settings = get_settings()
+    monkeypatch.setattr(settings, "llm_quota_fallback_to_local", True)
+    monkeypatch.setattr(settings, "local_llm_api_base_url", "http://local-llm.test/v1")
+    monkeypatch.setattr(settings, "local_llm_model", "local-model")
+    monkeypatch.setattr(settings, "local_llm_api_key", SecretStr("local-key"))
+    fake_llm.handler = lambda request: (
+        httpx.Response(429, json={"error": {"code": "insufficient_quota"}})
+        if request.url.host == "llm.test"
+        else {"choices": [{"message": {"content": "Local fallback."}}]}
+    )
+
+    adapter = OpenAICompatibleLLM(settings)
+
+    assert adapter.complete("system", "user") == "Local fallback."
+    assert adapter.model == "local-model"
+    assert [request.url.host for request in fake_llm.requests] == ["llm.test", "local-llm.test"]
+
+
+def test_an_exhausted_standard_api_quota_fails_loudly_when_local_fallback_is_not_configured(fake_llm, monkeypatch):
+    """Without local configuration, enabling fallback cannot disguise an exhausted API as success."""
+    settings = get_settings()
+    monkeypatch.setattr(settings, "llm_quota_fallback_to_local", True)
+    monkeypatch.setattr(settings, "local_llm_api_base_url", None)
+    monkeypatch.setattr(settings, "local_llm_model", None)
+    fake_llm.handler = lambda request: httpx.Response(429, json={"error": {"code": "credit_balance_exhausted"}})
+
+    with pytest.raises(LLMConfigurationError, match="local model"):
+        _complete()
+    assert [request.url.host for request in fake_llm.requests] == ["llm.test"]
+
+
+def test_a_transport_failure_never_uses_the_local_quota_fallback(fake_llm, monkeypatch):
+    """Fallback is reserved for explicit provider quota responses, not availability failures."""
+    settings = get_settings()
+    monkeypatch.setattr(settings, "llm_quota_fallback_to_local", True)
+    monkeypatch.setattr(settings, "local_llm_api_base_url", "http://local-llm.test/v1")
+    monkeypatch.setattr(settings, "local_llm_model", "local-model")
+    fake_llm.handler = lambda request: httpx.Response(503, json={})
+
+    with pytest.raises(LLMResponseError, match="could not be reached"):
+        _complete()
+    assert [request.url.host for request in fake_llm.requests] == ["llm.test"] * llm.TRANSIENT_ATTEMPTS
 
 
 @pytest.mark.parametrize("status", [400, 404, 422])

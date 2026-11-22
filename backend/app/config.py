@@ -79,6 +79,9 @@ class Settings(BaseSettings):
     llm_model: str | None = None
     llm_timeout_seconds: float = 60
     llm_schema_max_attempts: int = 3
+    # Off by default: when the standard provider explicitly reports exhausted credits or quota,
+    # retry the same request through the configured local model. Other failures still fail loudly.
+    llm_quota_fallback_to_local: bool = False
     # AI pre-screen (M2.2): an answer below this confidence is recorded as "maybe", never include/exclude.
     prescreen_min_confidence: float = Field(default=0.6, ge=0, le=1)
     # AI auto-exclude (M2.5.1, spec 5.3 human gate): an AI title/abstract exclude at or above this
