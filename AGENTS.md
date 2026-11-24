@@ -14,6 +14,7 @@
 - **Run the test**, then the full `pytest -q` from the repo root. Report the real result, including failures and their output (rule 37).
 - **Say when uncertain.** Mark unverified claims as unverified, and ask rather than guess (rule 35).
 - **Clearly say what changed:** files changed, behaviour changed, tests run with their results, and a suggested commit message (rules 42, 45).
+- **Update `CHANGELOG.md`.** A change that alters user-visible behaviour adds one bullet under `## [Unreleased]` in the same change, with its task ID or commit subject. Internal-only work gets no entry. The format is Keep a Changelog.
 
 **Don't**
 - **Touch `.env` or other secret files.** Don't read, edit, print or copy them. Document new settings in `.env.example` with placeholder values.
