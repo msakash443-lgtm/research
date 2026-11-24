@@ -8,8 +8,8 @@ Everyone outside the allowed set must be refused: a member with the wrong role g
 a non-member 404 (existence is not revealed), and an anonymous caller 401.
 """
 
+import json
 import uuid
-
 import pytest
 from fastapi.testclient import TestClient
 
@@ -54,6 +54,13 @@ MATRIX = [
     ("POST", "/api/projects/{p}/unarchive", MANAGE, 200),  # disposable per-call project; never the shared one
     ("DELETE", "/api/projects/{p}", MANAGE, 204),  # disposable per-call project with no audit history; never the shared one
     ("GET", "/api/projects/{p}/context", ALL, 200),
+    ("GET", "/api/projects/{p}/assistant/conversations", ALL, 200),
+    ("POST", "/api/projects/{p}/assistant/conversations", ALL, 201),
+    ("GET", "/api/projects/{p}/assistant/conversations/{conv}", ALL, 200),
+    ("POST", "/api/projects/{p}/assistant/conversations/{conv}/messages", ALL, 409),
+    ("POST", "/api/projects/{p}/assistant/ideas/refine", WRITE, 409),
+    ("POST", "/api/projects/{p}/assistant/capture/idea", WRITE, 201),
+    ("POST", "/api/projects/{p}/assistant/capture/note", WRITE, 201),
     ("POST", "/api/projects/{p}/context", WRITE, 201),
     ("PATCH", "/api/projects/{p}/context/{item_id}", WRITE, 200),
     ("DELETE", "/api/projects/{p}/context/{item_id}", WRITE, 204),
@@ -70,6 +77,7 @@ MATRIX = [
     ("GET", "/api/projects/{p}/observability", MANAGE, 200),  # owner only (X.136): cost and call figures
     ("GET", "/api/projects/{p}/ai-settings", ALL, 200),
     ("PUT", "/api/projects/{p}/ai-settings", MANAGE, 200),  # owner only: decides what leaves the project
+    ("GET", "/api/projects/{p}/profile", ALL, 200),
     ("GET", "/api/projects/{p}/ai-locks", ALL, 200),
     ("PUT", "/api/projects/{p}/ai-locks/source/{s}", WRITE, 200),  # never for this item
     ("DELETE", "/api/projects/{p}/ai-locks/source/{s}", WRITE, 200),
@@ -177,8 +185,8 @@ MATRIX = [
     ("GET", "/api/projects/{p}/artifacts", ALL, 200),
     ("GET", "/api/projects/{p}/rerun-path", ALL, 200),
     ("GET", "/api/projects/{p}/stage", ALL, 200),
+    ("POST", "/api/projects/{p}/stage/coach", ALL, 200),
     ("GET", "/api/projects/{p}/stage/conditions", ALL, 200),
-    ("GET", "/api/projects/{p}/profile", ALL, 200),
     ("GET", "/api/projects/{p}/criteria", ALL, 200),
     ("GET", "/api/projects/{p}/prisma", ALL, 200),
     ("GET", "/api/projects/{p}/screening/queue", ALL, 200),
@@ -330,12 +338,18 @@ MATRIX = [
     # again" (409); asking again with a producer is covered in test_suggestions_api.py.
     ("POST", "/api/projects/{p}/suggestions/{g}/ask-again", WRITE, 409),
     ("POST", "/api/projects/{p}/suggestions/bulk", WRITE, 200),
+    ("GET", "/api/projects/{p}/assistant/context", ALL, 200),
     # AI side panel (X.31.11): request queues a task (202); preview sends nothing (200). Behaviour is in test_workspace_ai_api.py.
     ("POST", "/api/projects/{p}/ai/suggestions", WRITE, 202),
     ("POST", "/api/projects/{p}/ai/suggestions/preview", WRITE, 200),
 ]
 
 BODIES = {
+    ("POST", "/api/projects/{p}/assistant/conversations"): {"title": "Matrix assistant"},
+    ("POST", "/api/projects/{p}/assistant/conversations/{conv}/messages"): {"content": "What next?"},
+    ("POST", "/api/projects/{p}/assistant/ideas/refine"): {"content": "An idea", "conversation_id": "{conv}", "message_id": "{msg}", "stage": "idea"},
+    ("POST", "/api/projects/{p}/assistant/capture/idea"): {"content": "An idea", "conversation_id": "{conv}", "message_id": "{msg}", "stage": "idea", "text_origin": "human"},
+    ("POST", "/api/projects/{p}/assistant/capture/note"): {"content": "A note", "conversation_id": "{conv}", "stage": "idea", "text_origin": "human", "title": "Matrix note", "destination_project_id": "{p}"},
     ("POST", "/api/projects/{p}/reviews"): {"document_id": "00000000-0000-0000-0000-000000000000", "persona": "methodologist", "severity": "major", "body": "Check the methods."},
     ("POST", "/api/projects/{p}/reviews/issues"): {"document_id": "00000000-0000-0000-0000-000000000000", "title": "Sampling", "severity": "major", "redline": {"from": "old", "to": "new"}},
     ("PATCH", "/api/projects/{p}/reviews/issues/{issue_id}"): {"status": "resolved", "response_text": "Addressed."},
@@ -421,8 +435,12 @@ PRINCIPALS = ["owner", "owner_member", "co_author", "supervisor", "reviewer", "s
 def world(monkeypatch, fake_llm):
     from app.config import get_settings
 
-    # Only the synonym-suggestion route calls a model here; give it a well-formed reply.
-    fake_llm.handler = lambda r: {"choices": [{"message": {"content": '{"suggestions": []}'}}]}
+    # AI routes use deterministic, schema-valid fake responses; no external model is contacted.
+    def _fake_response(request):
+        if b"current stage" in request.content.lower():
+            return {"choices": [{"message": {"content": '{"explanation": "Review the listed conditions.", "actions": []}'}}]}
+        return {"choices": [{"message": {"content": '{"suggestions": []}'}}]}
+    fake_llm.handler = _fake_response
 
     monkeypatch.setattr(get_settings(), "connectors_enabled", ["openalex", "unpaywall", "arxiv"])
     from app.routers import idea_brief  # the landscape POST searches live connectors; the matrix must not touch the network
@@ -438,6 +456,12 @@ def world(monkeypatch, fake_llm):
     owner, _ = sign_in_user(f"matrix-owner-{tag}@example.com")
     owner_id = owner.get("/api/auth/me").json()["id"]
     project_id = owner.post("/api/projects", json={"title": "Matrix"}).json()["id"]
+    conversation_id = owner.post(f"/api/projects/{project_id}/assistant/conversations", json={"title": "Matrix assistant"}).json()["id"]
+    assistant_message_id = str(uuid.uuid4())
+    with SessionLocal() as db:
+        from app.models import AssistantMessage
+        db.add(AssistantMessage(id=uuid.UUID(assistant_message_id), conversation_id=uuid.UUID(conversation_id), actor_id=uuid.UUID(owner_id), role="assistant", content="Matrix answer", status="completed"))
+        db.commit()
     source_id = owner.post(f"/api/projects/{project_id}/sources", json={"title": "Seed", "doi": "10.1234/seed"}).json()["id"]
     source_pdf = make_pdf([["Introduction", "We ask why"]])
     extraction_source_id = owner.post(
@@ -595,7 +619,7 @@ def world(monkeypatch, fake_llm):
     assert owner.post(f"/api/projects/{project_id}/datasets/{dataset_id}/exclusion-rules/{rule.json()['id']}/approve").status_code == 200
     return {
         "clients": clients,
-        "ids": {"p": project_id, "s": source_id, "extract_s": extraction_source_id, "ai_s": ai_source["id"], "h": str(claim_id), "gap_id": gap_id, "rq": question_id, "hp": hypothesis_id, "field_key": "research_question", "u": removable_id, "q": str(search_id), "d": str(seed_id), "e": str(extraction_id), "plan_id": str(uuid.uuid4()), "cp": str(uuid.uuid4()), "c": str(clustering_id), "l": str(cluster_id), "n": "lab_schema", "a": str(alert_id), "k": str(audit_id), "g": _fresh_suggestion(project_id, []), "doc": doc_id, "ds": str(dataset_id), "ap": plan.json()["id"], "run": str(uuid.uuid4()), "rule_id": rule.json()["id"], "rep": _seed_report(project_id, owner_id, doc_id), "v": "1", "author": owner_id, "cr": str(removable_member_id), "lo": str(own_paper_lookup_task_id), "finding_id": str(uuid.uuid4())},
+        "ids": {"p": project_id, "conv": conversation_id, "msg": assistant_message_id, "audit_id": str(audit_id), "s": source_id, "extract_s": extraction_source_id, "ai_s": ai_source["id"], "h": str(claim_id), "gap_id": gap_id, "rq": question_id, "hp": hypothesis_id, "field_key": "research_question", "u": removable_id, "q": str(search_id), "d": str(seed_id), "e": str(extraction_id), "plan_id": str(uuid.uuid4()), "cp": str(uuid.uuid4()), "c": str(clustering_id), "l": str(cluster_id), "n": "lab_schema", "a": str(alert_id), "k": str(audit_id), "g": _fresh_suggestion(project_id, []), "doc": doc_id, "ds": str(dataset_id), "ap": plan.json()["id"], "run": str(uuid.uuid4()), "rule_id": rule.json()["id"], "rep": _seed_report(project_id, owner_id, doc_id), "v": "1", "author": owner_id, "cr": str(removable_member_id), "lo": str(own_paper_lookup_task_id), "finding_id": str(uuid.uuid4())},
         "twin": twin_id,
         "invitee": f"matrix-invitee-{tag}@example.com",
     }
@@ -1010,9 +1034,15 @@ def _call(world, principal, method, template):
         return response
     if "/suggestions/{g}" in template:
         # Each call gets its own suggestion in the state the route needs, so one principal's success can't change the next.
-        start = {"restore": ["discarded"], "undo": ["accepted"]}.get(template.rsplit("/", 1)[1], [])
+        action = template.rsplit("/", 1)[1]
+        start = {"restore": ["discarded"], "undo": ["accepted"]}.get(action, [])
         fresh_id = _fresh_suggestion(world["ids"]["p"], start)
-        path = path.replace(world["ids"]["g"], fresh_id)
+        path = f"/api/projects/{world['ids']['p']}/suggestions/{fresh_id}/{action}"
+    if body is not None:
+        encoded = json.dumps(body)
+        for key, value in world["ids"].items():
+            encoded = encoded.replace("{" + key + "}", str(value))
+        body = json.loads(encoded)
     return world["clients"][principal].request(method, path, json=body)
 
 
@@ -1037,11 +1067,12 @@ def test_role_matrix(world, method, template, allowed, success):
 def test_the_matrix_covers_every_project_scoped_route():
     """A new project route must be added to MATRIX, or this fails."""
     routed = {
-            (method, route.path.replace("{project_id}", "{p}").replace("{source_id}", "{s}").replace("{user_id}", "{u}").replace("{code}", "G1").replace("{search_id}", "{q}").replace("{seed_id}", "{d}").replace("{extraction_id}", "{e}").replace("{evidence_id}", "{e}").replace("{plan_id}", "{plan_id}").replace("{claim_id}", "{h}").replace("{gap_id}", "{gap_id}").replace("{question_id}", "{rq}").replace("{hypothesis_id}", "{hp}").replace("{field_key}", "{field_key}").replace("{clustering_id}", "{c}").replace("{cluster_id}", "{l}").replace("{schema_name}", "{n}").replace("{alert_id}", "{a}").replace("{audit_id}", "{k}").replace("{suggestion_id}", "{g}").replace("{document_id}", "{doc}").replace("{number}", "{v}").replace("{target_kind}", "source").replace("{target_id}", "{s}").replace("{kind}", "co_citation").replace("{report_id}", "{rep}").replace("{path_id}", "{cp}").replace("{dataset_id}", "{ds}").replace("{analysis_plan_id}", "{ap}").replace("{run_id}", "{run}").replace("{member_id}", "{cr}").replace("{provider}", "orcid"))
+            (method, route.path.replace("{project_id}", "{p}").replace("{source_id}", "{s}").replace("{user_id}", "{u}").replace("{code}", "G1").replace("{search_id}", "{q}").replace("{seed_id}", "{d}").replace("{extraction_id}", "{e}").replace("{evidence_id}", "{e}").replace("{plan_id}", "{plan_id}").replace("{claim_id}", "{h}").replace("{gap_id}", "{gap_id}").replace("{question_id}", "{rq}").replace("{hypothesis_id}", "{hp}").replace("{field_key}", "{field_key}").replace("{clustering_id}", "{c}").replace("{cluster_id}", "{l}").replace("{schema_name}", "{n}").replace("{alert_id}", "{a}").replace("{suggestion_id}", "{g}").replace("{document_id}", "{doc}").replace("{number}", "{v}").replace("{target_kind}", "source").replace("{target_id}", "{s}").replace("{kind}", "co_citation").replace("{report_id}", "{rep}").replace("{path_id}", "{cp}").replace("{dataset_id}", "{ds}").replace("{analysis_plan_id}", "{ap}").replace("{run_id}", "{run}").replace("{member_id}", "{cr}").replace("{provider}", "orcid").replace("{conversation_id}", "{conv}").replace("{audit_id}", "{k}"))
         for route in app.routes
         if "{project_id}" in getattr(route, "path", "")
         for method in route.methods
     }
+    routed = {(method, path.replace("{audit_id}", "{k}")) for method, path in routed}
     covered = {(method, template) for method, template, _, _ in MATRIX}
 
     assert routed == covered

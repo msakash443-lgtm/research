@@ -23,6 +23,7 @@
           <a id="privacy-button" class="quiet-button" href="#/privacy">Privacy</a>
           <button id="notes-button" class="quiet-button" type="button" aria-controls="notes-dialog" aria-haspopup="dialog">Notes</button>
           <button id="capture-button" class="quiet-button" type="button" aria-controls="capture-dialog" aria-haspopup="dialog">Capture</button>
+          <button id="assistant-button" class="assistant-launcher" type="button" aria-controls="assistant-panel" aria-expanded="false" hidden><img src="/assets/assistant-mascot.png" alt="" /><span><strong>Research Assistant</strong><small>Stage help</small></span></button>
           <button id="memory-toggle" class="quiet-button" type="button" aria-controls="memory-sidebar" aria-expanded="false" hidden>Memory</button>
           <span id="account-name"></span>
           <button id="logout" class="quiet-button">Sign out</button>
@@ -83,6 +84,15 @@
             </div>
             <div id="step-body"></div>
           </article>
+        <aside id="assistant-panel" class="assistant-panel" aria-label="Research Assistant" hidden>
+          <div class="assistant-panel-head"><div class="assistant-heading"><img src="/assets/assistant-mascot.png" alt="" /><div><p class="eyebrow">RESEARCH ASSISTANT</p><h2>Research Assistant</h2><p class="assistant-subtitle">Local guidance for every stage of your research process.</p><p id="assistant-gate" class="muted small"></p></div></div><button id="assistant-close" class="quiet-button" type="button">Close</button></div>
+          <div class="assistant-welcome"><strong>Hi! 👋</strong><p>I’ll guide you step by step through your current research stage. I can explain the work, but only your team can make project decisions.</p></div>
+          <div class="assistant-tabs" role="tablist"><button class="tab-button active" type="button" data-assistant-tab="chat">Chat</button><button class="tab-button" type="button" data-assistant-tab="ideas">Ideas</button><button class="tab-button" type="button" data-assistant-tab="notes">Notes</button></div>
+          <section id="assistant-chat-tab"><div id="assistant-suggestions" class="assistant-suggestions"></div><p class="muted small">Answers are generated locally from the current project stage. Nothing is sent to a model or saved as chat history.</p><div id="assistant-note-context" class="assistant-note-context"></div><div id="assistant-messages"></div><form id="assistant-form"><textarea name="content" rows="3" required maxlength="12000" placeholder="Ask how to proceed at this stage"></textarea><button type="submit">Ask</button></form></section>
+          <section id="assistant-ideas-tab" hidden><p class="muted">Capture a possible research idea while you work. It remains only in this browser session.</p><textarea id="assistant-idea-text" rows="4" maxlength="20000" placeholder="Write an idea to revisit"></textarea><div class="assistant-local-actions"><button id="assistant-refine-idea" class="quiet-button" type="button">Use current guidance</button><button id="assistant-save-idea" type="button">Keep idea for this session</button></div><ul id="assistant-idea-list" class="assistant-local-list"></ul></section>
+          <section id="assistant-notes-tab" hidden><p class="muted">Write a working note. It remains only in this browser session.</p><textarea id="assistant-note-text" rows="4" maxlength="20000" placeholder="Write a project note"></textarea><button id="assistant-save-note" type="button">Keep note for this session</button><ul id="assistant-note-list" class="assistant-local-list"></ul></section>
+          <div class="assistant-stage-card"><h3>Research Stages</h3><div id="assistant-stage-list"></div></div>
+        </aside>
         </main>
         <aside id="memory-sidebar" class="sidebar memory-sidebar" aria-label="Research memory" hidden>
           <div class="sidebar-heading"><span>RESEARCH MEMORY</span></div>

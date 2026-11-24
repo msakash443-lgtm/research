@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app import fulltext_coverage
 from app.dedupe import doi_key
 from app.extraction_schema import schema_version
-from app.models import Extraction, Project
+from app.models import Extraction, Project, Task, TaskStatus
 from app.project_schemas import resolve
 from app.screening import included_sources, rows_for_stage
 from app.thematic_clusters import clusterable_sources
@@ -34,6 +34,29 @@ def original_url(source) -> str | None:
 def build(db: Session, project: Project, name: str = "default") -> dict:
     schema = resolve(db, project.id, name)
     version = schema_version(schema)
+    task_rows = db.scalars(select(Task).where(Task.project_id == project.id, Task.type.in_(("fulltext_fetch", "ai_extraction")))).all()
+    tasks_by_source = {}
+    for task in task_rows:
+        payload = task.payload or {}
+        source_key = str(payload.get("source_id") or "")
+        if not source_key:
+            continue
+        task_schema = payload.get("schema_name")
+        if task.type == "ai_extraction" and task_schema != name:
+            continue
+        key = (source_key, task_schema if task.type == "ai_extraction" else None)
+        previous = tasks_by_source.get(key)
+        rank = (task.status in {TaskStatus.queued, TaskStatus.running, TaskStatus.blocked, TaskStatus.paused},
+                task.updated_at or task.created_at, str(task.id))
+        previous_rank = (
+            previous is not None and previous.status in {TaskStatus.queued, TaskStatus.running, TaskStatus.blocked, TaskStatus.paused},
+            previous.updated_at or previous.created_at, str(previous.id),
+        ) if previous is not None else None
+        if previous is None or rank > previous_rank:
+            tasks_by_source[key] = task
+    task_for = lambda source_id, has_pdf: tasks_by_source.get(
+        (str(source_id), name if has_pdf else None)
+    ) or tasks_by_source.get((str(source_id), None))
     screening_rows = rows_for_stage(db, project, "title_abstract")
     screening_rows.update(rows_for_stage(db, project, "full_text"))
     if screening_rows:
@@ -63,6 +86,7 @@ def build(db: Session, project: Project, name: str = "default") -> dict:
     papers = []
     for source_id, source in sources.items():
         row = chosen.get(source_id)
+        task = task_for(source_id, bool(source.fulltext_path))
         link = original_url(source)
         cells = {}
         for field in schema.fields:
@@ -87,6 +111,10 @@ def build(db: Session, project: Project, name: str = "default") -> dict:
             "model_id": row.model_id if row else None,
             "prompt_version": row.prompt_version if row else None,
             "created_at": row.created_at.isoformat() if row else None,
+            "task_id": str(task.id) if task else None,
+            "task_status": task.status.value if task else None,
+            "task_error": task.error if task and task.status == TaskStatus.failed else None,
+            "task_type": task.type if task else None,
             "cells": cells,
         })
     papers.sort(key=lambda paper: (paper["title"].casefold(), paper["source_id"]))

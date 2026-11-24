@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from app.database import SessionLocal
 from app.main import app
-from app.models import Extraction, Source
+from app.models import Extraction, Source, Task, TaskStatus
 from tests.test_fulltext import make_pdf
 
 
@@ -66,6 +66,18 @@ def test_unextracted_sources_remain_visible_with_distinct_cell_status():
     assert paper["cells"]["research_question"]["status"] == "not_extracted"
     assert paper["cells"]["research_question"]["source_text_url"] is None
 
+
+def test_matrix_reports_failed_fulltext_task_for_an_unextracted_paper():
+    client, project, source = _world()
+    with SessionLocal() as db:
+        db.add(Task(project_id=uuid.UUID(project), type="fulltext_fetch",
+                    payload={"source_id": source}, status=TaskStatus.failed,
+                    error="The OA provider returned no permitted PDF. Upload one manually."))
+        db.commit()
+    paper = client.get(f"/api/projects/{project}/evidence-matrix?schema_name=default").json()["papers"][0]
+    assert paper["task_status"] == "failed"
+    assert paper["task_type"] == "fulltext_fetch"
+    assert "Upload one manually" in paper["task_error"]
 
 def test_matrix_contains_only_final_full_text_inclusions():
     client, project, included = _world()

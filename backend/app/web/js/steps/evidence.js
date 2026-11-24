@@ -2,7 +2,7 @@ import { el, emptyCard, label, saveOnce, toast } from "../dom.js";
 import { request, projectApi } from "../api.js";
 import { provenanceBadge } from "../provenance.js";
 import { coverageBadge } from "./common.js";
-import { PAPERS_AS_COLUMNS, PAPERS_AS_ROWS, aiExtractionAction, autoExtractionAction, manualExtractionAction, normalizeOrientation, tableLayout } from "../evidenceTableLogic.js";
+import { PAPERS_AS_COLUMNS, PAPERS_AS_ROWS, aiExtractionAction, aiExtractionPayload, autoExtractionAction, manualExtractionAction, normalizeOrientation, tableLayout } from "../evidenceTableLogic.js";
 import { buildManualExtractionPayload, manualExtractionError, submitManualExtraction, valueShape } from "../manualExtractionLogic.js";
 
 function display(value) {
@@ -20,11 +20,11 @@ function sourcePanel(panel, data) {
   panel.append(passage);
 }
 
-async function requestAutoExtraction(ctx, button, refresh) {
+async function requestAutoExtraction(ctx, button, refresh, schemaName) {
   button.disabled = true;
   try {
     const result = await request(projectApi(ctx.project.id, "/extractions/ai/auto"), {
-      method: "POST", body: JSON.stringify({ schema_name: "default" }),
+      method: "POST", body: JSON.stringify({ schema_name: schemaName }),
     });
     const counts = result.outcomes.reduce((map, item) => {
       map[item.status] = (map[item.status] || 0) + 1;
@@ -38,18 +38,31 @@ async function requestAutoExtraction(ctx, button, refresh) {
   }
 }
 
-async function requestExtraction(ctx, paper, button) {
+async function requestExtraction(ctx, paper, button, schemaName, refresh) {
   button.disabled = true;
   try {
     const queued = await request(projectApi(ctx.project.id, "/extractions/ai"), {
       method: "POST",
-      body: JSON.stringify({ source_id: paper.source_id, schema_name: "default" }),
+      body: JSON.stringify(aiExtractionPayload(paper.source_id, schemaName)),
     });
     toast(`Extraction requested for ${paper.title}. Task ${queued.status}.`);
+    await refresh();
+    watchExtraction(ctx, paper, schemaName, refresh).catch((error) => toast(error.message));
   } catch (error) {
     toast(error.message);
     button.disabled = false;
   }
+}
+
+async function watchExtraction(ctx, paper, schemaName, refresh, attempts = 0) {
+  if (attempts >= 30) return;
+  const matrix = await request(`${projectApi(ctx.project.id, "/evidence-matrix")}?schema_name=${encodeURIComponent(schemaName)}`);
+  const current = matrix.papers.find((item) => item.source_id === paper.source_id);
+  if (!current || current.extraction_id || !["queued", "running", "blocked", "paused"].includes(current.task_status)) {
+    await refresh();
+    return;
+  }
+  setTimeout(() => watchExtraction(ctx, paper, schemaName, refresh, attempts + 1).catch((error) => toast(error.message)), 1500);
 }
 
 export async function uploadFulltext(ctx, paper, file) {
@@ -130,6 +143,46 @@ function manualExtractionForm(ctx, root, paper, schema) {
   return card;
 }
 
+function stageGuidance(ctx) {
+  const panel = el("section", { className: "panel evidence-guidance" });
+  const explanation = el("div", { attrs: { "aria-live": "polite" } });
+  const ask = el("button", { className: "quiet-button", text: "Explain with AI" });
+  ask.addEventListener("click", async () => {
+    ask.disabled = true;
+    try {
+      const result = await request(projectApi(ctx.project.id, "/stage/coach"), { method: "POST", body: JSON.stringify({}) });
+      explanation.replaceChildren(el("p", { text: result.explanation }),
+        ...(result.actions || []).map((action) => el("p", { className: "muted small", text: `${action.condition_id}: ${action.text}` })));
+    } catch (error) {
+      explanation.replaceChildren(el("p", { className: "form-error", attrs: { role: "alert" }, text: error.message }));
+    } finally {
+      ask.disabled = false;
+    }
+  });
+  panel.append(el("h2", { text: "How to proceed" }),
+    el("p", { className: "muted", text: "These suggestions come from the project's current stage and exit conditions. They explain the next action; only an authorized person can approve gates or verify evidence." }),
+    ask, explanation);
+  const suggestions = ctx.summary.stage?.suggestions || [];
+  if (!suggestions.length) {
+    panel.append(el("p", { text: "No stage-level blocker is reported. Complete the evidence checks above, then open Verify extraction when a paper has an unverified extraction." }));
+    return panel;
+  }
+  const list = el("ul", { className: "check-list" });
+  suggestions.slice(0, 4).forEach((suggestion) => {
+    const item = el("li");
+    item.append(el("strong", { text: suggestion.message }));
+    if (suggestion.meaning) item.append(el("p", { className: "muted small", text: suggestion.meaning }));
+    if (suggestion.step) {
+      const go = el("button", { className: "quiet-button", text: `Go to ${suggestion.step}` });
+      go.addEventListener("click", () => ctx.navigate(suggestion.step));
+      item.append(go);
+    }
+    list.append(item);
+  });
+  panel.append(list);
+  return panel;
+}
+
 async function render(root, ctx) {
   const base = projectApi(ctx.project.id, "/evidence-matrix");
   const schemas = await request(projectApi(ctx.project.id, "/extraction-schemas"));
@@ -166,17 +219,19 @@ async function render(root, ctx) {
   if (automatic) {
     const autoButton = el("button", { className: "quiet-button", text: "Fetch OA PDFs and extract included papers" });
     autoButton.title = automatic.message;
-    autoButton.addEventListener("click", () => requestAutoExtraction(ctx, autoButton, () => render(root, ctx)));
+    autoButton.addEventListener("click", () => requestAutoExtraction(ctx, autoButton, () => render(root, ctx), selected));
     controls.append(autoButton);
   }
   for (const [extension, label] of [["csv", "Download CSV"], ["xlsx", "Download Excel"]]) {
     controls.append(el("a", { text: label, className: "button quiet-button",
       href: `${base}/export.${extension}?schema_name=${encodeURIComponent(selected)}` }));
   }
+  heading.append(controls);
   root.replaceChildren(heading);
+  root.append(stageGuidance(ctx));
   if (manualPaper && manualSchema) root.append(manualExtractionForm(ctx, root, manualPaper, manualSchema));
   if (!matrix.papers.length) {
-    root.append(emptyCard("No extracted papers yet", "Add extractions for this schema, then return to compare their fields."));
+    root.append(emptyCard("No papers are ready for this schema", "Final-included papers appear here. For each paper, store its PDF, run extraction with the selected schema, then verify the extraction in the Verify extraction step."));
     return;
   }
   const workspace = el("div", { className: "evidence-workspace" });
@@ -194,8 +249,21 @@ async function render(root, ctx) {
   panel.append(el("h2", { text: "Source text" }), el("p", { text: "Select a populated cell to inspect its quote in the stored PDF text." }));
   const paperHead = (paper) => {
     const title = el("td");
-    title.append(el("strong", { text: paper.title }), coverageBadge(paper.coverage), el("p", { className: "muted small",
-      text: !paper.extraction_id ? "Not extracted" : paper.verified_by_human ? "Human verified" : "Needs human review" }));
+    const state = !paper.extraction_id
+      ? paper.task_status === "failed" ? "Extraction failed" : paper.task_status ? `Extraction ${paper.task_status}` : "Not extracted"
+      : paper.verified_by_human ? "Human verified" : "Needs human review";
+    const stateClass = paper.task_status === "failed" ? "status-chip status-chip-error"
+      : paper.verified_by_human ? "status-chip status-chip-success"
+      : paper.extraction_id ? "status-chip status-chip-warning" : "status-chip";
+    title.append(el("strong", { text: paper.title }), coverageBadge(paper.coverage), el("p", { className: stateClass, text: state }));
+    if (paper.task_status === "failed" && paper.task_error) {
+      title.append(el("p", { className: "form-error", attrs: { role: "alert" }, text: paper.task_error }));
+    }
+    if (paper.extraction_id && !paper.verified_by_human) {
+      const verify = el("button", { className: "quiet-button", text: "Verify extraction" });
+      verify.addEventListener("click", () => { root.dataset.sourceId = paper.source_id; ctx.navigate("verification"); });
+      title.append(verify);
+    }
     const action = aiExtractionAction(paper, ctx.canWrite);
     if (action) {
       const uploadWrap = el("div", { className: "source-actions" });
@@ -222,7 +290,7 @@ async function render(root, ctx) {
       extract.disabled = !action.enabled;
       extract.title = action.message;
       if (action.enabled) {
-        extract.addEventListener("click", () => requestExtraction(ctx, paper, extract));
+        extract.addEventListener("click", () => requestExtraction(ctx, paper, extract, selected, () => render(root, ctx)));
         title.append(extract);
       } else {
         title.append(extract, el("p", { className: "muted small", text: action.message }));

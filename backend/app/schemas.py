@@ -553,6 +553,7 @@ class NoteRead(BaseModel):
     project_id: uuid.UUID | None
     kind: NoteKind
     status: NoteStatus
+    title: str | None = None
     body: str
     quoted_text: str | None
     source_id: uuid.UUID | None
@@ -563,6 +564,10 @@ class NoteRead(BaseModel):
     captured_at: datetime
     device: str | None
     owner_id: uuid.UUID
+    captured_stage: str | None = None
+    originating_conversation_id: uuid.UUID | None = None
+    originating_message_id: uuid.UUID | None = None
+    text_origin: str | None = None
     attachments: list[NoteAttachmentRead] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
@@ -628,6 +633,74 @@ class NoteSuggestionRead(BaseModel):
     label: str
     score: float
 
+
+class AssistantConversationCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str = Field(default="Research Assistant", min_length=1, max_length=200)
+
+
+class AssistantConversationRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    project_id: uuid.UUID
+    created_by: uuid.UUID
+    title: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class AssistantMessageCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    content: str = Field(min_length=1, max_length=12000)
+    note_ids: list[uuid.UUID] = Field(default_factory=list, max_length=20)
+
+class AssistantMessageRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    conversation_id: uuid.UUID
+    actor_id: uuid.UUID
+    role: str
+    content: str
+    status: str
+    model_id: str | None
+    prompt_version: str | None
+    context_ids: list | None
+    created_at: datetime
+
+
+class AssistantConversationDetail(AssistantConversationRead):
+    messages: list[AssistantMessageRead]
+
+
+class AssistantContextRead(BaseModel):
+    stage: str
+    pending_gate: str | None
+    blockers: list[dict]
+    permitted_actions: list[str]
+    suggested_questions: list[str]
+    context_ids: list[str]
+
+class AssistantCaptureCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    content: str = Field(min_length=1, max_length=20000)
+    conversation_id: uuid.UUID
+    message_id: uuid.UUID | None = None
+    stage: str = Field(min_length=1, max_length=80)
+    text_origin: str = Field(pattern="^(ai|human)$")
+    title: str | None = Field(default=None, max_length=200)
+    destination_project_id: uuid.UUID | None = None
+class AssistantRefineCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    content: str = Field(min_length=1, max_length=20000)
+    conversation_id: uuid.UUID
+    message_id: uuid.UUID
+    stage: str = Field(min_length=1, max_length=80)
+
+
+class AssistantRefineRead(BaseModel):
+    proposal: str
+    model_id: str
+    prompt_version: str
 
 class JournalCandidateCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")

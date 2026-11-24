@@ -10,6 +10,7 @@ import { readMemoryCollapsed, writeMemoryCollapsed } from "./js/memoryPanelLogic
 import { enqueueCapture, flushOutbox, pendingCount, registerOfflineSync } from "./js/offlineOutbox.js";
 import { renderPrivacy } from "./js/privacy.js";
 import { parsePrivacyRoute } from "./js/privacyLogic.js";
+import { answerStageQuestion, stageAssistantState } from "./js/stageAssistantLogic.js";
 
 import overview from "./js/steps/overview.js";
 import guide from "./js/steps/guide.js";
@@ -40,6 +41,44 @@ const state = {
   cache: { profiles: null, connectors: null, guide: null },
   pollTimer: null,
 };
+
+let assistantState = null;
+const assistantIdeas = [];
+const assistantNotes = [];
+
+function openAssistant() {
+  const panel = $("#assistant-panel");
+  panel.hidden = false;
+  requestAnimationFrame(() => panel.classList.add("is-open"));
+  $("#assistant-button").setAttribute("aria-expanded", "true");
+  assistantState = stageAssistantState(state.summary, STAGES.map(([stage, gate, stageLabelText]) => ({ stage, gate, label: stageLabelText })));
+  $("#assistant-stage-list").replaceChildren(...assistantState.stages.map((stage) =>
+    el("div", { className: stage.current ? "assistant-stage-current" : "assistant-stage-option", text: `${stage.current ? "Current: " : ""}${stage.label}` }),
+  ));
+  $("#assistant-gate").textContent = assistantState.next?.gate
+    ? `Next decision: ${assistantState.next.gate} (${assistantState.next.gateStatus || "pending"})`
+    : "Review the project path for the next stage.";
+  const questions = ["What should I do next?", "What does this stage mean?", "How do I design the methodology?"];
+  $("#assistant-suggestions").replaceChildren(...questions.map((question) => {
+      const button = el("button", { className: "quiet-button small", type: "button", text: question });
+      button.addEventListener("click", () => { $("#assistant-form [name=content]").value = question; });
+      return button;
+  }));
+  $("#assistant-messages").replaceChildren(el("p", { className: "assistant-message assistant", text: `Assistant: ${answerStageQuestion("What does this stage mean?", assistantState)}` }));
+  renderAssistantSessionLists();
+}
+
+function closeAssistant() {
+  const panel = $("#assistant-panel");
+  panel.classList.remove("is-open");
+  $("#assistant-button").setAttribute("aria-expanded", "false");
+  window.setTimeout(() => { if (!panel.classList.contains("is-open")) panel.hidden = true; }, 220);
+}
+
+function renderAssistantSessionLists() {
+  $("#assistant-idea-list").replaceChildren(...assistantIdeas.map((idea) => el("li", { text: idea })));
+  $("#assistant-note-list").replaceChildren(...assistantNotes.map((note) => el("li", { text: note })));
+}
 
 async function sendOutbox(path, payload, method = "POST") {
   return request(path, { method, body: JSON.stringify(payload) });
@@ -141,10 +180,12 @@ function renderProjectList() {
 function renderShell() {
   renderProjectList();
   $("#idea-button").hidden = !(state.activeProject && (state.role === "owner" || state.role === "co_author"));
+  $("#assistant-button").hidden = !state.activeProject;
   $("#memory-toggle").hidden = !state.activeProject;
   if (!state.activeProject) {
     $("#role-chip").hidden = true;
     $("#ai-chip").hidden = true;
+    $("#assistant-panel").hidden = true;
     return;
   }
   $("#crumb").textContent = state.activeProject.title;
@@ -678,6 +719,42 @@ async function renderNotesList() {
     list.append(errorCard(error.message));
   }
 }
+
+$("#assistant-button").addEventListener("click", openAssistant);
+$("#assistant-close").addEventListener("click", closeAssistant);
+document.querySelectorAll("[data-assistant-tab]").forEach((button) => {
+  button.addEventListener("click", () => {
+    document.querySelectorAll("[data-assistant-tab]").forEach((tab) => tab.classList.toggle("active", tab === button));
+    ["chat", "ideas", "notes"].forEach((tab) => { $(`#assistant-${tab}-tab`).hidden = tab !== button.dataset.assistantTab; });
+  });
+});
+$("#assistant-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const content = event.currentTarget.elements.content.value.trim();
+  if (!content || !assistantState) return;
+  $("#assistant-messages").replaceChildren(
+    el("p", { className: "assistant-message user", text: `You: ${content}` }),
+    el("p", { className: "assistant-message assistant", text: `Assistant: ${answerStageQuestion(content, assistantState)}` }),
+  );
+  event.currentTarget.reset();
+});
+$("#assistant-refine-idea").addEventListener("click", () => {
+  const answer = $("#assistant-messages").textContent.replace(/^.*?Assistant:\s*/, "").trim();
+  if (answer) $("#assistant-idea-text").value = answer;
+  toast("Copied the local guidance into your idea draft. Review and edit it before keeping it in this session.");
+});
+function saveAssistantCapture(kind) {
+  const field = kind === "idea" ? $("#assistant-idea-text") : $("#assistant-note-text");
+  const content = field.value.trim();
+  if (!content) return;
+  (kind === "idea" ? assistantIdeas : assistantNotes).push(content);
+  field.value = "";
+  renderAssistantSessionLists();
+  toast(`Kept this ${kind} in the current browser session. It is not saved to the project.`);
+}
+$("#assistant-save-idea").addEventListener("click", () => saveAssistantCapture("idea"));
+$("#assistant-save-note").addEventListener("click", () => saveAssistantCapture("note"));
+
 
 $("#notes-button").addEventListener("click", () => {
   $("#notes-dialog").showModal();

@@ -108,3 +108,6 @@
 20261029_0101 meta_analysis_timestamps
 20261109_0102 landscape_scan_runs
 20261110_0103 research_objectives
+20261123_0104 assistant_chat
+20261123_0105 assistant_capture_provenance
+20261123_0106 assistant_note_titles

@@ -56,5 +56,17 @@
   "qual_code_suggestions@1": {
     "eval": "none",
     "reason": "Qualitative code proposals for one participant excerpt (M5.5.2, X.121). No gold dataset type exists for qualitative codes; every suggestion stays pending until a person accepts or rejects it, and the reply is schema-checked in code before it is stored."
+  },
+  "research_assistant@1": {
+    "eval": "none",
+    "reason": "Assistant chat is an optional explanatory aid; no gold dataset exists and replies are schema-checked with authoritative context."
+  },
+  "research_assistant_refine@1": {
+    "eval": "none",
+    "reason": "Assistant idea refinement is a proposal for researcher review; no gold dataset exists and replies are schema-checked."
+  },
+  "stage_coach@1": {
+    "eval": "none",
+    "reason": "Stage coaching explains authoritative workflow state; no gold dataset exists and it cannot mutate project state."
   }
 }

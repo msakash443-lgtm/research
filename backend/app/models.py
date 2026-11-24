@@ -177,6 +177,27 @@ class Project(Timestamped, Base):
         self.updated_at = utcnow()
 
 
+class AssistantConversation(Timestamped, Base):
+    __tablename__ = "assistant_conversations"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    title: Mapped[str] = mapped_column(String(200), default="Research Assistant")
+
+
+class AssistantMessage(Timestamped, Base):
+    __tablename__ = "assistant_messages"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("assistant_conversations.id"), index=True)
+    actor_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    role: Mapped[str] = mapped_column(String(20))
+    content: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), default="completed")
+    model_id: Mapped[str | None] = mapped_column(String(255))
+    prompt_version: Mapped[str | None] = mapped_column(String(100))
+    context_ids: Mapped[list | None] = mapped_column(JSON)
+
+
 class ProjectRole(str, enum.Enum):
     owner = "owner"
     co_author = "co_author"
@@ -266,6 +287,10 @@ class ResearchContextItem(Timestamped, Base):
     content: Mapped[str] = mapped_column(Text)
     rationale: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[str | None] = mapped_column(String(100))
+    originating_conversation_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("assistant_conversations.id"))
+    originating_message_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("assistant_messages.id"))
+    captured_stage: Mapped[str | None] = mapped_column(String(80))
+    text_origin: Mapped[str | None] = mapped_column(String(20))
     # The note this item was promoted from (X.31.2). Read-only link: the note's text is never copied into `content`.
     promoted_from_note_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("notes.id"), index=True)
     # A decision points at the item it concerns (X.31.2). Same project only; enforced by the promote route.
@@ -1114,9 +1139,14 @@ class Note(Timestamped, Base):
     project_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("projects.id"), index=True)
     client_id: Mapped[str] = mapped_column(String(64))
     kind: Mapped[NoteKind] = mapped_column(Enum(NoteKind, name="note_kind"))
+    title: Mapped[str | None] = mapped_column(String(200))
     body: Mapped[str] = mapped_column(Text, default="")
     quoted_text: Mapped[str | None] = mapped_column(Text)
     source_url: Mapped[str | None] = mapped_column(String(2000))
+    captured_stage: Mapped[str | None] = mapped_column(String(80))
+    originating_conversation_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("assistant_conversations.id"))
+    originating_message_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("assistant_messages.id"))
+    text_origin: Mapped[str | None] = mapped_column(String(20))
     source_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("sources.id"), index=True)
     excerpt_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("source_excerpts.id"), index=True)
     locator: Mapped[str | None] = mapped_column(String(255))

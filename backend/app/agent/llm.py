@@ -238,7 +238,6 @@ class OpenAICompatibleLLM:
             if not self._allow_local_quota_fallback:
                 raise
             fallback = self.local(self.settings, meter=self._meter)
-            self._last_model = fallback.model
             answer = fallback.complete(system_prompt, user_prompt, max_tokens=max_tokens)
             self._last_model = fallback.model
             return answer
