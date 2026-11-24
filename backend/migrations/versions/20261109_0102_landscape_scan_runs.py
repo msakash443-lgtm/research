@@ -21,24 +21,28 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        "landscape_scan_runs",
-        sa.Column("id", sa.Uuid(), nullable=False),
-        sa.Column("project_id", sa.Uuid(), nullable=False),
-        sa.Column("query", sa.Text(), nullable=False),
-        sa.Column("reviews_since", sa.Integer(), nullable=False),
-        sa.Column("services", sa.JSON(), nullable=False),
-        sa.Column("record_ids", sa.JSON(), nullable=False),
-        sa.Column("sample_size", sa.Integer(), nullable=False),
-        sa.Column("run_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("created_by", sa.String(length=100), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.ForeignKeyConstraint(["project_id"], ["projects.id"]),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index("ix_landscape_scan_runs_project_id", "landscape_scan_runs", ["project_id"])
-
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if not inspector.has_table("landscape_scan_runs"):
+        op.create_table(
+            "landscape_scan_runs",
+            sa.Column("id", sa.Uuid(), nullable=False),
+            sa.Column("project_id", sa.Uuid(), nullable=False),
+            sa.Column("query", sa.Text(), nullable=False),
+            sa.Column("reviews_since", sa.Integer(), nullable=False),
+            sa.Column("services", sa.JSON(), nullable=False),
+            sa.Column("record_ids", sa.JSON(), nullable=False),
+            sa.Column("sample_size", sa.Integer(), nullable=False),
+            sa.Column("run_at", sa.DateTime(timezone=True), nullable=False),
+            sa.Column("created_by", sa.String(length=100), nullable=False),
+            sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+            sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+            sa.ForeignKeyConstraint(["project_id"], ["projects.id"]),
+            sa.PrimaryKeyConstraint("id"),
+        )
+    index_names = {index["name"] for index in sa.inspect(bind).get_indexes("landscape_scan_runs")}
+    if "ix_landscape_scan_runs_project_id" not in index_names:
+        op.create_index("ix_landscape_scan_runs_project_id", "landscape_scan_runs", ["project_id"])
 
 def downgrade() -> None:
     op.drop_index("ix_landscape_scan_runs_project_id", table_name="landscape_scan_runs")

@@ -96,6 +96,7 @@ def test_private_and_derived_data_is_left_out_and_said_so(world):
     manifest = json.loads(archive.read("manifest.json"))
     assert set(manifest["excluded"]["tables"]) == {
         "notes", "tasks", "users", "external_identities", "note_revisions", "note_attachments", "connector_breaker_state",
+        "assistant_conversations", "assistant_messages",
     }
     assert "vector" in manifest["excluded"]["columns"]["source_embeddings"]
 
