@@ -489,7 +489,11 @@ def _seeded_world(request):
 @pytest.fixture
 def world(_seeded_world, monkeypatch, fake_llm):
     # Only the synonym-suggestion route calls a model here; give it a well-formed reply.
-    fake_llm.handler = lambda r: {"choices": [{"message": {"content": '{"suggestions": []}'}}]}
+    def _fake_response(request):
+        if b"current stage" in request.content.lower():
+            return {"choices": [{"message": {"content": '{"explanation": "Review the listed conditions.", "actions": []}'}}]}
+        return {"choices": [{"message": {"content": '{"suggestions": []}'}}]}
+    fake_llm.handler = _fake_response
     _patch_matrix_runtime(monkeypatch, _seeded_world["store"])
     return _seeded_world
 
@@ -661,7 +665,7 @@ def _seed_world(mp):
     assert owner.post(f"/api/projects/{project_id}/datasets/{dataset_id}/exclusion-rules/{rule.json()['id']}/approve").status_code == 200
     return {
         "clients": clients,
-        "ids": {"p": project_id, "conv": conversation_id, "msg": assistant_message_id, "audit_id": str(audit_id), "s": source_id, "extract_s": extraction_source_id, "ai_s": ai_source["id"], "h": str(claim_id), "gap_id": gap_id, "rq": question_id, "hp": hypothesis_id, "field_key": "research_question", "u": removable_id, "q": str(search_id), "d": str(seed_id), "e": str(extraction_id), "plan_id": str(uuid.uuid4()), "cp": str(uuid.uuid4()), "c": str(clustering_id), "l": str(cluster_id), "n": "lab_schema", "a": str(alert_id), "k": str(audit_id), "g": _fresh_suggestion(project_id, []), "doc": doc_id, "ds": str(dataset_id), "ap": plan.json()["id"], "run": str(uuid.uuid4()), "rule_id": rule.json()["id"], "rep": _seed_report(project_id, owner_id, doc_id), "v": "1", "author": owner_id, "cr": str(removable_member_id), "lo": str(own_paper_lookup_task_id), "finding_id": str(uuid.uuid4())},
+        "ids": {"p": project_id, "conv": conversation_id, "msg": assistant_message_id, "audit_id": str(audit_id), "s": source_id, "extract_s": extraction_source_id, "ai_s": ai_source["id"], "h": str(claim_id), "gap_id": gap_id, "rq": question_id, "hp": hypothesis_id, "field_key": "research_question", "area": "screening", "u": removable_id, "q": str(search_id), "d": str(seed_id), "e": str(extraction_id), "plan_id": str(uuid.uuid4()), "cp": str(uuid.uuid4()), "c": str(clustering_id), "l": str(cluster_id), "n": "lab_schema", "a": str(alert_id), "k": str(audit_id), "g": _fresh_suggestion(project_id, []), "doc": doc_id, "ds": str(dataset_id), "ap": plan.json()["id"], "run": str(uuid.uuid4()), "rule_id": rule.json()["id"], "rep": _seed_report(project_id, owner_id, doc_id), "v": "1", "author": owner_id, "cr": str(removable_member_id), "lo": str(own_paper_lookup_task_id), "finding_id": str(uuid.uuid4())},
         "twin": twin_id,
         "store": store,
         "invitee": f"matrix-invitee-{tag}@example.com",
