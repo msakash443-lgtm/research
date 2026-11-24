@@ -45,6 +45,8 @@ _FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 # Tables with a project_id that are deliberately not exported, and why (written into the manifest).
 EXCLUDED_TABLES = {
     "notes": "per-user notes and inbox (private to their author)",
+    "assistant_conversations": "assistant chat is project-private interaction history, not replication data",
+    "assistant_messages": "assistant chat messages may contain private research text, not replication data",
     "tasks": "operational job queue; what ran is in the audit log and the run records",
 }
 # Columns dropped from exported tables, and why.

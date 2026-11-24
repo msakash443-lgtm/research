@@ -113,3 +113,7 @@
 20261119_0106 peer_reviewed_only
 20261119_0107 journal_candidate_issns
 20261119_0108 project_responsibilities
+20261123_0104 assistant_chat
+20261123_0105 assistant_capture_provenance
+20261123_0106 assistant_note_titles
+20261124_0109 merge_heads

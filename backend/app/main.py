@@ -19,7 +19,7 @@ from app.ui_themes import registered_themes
 from app.logging_config import configure_logging
 from app.middleware import ContentLengthLimitMiddleware, FixedWindowCounter, RateLimitMiddleware
 from app.pagination import NEXT_CURSOR_HEADER
-from app.routers import accuracy, ai_locks, ai_settings, audit, provenance_reports, workspace_ai, auth, bibliometrics, claims, clusters, connectors, coverage, criteria, design_tools, evidence_matrix, exports, literature_summary, extraction_schemas, extractions, gates, guide, integrity, members, responsibilities, notes, documents, prisma, profile, projects, replication, research_runs, scholar_metrics, screening, searches, alerts, seeds, snowball, sources, stage, suggestions, usage, zotero, reviews
+from app.routers import accuracy, ai_locks, ai_settings, audit, provenance_reports, workspace_ai, assistant, auth, bibliometrics, claims, clusters, connectors, coverage, criteria, design_tools, evidence_matrix, exports, literature_summary, extraction_schemas, extractions, gates, guide, integrity, members, responsibilities, notes, documents, prisma, profile, projects, replication, research_runs, scholar_metrics, screening, searches, alerts, seeds, snowball, sources, stage, suggestions, usage, zotero, reviews
 from app.routers import journals, submissions
 from app.routers import people
 from app.routers import privacy
@@ -150,6 +150,7 @@ app.include_router(integrity.router, prefix="/api")
 app.include_router(provenance_reports.router, prefix="/api")
 app.include_router(suggestions.router, prefix="/api")
 app.include_router(workspace_ai.router, prefix="/api")
+app.include_router(assistant.router, prefix="/api")
 app.include_router(alerts.router, prefix="/api")
 app.include_router(zotero.router, prefix="/api")
 app.include_router(reviews.router, prefix="/api")
