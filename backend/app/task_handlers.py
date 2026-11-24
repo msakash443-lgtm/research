@@ -13,6 +13,7 @@ from app import audit, own_paper
 from app.agent.executor import execute_research_run
 from app.ai_extraction import AiExtractionError, run_ai_extraction
 from app import extraction_suggestions  # noqa: F401  (registers the extraction suggestion handler)
+from app import figure_suggestions  # noqa: F401  (registers the figure suggestion handler)
 from app.llm_usage import ProjectMeter
 from app.database import SessionLocal
 from app.connectors.base import ConnectorError
@@ -45,6 +46,9 @@ from app.task_registry import ClaimedTask, PermanentTaskError, TaskOwnershipLost
 from app.task_queue import enqueue_task
 from app.similarity_task import run_similarity_check
 from app.section_draft_task import run_section_draft, scrub_draft_payload
+from app.figure_generate_task import run_figure_generate, scrub_figure_payload
+from app.figure_accuracy_task import run_figure_accuracy_check, scrub_figure_check_payload
+from app.figure_correct_task import run_figure_correct, scrub_figure_correct_payload
 from app.front_matter_task import run_front_matter
 from app.workspace_ai_task import run_workspace_ai_action, scrub_action_payload
 logger = logging.getLogger(__name__)
@@ -62,6 +66,9 @@ SEED_FALSE_EXCLUSION_CHECK = "seed_false_exclusion_check"
 SIMILARITY_CHECK = "similarity_check"
 OWN_PAPER_LOOKUP = "own_paper_lookup"
 SECTION_DRAFT = "section_draft"
+FIGURE_GENERATE = "figure_generate"
+FIGURE_ACCURACY_CHECK = "figure_accuracy_check"
+FIGURE_CORRECT = "figure_correct"
 REMINDER_DISPATCH = "submission_reminder_dispatch"
 FRONT_MATTER = "front_matter"
 
@@ -571,6 +578,24 @@ def handle_section_draft(task: ClaimedTask) -> None:
     """Draft one section's opening prose from its bound claims (X.46.8 / M6.1.a). No gate: it only proposes a
     suggestion; a person must accept it and press Insert before anything reaches the document (Q27)."""
     run_section_draft(task.payload or {})
+
+
+@register(FIGURE_GENERATE, scrub_payload=scrub_figure_payload)
+def handle_figure_generate(task: ClaimedTask) -> None:
+    """Draft a figure spec from an uploaded paper (plan M8.4). No gate: it only proposes a suggestion; a person accepts it before a version is written."""
+    run_figure_generate(task.payload or {}, task)
+
+
+@register(FIGURE_ACCURACY_CHECK, scrub_payload=scrub_figure_check_payload)
+def handle_figure_accuracy_check(task: ClaimedTask) -> None:
+    """Label each element of one figure version against its paper (plan M8.6). No gate: it only stores a check; nothing in the figure changes."""
+    run_figure_accuracy_check(task.payload or {}, task)
+
+
+@register(FIGURE_CORRECT, scrub_payload=scrub_figure_correct_payload)
+def handle_figure_correct(task: ClaimedTask) -> None:
+    """Propose a corrected spec for one figure version that fails its checks (plan M8.7). No gate: it only stores a pending suggestion; a person accepts it."""
+    run_figure_correct(task.payload or {}, task)
 
 
 @register(SIMILARITY_CHECK)

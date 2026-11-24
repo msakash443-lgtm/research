@@ -146,6 +146,8 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = True
     rate_limit_auth_per_minute: int = Field(default=20, gt=0)
     rate_limit_upload_per_minute: int = Field(default=30, gt=0)
+    # M8 research figures (plan M8). Off unless named here; every M8 route returns 404 while this is False.
+    research_figures_enabled: bool = False
     arc_retrieval_enabled: bool = False
     arc_retrieval_base_url: str | None = None
     arc_retrieval_token: SecretStr | None = None
@@ -215,6 +217,12 @@ class Settings(BaseSettings):
     fulltext_fetch_timeout_seconds: float = Field(default=60, gt=0)
     # PDF text extraction (M2.7.3): refuse PDFs with more pages than this rather than parse them.
     fulltext_max_pages: int = Field(default=2000, gt=0)
+    # Uploaded DOCX text extraction (M8.2): refuse DOCX files with more body paragraphs than this.
+    uploaded_docx_max_paragraphs: int = Field(default=20000, gt=0)
+    # Figure rendering (M8.3): the Graphviz `dot` executable and a hard time limit per render. The default `dot`
+    # is looked up on PATH; a missing or failing renderer makes the preview route return 503, never a placeholder.
+    graphviz_dot_path: str = "dot"
+    figure_render_timeout_seconds: float = Field(default=10, gt=0)
     # Thematic clustering (M3.8.1): embeddings from an OpenAI-compatible /embeddings endpoint. Off while
     # EMBEDDING_MODEL is unset. The base URL and key default to LLM_API_BASE_URL / LLM_API_KEY.
     embedding_model: str | None = None

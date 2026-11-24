@@ -81,6 +81,7 @@
 | 5.6.1 | Human-owned RQ/hypothesis drafts linked to selected gaps; transparent advisory FINER critique | M4.1 | `GET/POST/PATCH /api/projects/{id}/research-questions`; `GET …/research-questions/{id}/finer`; `GET/POST/PATCH /api/projects/{id}/hypotheses` | `test_research_questions.py`, `test_role_matrix.py` | `[x]` (focused 243 passed; full pytest 3072 passed, 13 skipped, 9 warnings) |
 | 5.6.2–4 | Conceptual model, diagram, construct–measure check | M4.2, M4.2.1 | conceptual-model API | `test_conceptual_model.py`, role/lookup tests | `[x]` (independently accepted; API-only, no UI by design) |
 | 5.6 gate | G6 approve RQs, hypotheses, model | M4.8 | gate/stage APIs; EC-8.2 checks linked RQs/hypotheses and selected gaps | `test_exit_conditions.py`, `test_gate_required_conditions.py`, `test_guidance.py` | `[x]` condition implemented and audited Recommended override path verified; human G6 approval remains a gate action |
+| 5.6.3 (render) | Conceptual framework from an uploaded manuscript, rendered and exported as SVG | M8.3, M8.4, M8.8 | `/api/projects/{id}/figures…` | planned: `test_figures.py`, `test_figure_render.py` | `[ ]` |
 
 ### §5.7 Design and ethics
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
@@ -107,6 +108,7 @@
 | 5.9 Q4 | **Journal-style tables/figures**; notebooks | M5.4, M5.8 *(new)* | `GET …/analysis-plans/{id}/runs/{run_id}/tables`; `POST/GET …/analysis-plans/{id}/deviation-logs` | `test_journal_tables.py`, `test_journal_tables_api.py`, `test_deviation_log.py`, `test_deviation_log_api.py`, `test_role_matrix.py` | `[x]` M5.4.2 notebook export and M5.8.1–M5.8.4 journal-table/deviation-log slices independently reviewed; focused M5.8 suite 89 passed; scratch SQLite migration round-trip and `alembic check` passed; Postgres not run |
 | 5.9 gate | G9; **pre-registration deviations documented** | M5.8, M6.9 *(new)* | `POST/GET …/analysis-plans/{id}/deviation-logs`; G9 remains tied to M6.9 interpretation approval | `test_deviation_log_api.py`, gate tests | `[?]` deviation logging is implemented and M5.8 is closed; G9 interpretation approval remains open under M6.9 |
 | 5.9 QC | Re-run gives identical numbers | M5.4 | — | — | `[?]` fingerprint helper (M5.4.1) and re-run identity check (M5.4.2) built; independent closure remains tracked under M5.4 |
+| 5.9.4 (charts) | Statistical charts from computed analysis output only | M8.12 | `POST /api/projects/{id}/figures` kind `statistical_chart` | planned: `test_chart_svg.py` | `[ ]` |
 
 ### §5.10 Interpretation and discussion
 | Spec | Requirement | Tasks | Screen / endpoint | Tests | Status |
@@ -143,6 +145,7 @@
 | 5.13.4 | Submission tracker, reminders, calendar | M7.5 | — | — | `[ ]` |
 | 5.13.5 | Post-acceptance (ORCID, preprint, Zenodo/OSF); **CFP alerts** | M7.5, M7.6 *(new)* | — | — | `[ ]` |
 | 5.13 gate | G11 final sign-off | M7.5 | — | — | `[ ]` |
+| 5.13.3 (figure presets) | Journal figure presets checked with `check_figure_specs` | M8.18 | `…/export.svg?preset=` | planned | `[ ]` |
 
 ---
 
@@ -308,3 +311,4 @@
 | X.158 API-only standard-model routing | User-requested policy: standard project AI calls only the configured API model; explicit local-only routing remains the privacy control. |
 | X.159 post-save Scope/Sources refresh | Usability repair for existing workspace pages; no separate spec line. |
 | X.195 retracted sources not citable | The spec has no retraction line; closest are §7.3 citation guard and §9 no fabrication. Run citations are blocked, claim evidence is refused, Crossref retraction relations are recognized, and the Sources panel shows a retraction badge; X.195 `[~]` pending final verification and independent review. |
+| M8.1, M8.2, M8.5, M8.7, M8.9–M8.11, M8.13–M8.17, M8.19, M8.20 research figures | Owner request 2026-11-24 (MVP feature priorities). Closest spec lines §5.6.3 (diagram), §5.9.4 (figures), §5.12 (review), §7.3 (citations), §10 Usability, §11 metrics. Default-off behind RESEARCH_FIGURES_ENABLED. |

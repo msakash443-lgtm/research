@@ -1276,6 +1276,75 @@ class Document(Timestamped, Base):
     versions: Mapped[list["DocumentVersion"]] = relationship(back_populates="document", order_by="DocumentVersion.number")
 
 
+class UploadedDocument(Timestamped, Base):
+    """A research document a person uploads (M8.1): a PDF or DOCX kept write-once in object storage. Withdrawing it sets
+    `withdrawn_at`; the row and the stored bytes stay, because the audit trail refers to them."""
+
+    __tablename__ = "uploaded_documents"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    filename: Mapped[str] = mapped_column(String(255))
+    media_type: Mapped[str] = mapped_column(String(100))
+    sha256: Mapped[str] = mapped_column(String(64))
+    size: Mapped[int] = mapped_column(Integer)
+    storage_key: Mapped[str] = mapped_column(String(512))
+    uploaded_by: Mapped[str] = mapped_column(String(100))
+    withdrawn_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Figure(Timestamped, Base):
+    """A figure a project is building (M8.3): a conceptual framework or a methodology flowchart. Its content lives in
+    `FigureVersion` rows; this row only names the figure and the document it was drawn from."""
+
+    __tablename__ = "figures"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    uploaded_document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("uploaded_documents.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(40))
+    title: Mapped[str] = mapped_column(String(200))
+    created_by: Mapped[str] = mapped_column(String(100))
+
+
+class FigureVersion(Base):
+    """One saved state of a figure (M8.3). Append-only (enforced by `ledger_guard`): an edit, an accepted AI suggestion or
+    an undo writes a new row with the next `number`. `origin` says who wrote the spec; `suggestion_id` links an accepted
+    AI proposal and `model_id`/`prompt_version` record which model and prompt produced it."""
+
+    __tablename__ = "figure_versions"
+    __table_args__ = (UniqueConstraint("figure_id", "number", name="uq_figure_version_number"),)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    figure_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("figures.id"), index=True)
+    number: Mapped[int] = mapped_column(Integer)
+    spec_json: Mapped[dict] = mapped_column(JSON)
+    spec_hash: Mapped[str] = mapped_column(String(64))
+    origin: Mapped[str] = mapped_column(String(20))
+    suggestion_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("ai_suggestions.id"), index=True)
+    model_id: Mapped[str | None] = mapped_column(String(100))
+    prompt_version: Mapped[str | None] = mapped_column(String(50))
+    created_by: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class FigureCheck(Base):
+    """One AI accuracy check of a figure version (M8.6). Append-only (enforced by `ledger_guard`). `status` is
+    `checked` (`labels_json` maps each element id to supported, unsupported or contradicted) or `insufficient_evidence`
+    (the model abstained: `reason` says what the passages lack and `labels_json` is empty)."""
+
+    __tablename__ = "figure_checks"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    figure_version_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("figure_versions.id"), index=True)
+    status: Mapped[str] = mapped_column(String(30))
+    reason: Mapped[str | None] = mapped_column(String(1000))
+    labels_json: Mapped[dict] = mapped_column(JSON)
+    model_id: Mapped[str | None] = mapped_column(String(100))
+    prompt_version: Mapped[str | None] = mapped_column(String(50))
+    created_by: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class AuthorshipKind(str, enum.Enum):
     inserted = "inserted"
     removed = "removed"

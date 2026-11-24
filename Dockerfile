@@ -9,6 +9,8 @@ WORKDIR /app
 RUN addgroup --system app && adduser --system --ingroup app app
 # Object storage root (M0.10.2); docker-compose.yml mounts a shared volume here.
 RUN mkdir -p /data/objects && chown -R app:app /data
+# Graphviz `dot` renders figure previews and exports (M8.3); figure_render.py runs it without a shell.
+RUN apt-get update && apt-get install -y --no-install-recommends graphviz && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt

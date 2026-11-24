@@ -259,6 +259,72 @@ def test_queued_ai_extraction_fails_if_full_text_inclusion_is_revoked(fake_llm, 
     assert not fake_llm.requests
 
 
+def _revoke_full_text_inclusion(client, project_id, source_id):
+    title_screen = client.post(f"/api/projects/{project_id}/screening/decisions", json={
+        "source_id": source_id, "stage": "title_abstract", "decision": "include",
+    })
+    assert title_screen.status_code == 201, title_screen.text
+    revoked = client.post(f"/api/projects/{project_id}/screening/decisions", json={
+        "source_id": source_id, "stage": "full_text", "decision": "exclude",
+        "reason_code": "E_OTHER", "note": "Not eligible for this review",
+    })
+    assert revoked.status_code == 201, revoked.text
+
+
+def test_auto_fetch_is_refused_before_any_download_when_full_text_inclusion_is_revoked_after_queueing(monkeypatch):
+    from app import task_handlers
+    from tests.api_helpers import create_included_source, create_project, sign_in
+
+    client = sign_in(f"fetch-revoked-{uuid.uuid4().hex}@example.com")
+    project_id = create_project(client)
+    source_id = create_included_source(client, project_id, doi="10.5555/revoked-before-fetch")
+    queued = client.post(f"/api/projects/{project_id}/extractions/ai/auto", json={"schema_name": "default"})
+    assert queued.status_code == 202, queued.text
+    outcome = queued.json()["outcomes"][0]
+    assert outcome["status"] == "fetch_queued"
+    _revoke_full_text_inclusion(client, project_id, source_id)
+    fetched = []
+    monkeypatch.setattr(task_handlers, "unpaywall_unavailable_reason", lambda: None)
+    monkeypatch.setattr(task_handlers, "fetch_open_access", lambda *args, **kwargs: fetched.append(1))
+
+    assert run_one_task(task_id=uuid.UUID(outcome["task_id"]))
+
+    with SessionLocal() as db:
+        task = db.get(Task, uuid.UUID(outcome["task_id"]))
+        assert task.status == TaskStatus.failed
+        assert "included at full text" in task.error
+        assert db.scalar(select(Source.fulltext_path).where(Source.id == uuid.UUID(source_id))) is None
+        assert db.scalars(select(Task).where(Task.project_id == uuid.UUID(project_id), Task.type == "ai_extraction")).all() == []
+    assert fetched == []
+
+
+def test_auto_fetch_enqueues_no_extraction_when_full_text_inclusion_is_revoked_during_the_download(monkeypatch):
+    from app import task_handlers
+    from tests.api_helpers import create_included_source, create_project, sign_in
+
+    client = sign_in(f"fetch-during-{uuid.uuid4().hex}@example.com")
+    project_id = create_project(client)
+    source_id = create_included_source(client, project_id, doi="10.5555/revoked-during-fetch")
+    queued = client.post(f"/api/projects/{project_id}/extractions/ai/auto", json={"schema_name": "default"})
+    assert queued.status_code == 202, queued.text
+    task_id = uuid.UUID(queued.json()["outcomes"][0]["task_id"])
+
+    def download_then_revoke(db, *, source, **kwargs):
+        source.fulltext_path = fulltext_key(source.project_id, source.id, "pdf")
+        _revoke_full_text_inclusion(client, project_id, source_id)
+        return {"status": "stored"}
+
+    monkeypatch.setattr(task_handlers, "unpaywall_unavailable_reason", lambda: None)
+    monkeypatch.setattr(task_handlers, "fetch_open_access", download_then_revoke)
+    monkeypatch.setattr(task_handlers, "build_unpaywall", lambda: None)
+
+    assert run_one_task(task_id=task_id)
+
+    with SessionLocal() as db:
+        assert db.get(Task, task_id).status == TaskStatus.completed
+        assert db.scalars(select(Task).where(Task.project_id == uuid.UUID(project_id), Task.type == "ai_extraction")).all() == []
+
+
 def test_ai_extraction_request_is_refused_before_queuing_when_project_ai_is_off():
     client = TestClient(app)
     client.post("/api/auth/development/login", json={"email": f"extract-off-{uuid.uuid4().hex}@example.com", "display_name": "Researcher"})

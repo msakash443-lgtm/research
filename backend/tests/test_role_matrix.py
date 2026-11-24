@@ -8,6 +8,7 @@ Everyone outside the allowed set must be refused: a member with the wrong role g
 a non-member 404 (existence is not revealed), and an anonymous caller 401.
 """
 
+import hashlib
 import os
 import uuid
 
@@ -16,7 +17,9 @@ from fastapi.testclient import TestClient
 
 from app.database import SessionLocal
 from app.main import app
-from app.object_storage import fulltext_key
+from app.object_storage import StoredObject, fulltext_key
+from app import figure_store
+from app.models import Figure
 from app.models import (
     utcnow,
     SOURCE_ORIGIN_RETRIEVED,
@@ -144,6 +147,21 @@ MATRIX = [
     ("POST", "/api/projects/{p}/sources/{s}/fulltext/fetch", WRITE, 202),  # queues only
     ("POST", "/api/projects/{p}/sources/{s}/fulltext/arxiv/fetch", WRITE, 202),  # queues only
     ("POST", "/api/projects/{p}/sources/{s}/fulltext/upload", WRITE, 201),  # raw PDF body; _call gives each principal a fresh source (write-once)
+    ("POST", "/api/projects/{p}/uploaded-documents/upload", WRITE, 201),  # raw PDF body; _call gives the upload a fresh name per call
+    ("GET", "/api/projects/{p}/uploaded-documents", ALL, 200),
+    ("GET", "/api/projects/{p}/uploaded-documents/{upload_id}", ALL, 200),  # _call gives each call a fresh uploaded document
+    ("GET", "/api/projects/{p}/uploaded-documents/{upload_id}/content", ALL, 200),  # re-extracts the stored upload; _call gives a fresh one per call
+    ("POST", "/api/projects/{p}/uploaded-documents/{upload_id}/withdraw", WRITE, 200),
+    ("GET", "/api/projects/{p}/figures", ALL, 200),
+    ("GET", "/api/projects/{p}/figures/{fig}", ALL, 200),
+    ("POST", "/api/projects/{p}/figures/{fig}/versions", WRITE, 201),
+    ("GET", "/api/projects/{p}/figures/{fig}/versions/{v}/preview.svg", ALL, 200),  # Graphviz stubbed in _patch_matrix_runtime
+    ("GET", "/api/projects/{p}/figures/{fig}/versions/{v}/export.svg", ALL, 200),  # Graphviz stubbed in _patch_matrix_runtime
+    ("POST", "/api/projects/{p}/figures", WRITE, 202),  # M8.4: queues generation; needs AI on (the matrix project is AI on by default)
+    ("POST", "/api/projects/{p}/figures/{fig}/versions/{v}/check", WRITE, 202),  # M8.6: queues the AI labelling; AI on in the matrix project
+    ("GET", "/api/projects/{p}/figures/{fig}/versions/{v}/check", ALL, 200),  # M8.6: deterministic findings; reads the seeded upload's text
+    ("POST", "/api/projects/{p}/figures/{fig}/versions/{v}/correct", WRITE, 202),  # M8.7: queues the AI correction; AI on in the matrix project
+    ("GET", "/api/projects/{p}/figures/{fig}/suggestions/{figure_suggestion_id}", ALL, 200),  # M8.7: the seeded figure suggestion, diffed from the seeded version
     ("POST", "/api/projects/{p}/sources/{s}/fulltext/withdraw", WRITE, 200),
     ("GET", "/api/projects/{p}/sources/{s}/fulltext", ALL, 200),  # fixture stores full text on source {s} directly
     ("GET", "/api/projects/{p}/searches", ALL, 200),
@@ -439,12 +457,28 @@ def _world_scope(fixture_name, config):
     return "function" if os.environ.get("RESEARCH_TEST_ISOLATION") == "clone" else "module"
 
 
-def _patch_matrix_runtime(mp, store=None):
+class _InMemoryUploads:
+    """Keeps uploaded bytes in memory, so the content route reads back what the upload stored; the matrix
+    checks who may call each route and what status comes back, not disk behaviour."""
+
+    def __init__(self):
+        self._objects: dict[str, bytes] = {}
+
+    def put(self, key, data):
+        self._objects[key] = data
+        return StoredObject(key=key, size=len(data), sha256=hashlib.sha256(data).hexdigest())
+
+    def get(self, key):
+        return self._objects[key]
+
+
+def _patch_matrix_runtime(mp, store=None, uploads=None):
     """Settings and collaborators the matrix needs: every connector enabled but never reaching the network."""
     from pydantic import SecretStr
 
     from app.config import get_settings
     from app.routers import evidence_matrix as evidence_routes
+    from app.routers import uploaded_documents as uploaded_routes
     from app.routers import extractions as extraction_routes
     from app.routers import idea_brief  # the landscape POST searches live connectors; the matrix must not touch the network
 
@@ -452,6 +486,7 @@ def _patch_matrix_runtime(mp, store=None):
     mp.setattr(idea_brief, "_search_services", lambda names, text, limit: ([], []))
     mp.setattr(get_settings(), "connector_contact_email", "matrix@example.com")
     mp.setattr(get_settings(), "obsidian_export_enabled", True)
+    mp.setattr(get_settings(), "research_figures_enabled", True)
     mp.setattr(get_settings(), "zotero_sync_enabled", True)
     mp.setattr(get_settings(), "zotero_api_key", SecretStr("matrix-key"))
     mp.setattr(get_settings(), "zotero_user_id", "12345")
@@ -459,6 +494,11 @@ def _patch_matrix_runtime(mp, store=None):
     if store is not None:
         mp.setattr(extraction_routes, "get_object_store", lambda settings: store)
         mp.setattr(evidence_routes, "get_object_store", lambda settings: store)
+    uploads = _InMemoryUploads() if uploads is None else uploads
+    mp.setattr(uploaded_routes, "get_object_store", lambda settings: uploads)
+    from app.routers import figures as figure_routes
+    mp.setattr(figure_routes, "render_svg", lambda dot, *, dot_path, timeout_seconds: b'<svg xmlns="http://www.w3.org/2000/svg"/>')
+    mp.setattr(figure_store, "get_object_store", lambda settings: uploads)  # figure text reads the same in-memory bytes as the upload
 
 
 @pytest.fixture(scope=_world_scope)
@@ -476,12 +516,13 @@ def _seeded_world(request):
 def world(_seeded_world, monkeypatch, fake_llm):
     # Only the synonym-suggestion route calls a model here; give it a well-formed reply.
     fake_llm.handler = lambda r: {"choices": [{"message": {"content": '{"suggestions": []}'}}]}
-    _patch_matrix_runtime(monkeypatch, _seeded_world["store"])
+    _patch_matrix_runtime(monkeypatch, _seeded_world["store"], _seeded_world["uploads"])
     return _seeded_world
 
 
 def _seed_world(mp):
-    _patch_matrix_runtime(mp)
+    uploads = _InMemoryUploads()
+    _patch_matrix_runtime(mp, uploads=uploads)
     tag = uuid.uuid4().hex[:8]
     owner, _ = sign_in_user(f"matrix-owner-{tag}@example.com")
     owner_id = owner.get("/api/auth/me").json()["id"]
@@ -499,7 +540,7 @@ def _seed_world(mp):
             return source_pdf
 
     store = ExtractionStore()
-    _patch_matrix_runtime(mp, store)
+    _patch_matrix_runtime(mp, store, uploads)
     with SessionLocal() as db:
         db.get(Source, uuid.UUID(extraction_source_id)).fulltext_path = source_key
         db.commit()
@@ -639,12 +680,29 @@ def _seed_world(mp):
     rule = owner.post(f"/api/projects/{project_id}/datasets/{dataset_id}/exclusion-rules", json={"column": "a", "op": "is_blank"})  # M5.7.1
     assert rule.status_code == 201, rule.text
     assert owner.post(f"/api/projects/{project_id}/datasets/{dataset_id}/exclusion-rules/{rule.json()['id']}/approve").status_code == 200
+    upload = owner.post(f"/api/projects/{project_id}/uploaded-documents/upload?filename=figure.pdf", content=UPLOAD_PDF, headers={"content-type": "application/pdf"})
+    assert upload.status_code == 201, upload.text
+    figure_id = uuid.uuid4()
+    with SessionLocal() as db:
+        figure = Figure(id=figure_id, project_id=uuid.UUID(project_id), uploaded_document_id=uuid.UUID(upload.json()["id"]), kind="conceptual_framework", title="Matrix figure", created_by=str(owner_id))
+        db.add(figure)
+        db.flush()
+        figure_store.write_version(db, figure, {"nodes": [{"id": "a", "label": "Matrix A", "role": "independent", "evidence": []}], "edges": []}, origin=figure_store.ORIGIN_HUMAN_EDITED, created_by=str(owner_id))
+        db.commit()
+        from app import suggestion_store
+        figure_suggestion_id = suggestion_store.create_suggestion(
+            db, project_id=uuid.UUID(project_id), target_kind="figure", target_id=str(figure_id), target_field="spec",
+            content='{"nodes": [], "edges": []}', model_id="test-model", prompt_version="v1", producing_agent="matrix",
+        ).id
+        db.commit()
     return {
         "clients": clients,
-        "ids": {"p": project_id, "s": source_id, "extract_s": extraction_source_id, "ai_s": ai_source["id"], "h": str(claim_id), "gap_id": gap_id, "rq": question_id, "hp": hypothesis_id, "field_key": "research_question", "area": "screening", "u": removable_id, "q": str(search_id), "d": str(seed_id), "e": str(extraction_id), "plan_id": str(uuid.uuid4()), "cp": str(uuid.uuid4()), "c": str(clustering_id), "l": str(cluster_id), "n": "lab_schema", "a": str(alert_id), "k": str(audit_id), "g": _fresh_suggestion(project_id, []), "doc": doc_id, "ds": str(dataset_id), "ap": plan.json()["id"], "run": str(uuid.uuid4()), "rule_id": rule.json()["id"], "rep": _seed_report(project_id, owner_id, doc_id), "v": "1", "author": owner_id, "cr": str(removable_member_id), "lo": str(own_paper_lookup_task_id), "finding_id": str(uuid.uuid4())},
+        "ids": {"p": project_id, "s": source_id, "extract_s": extraction_source_id, "ai_s": ai_source["id"], "h": str(claim_id), "gap_id": gap_id, "rq": question_id, "hp": hypothesis_id, "field_key": "research_question", "area": "screening", "u": removable_id, "q": str(search_id), "d": str(seed_id), "e": str(extraction_id), "plan_id": str(uuid.uuid4()), "cp": str(uuid.uuid4()), "c": str(clustering_id), "l": str(cluster_id), "n": "lab_schema", "a": str(alert_id), "k": str(audit_id), "g": _fresh_suggestion(project_id, []), "doc": doc_id, "fig": str(figure_id), "ds": str(dataset_id), "ap": plan.json()["id"], "run": str(uuid.uuid4()), "rule_id": rule.json()["id"], "rep": _seed_report(project_id, owner_id, doc_id), "v": "1", "author": owner_id, "cr": str(removable_member_id), "lo": str(own_paper_lookup_task_id), "finding_id": str(uuid.uuid4())},
         "twin": twin_id,
         "store": store,
+        "uploads": uploads,
         "invitee": f"matrix-invitee-{tag}@example.com",
+        "figure_suggestion": str(figure_suggestion_id),
     }
 
 
@@ -715,6 +773,13 @@ def _seed_report(project_id, owner_id, document_id):
 def _call(world, principal, method, template):
     route_template = template
     route_path = template
+    if "{upload_id}" in template:
+        # A fresh uploaded document per call, so one principal's withdrawal can't 409 the next.
+        created = world["clients"]["owner"].post(
+            f"/api/projects/{world['ids']['p']}/uploaded-documents/upload?filename=matrix.pdf",
+            content=UPLOAD_PDF, headers={"content-type": "application/pdf"},
+        ).json()
+        route_path = template.replace("{upload_id}", created["id"])
     if (method, template) == ("PATCH", "/api/projects/{p}/reviews/issues/{issue_id}"):
         created = world["clients"]["owner"].post(
             f"/api/projects/{world['ids']['p']}/reviews/issues",
@@ -740,6 +805,8 @@ def _call(world, principal, method, template):
         route_path = template.replace("{submission_id}", created["id"])
     if (method, template) == ("POST", "/api/projects/{p}/submissions/integrations/{provider}"):
         route_path = route_path.replace("{provider}", "orcid")
+    if "{figure_suggestion_id}" in route_path:
+        route_path = route_path.replace("{figure_suggestion_id}", world["figure_suggestion"])
     path = route_path.format(**world["ids"])
     if (method, template) in (
         ("POST", "/api/projects/{p}/archive"), ("POST", "/api/projects/{p}/unarchive"), ("DELETE", "/api/projects/{p}"),
@@ -804,6 +871,14 @@ def _call(world, principal, method, template):
             f"/api/projects/{world['ids']['p']}/submissions", json={"journal_name": "Matrix reminder"}
         ).json()
         body = {"submission_id": created["id"], "due_at": "2030-01-01T00:00:00Z", "message": "Follow up"}
+    if (method, template) == ("POST", "/api/projects/{p}/figures/{fig}/versions"):
+        body = {"spec": {"nodes": [{"id": "b", "label": "Matrix B", "role": "independent", "evidence": []}], "edges": []}}
+    if (method, template) == ("POST", "/api/projects/{p}/figures"):
+        created = world["clients"]["owner"].post(
+            f"/api/projects/{world['ids']['p']}/uploaded-documents/upload?filename=matrix.pdf",
+            content=UPLOAD_PDF, headers={"content-type": "application/pdf"},
+        ).json()
+        body = {"uploaded_document_id": created["id"], "kind": "conceptual_framework"}
     if (method, template) == ("POST", "/api/projects/{p}/institutions"):
         body = {"name": "Matrix Institute"}
     if (method, template) == ("POST", "/api/projects/{p}/people"):
@@ -1071,6 +1146,8 @@ def _call(world, principal, method, template):
             reasons = {c["id"]: "Set up by this test; not what it checks." for c in locked}
             response = world["clients"][principal].post(path, json={"override_reasons": reasons})
         return response
+    if (method, template) == ("POST", "/api/projects/{p}/uploaded-documents/upload"):
+        return world["clients"][principal].post(path + "?filename=matrix.pdf", content=UPLOAD_PDF, headers={"content-type": "application/pdf"})
     if "/suggestions/{g}" in template:
         # Each call gets its own suggestion in the state the route needs, so one principal's success can't change the next.
         start = {"restore": ["discarded"], "undo": ["accepted"]}.get(template.rsplit("/", 1)[1], [])
@@ -1100,7 +1177,7 @@ def test_role_matrix(world, method, template, allowed, success):
 def test_the_matrix_covers_every_project_scoped_route():
     """A new project route must be added to MATRIX, or this fails."""
     routed = {
-            (method, route.path.replace("{project_id}", "{p}").replace("{source_id}", "{s}").replace("{user_id}", "{u}").replace("{code}", "G1").replace("{search_id}", "{q}").replace("{seed_id}", "{d}").replace("{extraction_id}", "{e}").replace("{evidence_id}", "{e}").replace("{plan_id}", "{plan_id}").replace("{claim_id}", "{h}").replace("{gap_id}", "{gap_id}").replace("{question_id}", "{rq}").replace("{hypothesis_id}", "{hp}").replace("{field_key}", "{field_key}").replace("{clustering_id}", "{c}").replace("{cluster_id}", "{l}").replace("{schema_name}", "{n}").replace("{alert_id}", "{a}").replace("{audit_id}", "{k}").replace("{suggestion_id}", "{g}").replace("{document_id}", "{doc}").replace("{number}", "{v}").replace("{target_kind}", "source").replace("{target_id}", "{s}").replace("{kind}", "co_citation").replace("{report_id}", "{rep}").replace("{path_id}", "{cp}").replace("{dataset_id}", "{ds}").replace("{analysis_plan_id}", "{ap}").replace("{run_id}", "{run}").replace("{member_id}", "{cr}").replace("{provider}", "orcid"))
+            (method, route.path.replace("{project_id}", "{p}").replace("{source_id}", "{s}").replace("{user_id}", "{u}").replace("{code}", "G1").replace("{search_id}", "{q}").replace("{seed_id}", "{d}").replace("{extraction_id}", "{e}").replace("{evidence_id}", "{e}").replace("{plan_id}", "{plan_id}").replace("{claim_id}", "{h}").replace("{gap_id}", "{gap_id}").replace("{question_id}", "{rq}").replace("{hypothesis_id}", "{hp}").replace("{field_key}", "{field_key}").replace("{clustering_id}", "{c}").replace("{cluster_id}", "{l}").replace("{schema_name}", "{n}").replace("{alert_id}", "{a}").replace("{audit_id}", "{k}").replace("{suggestion_id}", "{g}").replace("{document_id}", "{doc}").replace("{number}", "{v}").replace("{figure_id}", "{fig}").replace("{target_kind}", "source").replace("{target_id}", "{s}").replace("{kind}", "co_citation").replace("{report_id}", "{rep}").replace("{path_id}", "{cp}").replace("{dataset_id}", "{ds}").replace("{analysis_plan_id}", "{ap}").replace("{run_id}", "{run}").replace("{member_id}", "{cr}").replace("{provider}", "orcid"))
         for route in app.routes
         if "{project_id}" in getattr(route, "path", "")
         for method in route.methods

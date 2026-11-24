@@ -6,7 +6,14 @@ All notable user-facing changes to this app are recorded here. Format: [Keep a C
 
 ## [Unreleased]
 
-No entries yet.
+- **Added:** research document upload (M8.1): PDF and DOCX files stored per project with checksum, withdraw and audit events, behind `RESEARCH_FIGURES_ENABLED` (default off).
+- **Added:** text extraction for uploaded research documents (M8.2): uploads are checked by extracting their text (422 with a `code`: `no_extractable_text`, `encrypted`, `too_long`, `unreadable`); DOCX headings become sections; `GET …/uploaded-documents/{upload_id}/content` returns the text, sections and checksum. Behind `RESEARCH_FIGURES_ENABLED` (default off).
+- **Added:** figure store foundation (M8.3): versioned figures (append-only `figure_versions`), human edits, accepted AI suggestions as new versions, and an SVG preview rendered with Graphviz (`GRAPHVIZ_DOT_PATH`; 503 when the binary is missing). Behind `RESEARCH_FIGURES_ENABLED` (default off).
+- **Added:** conceptual framework generation from an uploaded paper (M8.4): `POST /api/projects/{project_id}/figures` queues a draft that becomes a pending suggestion for a person to accept. Every quote in the draft must appear in the paper, or nothing is stored and the failure is audited. 409 when AI is off. Behind `RESEARCH_FIGURES_ENABLED` (default off).
+- **Added:** methodology flowchart generation (M8.5): the same route accepts `kind: "methodology_flowchart"`; a flowchart with more than one start, no end, or a step it cannot reach is refused and nothing is stored. Behind `RESEARCH_FIGURES_ENABLED` (default off).
+- **Added:** figure accuracy check (M8.6): `POST …/figures/{figure_id}/versions/{number}/check` queues an AI labelling of each element as supported, unsupported or contradicted, or an abstention with a reason; `GET` on the same path returns the deterministic findings (quotes not found in the paper, dangling edges, unreadable labels) and the latest AI check. The check changes nothing in the figure. Behind `RESEARCH_FIGURES_ENABLED` (default off).
+- **Added:** figure correction (M8.7): `POST …/figures/{figure_id}/versions/{number}/correct` queues an AI correction of a version that fails its checks. The corrected figure is stored as a pending suggestion only if it passes the deterministic checks with no error; otherwise nothing is stored and the failure is audited. `GET …/figures/{figure_id}/suggestions/{figure_suggestion_id}` returns the proposal and its diff from the version it corrects. Accepting it writes an AI-accepted version. Person edits now audit how many nodes and edges each change touched. Behind `RESEARCH_FIGURES_ENABLED` (default off).
+- **Added:** figure SVG export (M8.8): `GET …/figures/{figure_id}/versions/{number}/export.svg` downloads a version as an attachment with a `<metadata>` element (figure id, version, origin, model id, prompt version, source document sha256, export time). A version with deterministic errors is refused with 409 `figure_has_errors` and its findings; nothing is exported or audited in that case. Behind `RESEARCH_FIGURES_ENABLED` (default off).
 
 ## [0.2.0] - backfill, 2026-09-10 to 2026-11-21
 

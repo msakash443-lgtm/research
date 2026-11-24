@@ -64,5 +64,21 @@
   "rq_suggestions@1": {
     "eval": "none",
     "reason": "Research-question proposals the researcher edits before use; cited source ids are checked in code, and there is no gold dataset type for research questions."
+  },
+  "figure_accuracy@1": {
+    "eval": "none",
+    "reason": "Per-element accuracy labels for one figure version against its paper (M8.6). No gold dataset type exists for figure labels; the reply must label every element exactly once before anything is stored."
+  },
+  "figure_correction@1": {
+    "eval": "none",
+    "reason": "Corrected spec for a figure version that fails its deterministic checks (M8.7). No gold dataset type exists; the corrected spec is stored as a pending suggestion only when the checks report no ERROR finding, and nothing is auto-accepted."
+  },
+  "figure_conceptual_framework@1": {
+    "eval": "none",
+    "reason": "Conceptual-framework spec proposed from an uploaded paper (M8.4). No gold dataset type exists; the reply is stored only if it normalizes as a spec, does not leak the prompt, and every evidence quote appears in the paper's own text."
+  },
+  "figure_methodology_flowchart@1": {
+    "eval": "none",
+    "reason": "Methodology-flowchart spec proposed from an uploaded paper (M8.5). No gold dataset type exists; the reply is stored only if it normalizes as a spec, does not leak the prompt, and every evidence quote appears in the paper's own text."
   }
 }
