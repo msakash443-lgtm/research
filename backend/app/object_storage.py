@@ -110,6 +110,14 @@ def fulltext_key(project_id: uuid.UUID, source_id: uuid.UUID, extension: str) ->
     return validate_key(f"projects/{uuid.UUID(str(project_id))}/sources/{uuid.UUID(str(source_id))}/fulltext.{extension}")
 
 
+def uploaded_document_key(project_id: uuid.UUID, document_id: uuid.UUID, extension: str) -> str:
+    """The key for an uploaded research document, e.g. `projects/<p>/uploaded-documents/<d>/original.pdf` (M8.1)."""
+    extension = extension.lower().lstrip(".")
+    if extension not in {"pdf", "docx"}:
+        raise InvalidObjectKey(f"unsupported uploaded-document extension: {extension!r}")
+    return validate_key(f"projects/{uuid.UUID(str(project_id))}/uploaded-documents/{uuid.UUID(str(document_id))}/original.{extension}")
+
+
 def _real(path: Path) -> Path:
     """`path.resolve()` without Windows' `\\\\?\\` long-path prefix, which `resolve()` sometimes adds
     while a directory on the path is being created concurrently; left in, it breaks containment checks."""

@@ -13,6 +13,8 @@ from sqlalchemy import DDL, event
 from app.models import (
     AuthorshipEvent,
     DocumentVersion,
+    FigureCheck,
+    FigureVersion,
     InterpretationFinding,
     InterpretationReview,
     OwnPaperLookup,
@@ -29,6 +31,8 @@ OWN_PAPER_LOOKUPS_MESSAGE = "own_paper_lookups is append-only: rows cannot be up
 SECTION_APPROVALS_MESSAGE = "section_approvals is append-only: rows cannot be updated or deleted"
 INTERPRETATION_FINDINGS_MESSAGE = "interpretation_findings is append-only: rows cannot be updated or deleted"
 INTERPRETATION_REVIEWS_MESSAGE = "interpretation_reviews is append-only: rows cannot be updated or deleted"
+FIGURE_VERSIONS_MESSAGE = "figure_versions is append-only: rows cannot be updated or deleted"
+FIGURE_CHECKS_MESSAGE = "figure_checks is append-only: rows cannot be updated or deleted"
 
 
 def _postgres_function(table: str, message: str) -> str:
@@ -57,6 +61,8 @@ APPEND_ONLY_TABLES = {
     "provenance_reports": (ProvenanceReport, PROVENANCE_MESSAGE),
     "own_paper_lookups": (OwnPaperLookup, OWN_PAPER_LOOKUPS_MESSAGE),
     "section_approvals": (SectionApproval, SECTION_APPROVALS_MESSAGE),
+    "figure_versions": (FigureVersion, FIGURE_VERSIONS_MESSAGE),
+    "figure_checks": (FigureCheck, FIGURE_CHECKS_MESSAGE),
     "interpretation_findings": (InterpretationFinding, INTERPRETATION_FINDINGS_MESSAGE),
     "interpretation_reviews": (InterpretationReview, INTERPRETATION_REVIEWS_MESSAGE),
 }

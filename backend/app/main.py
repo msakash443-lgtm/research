@@ -22,6 +22,8 @@ from app.pagination import NEXT_CURSOR_HEADER
 from app.routers import accuracy, ai_locks, ai_settings, audit, provenance_reports, workspace_ai, assistant, auth, bibliometrics, claims, clusters, connectors, coverage, criteria, design_tools, evidence_matrix, exports, literature_summary, extraction_schemas, extractions, gates, guide, integrity, members, responsibilities, notes, documents, prisma, profile, projects, replication, research_runs, scholar_metrics, screening, searches, alerts, seeds, snowball, sources, stage, suggestions, usage, zotero, reviews
 from app.routers import journals, submissions
 from app.routers import people
+from app.routers import uploaded_documents
+from app.routers import figures
 from app.routers import privacy
 from app.routers import observability
 from app.routers import bias_warnings
@@ -62,7 +64,7 @@ def extraction_gate_locked_handler(request, exc: ExtractionGateLocked):
 @app.exception_handler(StageNotInChain)
 def stage_not_in_chain_handler(request, exc: StageNotInChain):
     return JSONResponse(status_code=409, content={"detail": str(exc)})
-UPLOAD_PATH_SUFFIXES = ("/fulltext/upload", "/api/notes/voice", "/api/notes/photo")
+UPLOAD_PATH_SUFFIXES = ("/fulltext/upload", "/api/notes/voice", "/api/notes/photo", "/uploaded-documents/upload")
 # X.143. Added first, so it runs innermost: inside the session middleware, where the caller's user id is known.
 rate_limit_counter = FixedWindowCounter()
 app.add_middleware(RateLimitMiddleware, upload_path_suffix=UPLOAD_PATH_SUFFIXES, counter=rate_limit_counter)
@@ -146,6 +148,8 @@ app.include_router(sources.router, prefix="/api")
 app.include_router(research_runs.router, prefix="/api")
 app.include_router(notes.router, prefix="/api")
 app.include_router(documents.router, prefix="/api")
+app.include_router(uploaded_documents.router, prefix="/api")
+app.include_router(figures.router, prefix="/api")
 app.include_router(integrity.router, prefix="/api")
 app.include_router(provenance_reports.router, prefix="/api")
 app.include_router(suggestions.router, prefix="/api")

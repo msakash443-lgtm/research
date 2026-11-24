@@ -1,6 +1,7 @@
 import atexit
 import contextlib
 import os
+import shutil
 import uuid
 import zlib
 
@@ -176,6 +177,19 @@ def pytest_sessionfinish(session):
     """The process that started the run (not an xdist worker) drops the run's template."""
     if not hasattr(session.config, "workerinput"):
         _drop_database(_TEMPLATE_NAME)
+
+
+def pytest_collection_modifyitems(config, items):
+    """Tests marked `requires_graphviz` skip with a stated reason when Settings.graphviz_dot_path cannot be found."""
+    from app.config import get_settings
+
+    dot_path = get_settings().graphviz_dot_path
+    if shutil.which(dot_path) is not None:
+        return
+    skip = pytest.mark.skip(reason=f"Graphviz `dot` not found at {dot_path!r}; install Graphviz or set GRAPHVIZ_DOT_PATH")
+    for item in items:
+        if item.get_closest_marker("requires_graphviz") is not None:
+            item.add_marker(skip)
 
 
 # Isolation modes. "rollback" (default): one working database per worker, each test runs inside an

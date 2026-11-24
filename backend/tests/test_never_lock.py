@@ -91,6 +91,7 @@ def test_the_route_table_yields_a_meaningful_set_of_read_endpoints():
 def test_every_read_endpoint_works_at_every_stage_with_gates_pending(world, monkeypatch, stage):
     client, project_id, pid, lookup_task_id = world
     monkeypatch.setattr(get_settings(), "obsidian_export_enabled", True)  # a deployment flag, not a stage lock
+    monkeypatch.setattr(get_settings(), "research_figures_enabled", True)  # a deployment flag, not a stage lock
     _at_stage_with_gates_pending(pid, stage)
     failures = []
     source_id = client.post(f"/api/projects/{project_id}/sources", json={"title": "A source"}).json()["id"]
