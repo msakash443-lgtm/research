@@ -2,11 +2,13 @@ import { el, label, toast } from "../dom.js";
 import { request, projectApi } from "../api.js";
 import { coverageBadge, errorCard } from "./common.js";
 import { suggestionPanel } from "../suggestion.js";
-import { afterDecision, authorsText, confidenceText, countsText, fetchEntireQueue, keyAction, OTHER_EXCLUSION_REASON, runBulk, safeLink, SCREENING_STAGES, splitAtQuote, typedReason } from "./screenLogic.js";
+import { discussionBlock } from "./screeningDiscussion.js";
+import { afterDecision, authorsText, confidenceText, completionMode, completionView, countsText, fetchEntireQueue, groupByPreprint, keyAction, OTHER_EXCLUSION_REASON, runBulk, safeLink, SCREENING_STAGES, typedReason } from "./screenLogic.js";
 
 // Two-stage screening (M2.3.1), built from the approved wireframe docs/wireframes/screening-queue.html.
-// Every decision is a person's own: the AI suggestion is shown as a suggestion and never pre-selected.
-// Keys: I include, E exclude (then 1-9 for the reason), M maybe, J next, K previous, U undo, A show/hide the
+// Every decision is a person's own: the AI suggestion is withheld until the person has decided the record
+// themselves (X.224), then shown beside their decision as a suggestion, never pre-selected.
+// Keys: I include, E exclude (then 1-9 for the reason), M maybe, J previous, K next, U undo, A show/hide the
 // AI suggestion, O open the source link, ? help. Bulk actions and the conflict queue are M2.3.2.
 let keyHandler = null;
 
@@ -75,9 +77,10 @@ async function loadAgreement(api, stage) {
   }
 }
 
-// Where two reviewers disagree (M2.4.2b's `conflicts`). Nobody's answer is final for such a record until an owner or
-// supervisor rules on it (M2.4.3, the `ruler` argument; null for everyone else, who see the list only).
-function renderConflicts(box, agreement, names, ruler) {
+// Where two reviewers disagree (M2.4.2b's `conflicts`). Nobody's answer is final for such a record until the two
+// reviewers have documented a discussion and an independent owner or supervisor has ruled with a written reason
+// (X.225, X.227). `who` is the signed-in person's part in it (see screeningDiscussion.js); null when dual screening is off.
+async function renderConflicts(box, agreement, names, who) {
   box.replaceChildren(el("h2", { text: "Disagreements between reviewers" }));
   if (agreement.error) {
     box.append(el("p", { className: "muted small", text: `Not available: ${agreement.error}` }));
@@ -95,7 +98,8 @@ function renderConflicts(box, agreement, names, ruler) {
     return;
   }
   const list = el("ul", { className: "screen-conflict-list" });
-  agreement.conflicts.forEach((conflict) => {
+  box.append(list);
+  for (const conflict of agreement.conflicts) {
     const row = el("li");
     row.append(el("strong", { text: conflict.title || "(untitled)" }));
     const decisions = el("ul");
@@ -103,39 +107,9 @@ function renderConflicts(box, agreement, names, ruler) {
       decisions.append(el("li", { className: "small", text: `${names.get(String(d.decider)) || d.decider}: ${label(d.decision)}${d.reason_code ? ` (${d.reason_code})` : ""}` }))
     );
     row.append(decisions);
-    const ruling = conflict.adjudication;
-    if (ruling) {
-      const by = names.get(String(ruling.decider)) || ruling.decider;
-      row.append(el("p", { className: "small", text: `Ruled by ${by}: ${label(ruling.decision)}${ruling.reason_code ? ` (${ruling.reason_code})` : ""}. The reviewers' own decisions above stay as they are.` }));
-    }
-    if (ruler) {
-      if (conflict.decisions.some((d) => String(d.decider) === ruler.userId)) {
-        row.append(el("p", { className: "muted small", text: "You decided this record yourself, so you can't rule on it." }));
-      } else {
-        const actions = el("div", { className: "screen-actions" });
-        const make = (text, handler) => {
-          const button = el("button", { type: "button", className: "quiet-button", text });
-          button.addEventListener("click", handler);
-          actions.append(button);
-        };
-        const prefix = ruling ? "Rule again: " : "Rule: ";
-        make(`${prefix}Include`, () => ruler.rule(conflict.source_id, "include"));
-        make(`${prefix}Maybe`, () => ruler.rule(conflict.source_id, "maybe"));
-        make(`${prefix}Exclude…`, () => {
-          if (ruler.exclusions.length === 0) {
-            toast("Add an exclusion criterion on Criteria & seeds first: every exclusion needs a reason.");
-            return;
-          }
-          const dialog = reasonDialog("exclude", ruler.exclusions);
-          dialog.addEventListener("reason", (event) => ruler.rule(conflict.source_id, "exclude", event.detail.code, event.detail.note));
-          dialog.showModal();
-        });
-        row.append(actions);
-      }
-    }
     list.append(row);
-  });
-  box.append(list);
+    if (who) row.append(await discussionBlock(conflict, { ...who, names }));
+  }
 }
 
 async function render(root, ctx, stage = "title_abstract", sort = "oldest") {
@@ -153,7 +127,7 @@ async function render(root, ctx, stage = "title_abstract", sort = "oldest") {
   }
   const criteria = ctx.summary.criteria?.criteria || [];
   const exclusions = criteria.filter((c) => c.kind === "exclude");
-  const state = { items: queue.items, counts: queue.counts, pending: queue.pending, index: 0, showAi: true, undoStack: [], busy: false, selected: new Set(), hiddenAi: new Set() };
+  const state = { items: queue.items, counts: queue.counts, pending: queue.pending, index: 0, showAi: true, undoStack: [], busy: false, selected: new Set(), revealed: null };
   const canDecide = ctx.canWrite && !queue.locked;
   const stageSelect = el("select", { attrs: { "aria-label": "Screening stage" } });
   SCREENING_STAGES.forEach((option) => {
@@ -195,7 +169,7 @@ async function render(root, ctx, stage = "title_abstract", sort = "oldest") {
   });
   const help = el("p", {
     className: "muted small",
-    text: "Keys: I include · E exclude (then the reason's number; for 10 and up, type both digits) · M maybe · J next · K previous · U undo · A show/hide AI suggestion · O open the source link",
+    text: "Keys: I include · E exclude (then the reason's number; for 10 and up, type both digits) · M maybe · J previous · K next · U undo · A show/hide AI suggestion · O open the source link",
   });
 
   if (!ctx.canWrite) notice.textContent = "You can read the queue, but only an owner or co-author can screen.";
@@ -207,28 +181,34 @@ async function render(root, ctx, stage = "title_abstract", sort = "oldest") {
   else if (stage === "full_text") notice.textContent = "Full-text screening contains only papers that passed title/abstract screening. A final Include makes a paper eligible for the evidence base.";
 
   const current = () => state.items[state.index] || null;
+  const mode_ = () => completionMode({ items: state.items, pending: state.pending, counts: state.counts });
 
   function renderList() {
-    list.replaceChildren(
-      ...state.items.map((item, i) => {
-        const li = el("li", { className: `screen-item${i === state.index ? " active" : ""}` });
-        const box = el("input", { type: "checkbox", attrs: { "aria-label": `Select: ${item.title || "untitled"}` } });
-        box.checked = state.selected.has(item.source_id);
-        box.disabled = !canDecide;
-        box.addEventListener("change", () => {
-          if (box.checked) state.selected.add(item.source_id);
-          else state.selected.delete(item.source_id);
-          renderBulk();
-        });
-        const button = el("button", { type: "button", className: "quiet-button screen-item-button", text: item.title || "(untitled)" });
-        button.addEventListener("click", () => {
-          state.index = i;
-          renderAll();
-        });
-        li.append(box, button);
-        return li;
-      })
-    );
+    const rows = [];
+    for (const group of groupByPreprint(state.items, queue.peer_reviewed_only)) {
+      if (group.title) rows.push(el("li", { className: "screen-group muted small", text: group.title }));
+      rows.push(...group.indices.map((i) => itemRow(state.items[i], i)));
+    }
+    list.replaceChildren(...rows);
+  }
+
+  function itemRow(item, i) {
+    const li = el("li", { className: `screen-item${i === state.index ? " active" : ""}` });
+    const box = el("input", { type: "checkbox", attrs: { "aria-label": `Select: ${item.title || "untitled"}` } });
+    box.checked = state.selected.has(item.source_id);
+    box.disabled = !canDecide;
+    box.addEventListener("change", () => {
+      if (box.checked) state.selected.add(item.source_id);
+      else state.selected.delete(item.source_id);
+      renderBulk();
+    });
+    const button = el("button", { type: "button", className: "quiet-button screen-item-button", text: item.title || "(untitled)" });
+    button.addEventListener("click", () => {
+      state.index = i;
+      renderAll();
+    });
+    li.append(box, button);
+    return li;
   }
 
   function renderBulk() {
@@ -271,19 +251,20 @@ async function render(root, ctx, stage = "title_abstract", sort = "oldest") {
     const item = current();
     if (!item) {
       // "Nothing left" only when the server's own count says so; records it still counts but the screen did not
-      // load would be a loading fault, and is said as one.
-      record.replaceChildren(
-        state.pending > 0
-          ? el("h2", { text: "Some records could not be loaded" })
-          : el("h2", { text: "Nothing left to screen" }),
-        el("p", {
-          className: "muted",
-          text:
-            state.pending > 0
-              ? `${state.pending} records are still waiting for your decision but did not load. Reload the page to see them.`
-              : "Every record at this stage has your decision. Approve G3 on Approvals when you are satisfied with the included set.",
-        })
-      );
+      // load would be a loading fault, and is said as one (X.219: completion and its route are the primary content).
+      const mode = mode_();
+      const view = completionView(mode, stage, { locked: queue.locked, othersPending: (state.counts.unscreened || 0) + (state.counts.conflict || 0) > 0 });
+      const text = mode === "unloaded"
+        ? `${state.pending} records are still waiting for your decision but did not load. Reload the page to see them.`
+        : view.text;
+      const nodes = [el("h2", { text: view.title })];
+      if (text) nodes.push(el("p", { className: "muted", text }));
+      if (view.primary) {
+        const go = el("button", { type: "button", className: "screen-primary", text: view.primary.label });
+        go.addEventListener("click", () => (view.primary.action === "stage" ? render(root, ctx, view.primary.stage, sort) : ctx.navigate("approvals")));
+        nodes.push(go);
+      }
+      record.replaceChildren(...nodes);
       return;
     }
     const link = safeLink(item.doi);
@@ -292,25 +273,18 @@ async function render(root, ctx, stage = "title_abstract", sort = "oldest") {
       ? el("a", { href: link, target: "_blank", rel: "noopener noreferrer", text: `DOI ${item.doi}` })
       : el("span", { className: "muted small", text: "No DOI recorded" });
     const found = item.found_via ? el("p", { className: "muted small", text: `Found via ${label(item.found_via.method || "another search")}` }) : null;
-    // The AI's quoted evidence, marked where it sits in the record, only while its suggestion is showing (X.77).
-    const shown = item.ai_suggestion && state.showAi && !state.hiddenAi.has(item.source_id) && !["discarded", "locked"].includes(item.ai_suggestion.state);
-    const marked = (tag, text, where, extra = {}) => {
-      const parts = shown && item.ai_suggestion.evidence_source === where ? splitAtQuote(text, item.ai_suggestion.evidence_quote) : null;
-      return parts
-        ? el(tag, { ...extra, children: [document.createTextNode(parts[0]), el("mark", { text: parts[1], attrs: { title: "The AI's evidence" } }), document.createTextNode(parts[2])] })
-        : el(tag, { ...extra, text });
-    };
     record.replaceChildren(
-      marked("h2", item.title || "(untitled)", "title"),
+      el("h2", { text: item.title || "(untitled)" }),
       meta,
       el("p", { children: [source] }),
       ...(found ? [found] : []),
       coverageBadge(item.coverage),
+      ...(item.preprint ? [el("p", { className: "muted small screen-preprint", text: "Preprint, not peer reviewed" })] : []),
       ...(item.matched_terms && item.matched_terms.length
         ? [el("p", { className: "muted small screen-matched-terms", text: `Matched terms: ${item.matched_terms.join(", ")}` })]
         : []),
       el("h3", { text: "Abstract" }),
-      marked("p", item.abstract || "No abstract recorded for this record.", "abstract", { className: "screen-abstract" })
+      el("p", { className: "screen-abstract", text: item.abstract || "No abstract recorded for this record." })
     );
   }
 
@@ -324,11 +298,16 @@ async function render(root, ctx, stage = "title_abstract", sort = "oldest") {
       actions.append(button);
     };
     const off = !canDecide || !item;
+    if (mode_() !== "active") {
+      // Nothing to decide: the decision and navigation buttons would do nothing, so only Undo stays.
+      decide("undo", "Undo (U)", undo, !canDecide || state.undoStack.length === 0);
+      return;
+    }
     decide("include", "Include… (I)", openInclude, off);
     decide("exclude", "Exclude… (E)", openExclude, off);
     decide("maybe", "Maybe (M)", () => decideCurrent("maybe"), off);
-    decide("prev", "← Previous (K)", () => step(-1), state.index <= 0);
-    decide("next", "Next → (J)", () => step(1), state.index >= state.items.length - 1);
+    decide("prev", "← Previous (J)", () => step(-1), state.index <= 0);
+    decide("next", "Next → (K)", () => step(1), state.index >= state.items.length - 1);
     decide("undo", "Undo (U)", undo, !canDecide || state.undoStack.length === 0);
   }
 
@@ -343,69 +322,56 @@ async function render(root, ctx, stage = "title_abstract", sort = "oldest") {
       box.append(ul);
     }
     const ai = el("section", { className: "panel screen-ai", attrs: { "aria-live": "polite" } });
-    const item = current();
-    const s = item?.ai_suggestion;
-    // Next to the suggestion: how sure the AI says it is, and the words of the record it points to (X.77).
-    const evidenceBlock = () => {
+    const title = el("h3", { text: "AI suggestion, not a decision" });
+    const note = (text) => el("p", { className: "muted small", text });
+    const r = state.revealed;
+    // How sure the AI says it is, and the words of the record it points to (X.77).
+    const evidenceBlock = (s) => {
       const block = el("div", { className: "screen-evidence" });
       const level = confidenceText(s.confidence_level, s.confidence);
       if (level) block.append(el("p", { className: `small confidence-${s.confidence_level}`, text: level }));
       if (s.evidence_quote) {
-        block.append(el("p", { className: "muted small", text: `The AI points to this ${s.evidence_source || "text"} in the record:` }),
-          el("blockquote", { text: s.evidence_quote }));
-      } else if (s.decision) block.append(el("p", { className: "muted small", text: "The AI gave no quote from the record." }));
+        block.append(note(`The AI points to this ${s.evidence_source || "text"} in the record:`), el("blockquote", { text: s.evidence_quote }));
+      } else if (s.decision) block.append(note("The AI gave no quote from the record."));
       return block;
     };
-    if (!item) {
-      ai.append(el("h3", { text: "AI suggestion, not a decision" }), el("p", { className: "muted small", text: "—" }));
+    if (stage !== "title_abstract") {
+      ai.append(title, note("AI suggestions are made at title/abstract screening only."));
     } else if (!state.showAi) {
-      ai.append(el("h3", { text: "AI suggestion, not a decision" }), el("p", { className: "muted small", text: "Hidden. Press A to show it." }));
-    } else if (state.hiddenAi.has(item.source_id) || ["discarded", "locked"].includes(s?.state)) {
-      ai.append(
-        el("h3", { text: "AI suggestion, not a decision" }),
-        el("p", { className: "muted small", text: "No active AI suggestion for this record." })
-      );
-    } else if (!s) {
-      ai.append(
-        el("h3", { text: "AI suggestion, not a decision" }),
-        el("p", { className: "muted small", text: queue.dual_screen_enabled ? "Withheld until you decide." : "No AI suggestion for this record." })
-      );
+      ai.append(title, note("Hidden. Press A to show it."));
+    } else if (!r) {
+      ai.append(title, note("Withheld until you decide a record, so the suggestion cannot sway your decision. It then appears here beside your own."));
     } else {
-      // The shared panel (X.46.4): Accept records YOUR decision, Discard sets it aside, nothing is decided until you act.
-      const wanted = item.source_id;
-      ai.append(el("p", { className: "muted small", text: "Loading the AI suggestion…" }));
-      suggestionPanel({ ...ctx, canWrite: canDecide }, {
-        targetKind: "screening",
-        targetId: wanted,
-        onChange: async (path, area) => {
-          if (area === "/ai-locks" || /\/discard$/.test(path)) state.hiddenAi.add(wanted);
-          if (/\/restore$/.test(path)) state.hiddenAi.delete(wanted);
-          if (/\/(?:accept|edit-accept)$/.test(path)) state.undoStack.push({ sourceId: wanted, suggestionId: path.split("/")[1] });
-          await reloadQueue();
-        },
-      }).then((panel) => {
-        if (current()?.source_id !== wanted || !state.showAi) return;
-        if (panel.querySelector(".suggestion-card")) {
-          ai.replaceChildren(panel, evidenceBlock());
-          return;
-        }
-        if (state.hiddenAi.has(wanted)) {
-          ai.replaceChildren(
-            el("h3", { text: "AI suggestion, not a decision" }),
-            el("p", { className: "muted small", text: "No active AI suggestion for this record." })
-          );
-          return;
-        }
-        // A pre-screen row written before suggestions were stored through the panel: show it read-only.
+      const mine = `${label(r.your_decision)}${r.your_reason_code ? ` (${r.your_reason_code})` : ""}`;
+      ai.append(title, el("p", { className: "small", text: `Your decision on “${r.title}”: ${mine}` }));
+      const s = r.suggestion;
+      if (!s) ai.append(note("The AI gave no suggestion for this record."));
+      else {
         const conf = s.confidence == null ? "" : ` · confidence ${Math.round(s.confidence * 100)}%`;
-        ai.replaceChildren(
-          el("h3", { text: "AI suggestion, not a decision" }),
-          el("p", { text: `${label(s.decision)}${s.reason_code ? ` (${s.reason_code})` : ""}${conf}` }),
+        ai.append(
+          el("p", { text: `AI suggested: ${label(s.decision)}${s.reason_code ? ` (${s.reason_code})` : ""}${conf}` }),
+          el("p", { className: "small", text: r.agrees ? "It matches your decision." : "It differs from your decision. Your decision stands unless you change it." }),
           el("p", { className: "small", text: s.rationale || "No rationale recorded." }),
-          evidenceBlock(),
-          el("p", { className: "muted small", text: "A suggestion only. It counts for nothing until you decide." })
+          evidenceBlock(s),
+          note("A suggestion only. It counts for nothing unless you change your decision to it.")
         );
-      });
+        // The shared panel (X.46.4): Accept replaces YOUR decision with the suggestion, Discard sets it aside.
+        if (s.id && !r.agrees && !["discarded", "locked"].includes(s.state)) {
+          const wanted = r.sourceId;
+          suggestionPanel({ ...ctx, canWrite: canDecide }, {
+            targetKind: "screening",
+            targetId: wanted,
+            onChange: async (path) => {
+              if (/\/(?:accept|edit-accept)$/.test(path)) state.undoStack.push({ sourceId: wanted, suggestionId: path.split("/")[1] });
+              state.revealed = null;
+              await loadReveal(wanted);
+              await reloadQueue();
+            },
+          }).then((panel) => {
+            if (state.revealed?.sourceId === wanted && panel.querySelector(".suggestion-card")) ai.replaceChildren(panel, evidenceBlock(s));
+          });
+        }
+      }
     }
     const toggle = el("button", { type: "button", className: "quiet-button", text: state.showAi ? "Hide suggestion (A)" : "Show suggestion (A)" });
     toggle.addEventListener("click", () => {
@@ -448,6 +414,9 @@ async function render(root, ctx, stage = "title_abstract", sort = "oldest") {
   }
 
   function renderAll() {
+    const active = mode_() === "active";
+    queueSection.hidden = !active;
+    layout.classList.toggle("screen-done", !active);
     header.textContent = countsText(state.counts, state.pending);
     renderList();
     renderBulk();
@@ -461,6 +430,17 @@ async function render(root, ctx, stage = "title_abstract", sort = "oldest") {
     if (next < 0 || next >= state.items.length) return;
     state.index = next;
     renderAll();
+  }
+
+  // Once this person has decided a record, fetch the AI's suggestion for it; the server answers 404 before that.
+  async function loadReveal(sourceId, title = state.revealed?.title) {
+    if (stage !== "title_abstract") return;
+    try {
+      state.revealed = { ...(await request(api(`/suggestion/${sourceId}`))), sourceId, title: title || "this record" };
+    } catch (error) {
+      state.revealed = null;
+    }
+    renderSide();
   }
 
   async function decideCurrent(decision, reasonCode = null, note = null) {
@@ -484,6 +464,8 @@ async function render(root, ctx, stage = "title_abstract", sort = "oldest") {
       const back = state.items.findIndex((i) => i.source_id === keep);
       state.index = back >= 0 ? back : Math.min(state.index, Math.max(0, state.items.length - 1));
       toast(`${label(decision)} recorded.`);
+      state.revealed = null;
+      loadReveal(item.source_id, item.title);
     } catch (error) {
       toast(error.message);
     } finally {
@@ -524,6 +506,7 @@ async function render(root, ctx, stage = "title_abstract", sort = "oldest") {
         ...(undoPath ? {} : { body: JSON.stringify({ source_id: sourceId, stage }) }),
       });
       state.undoStack.pop();
+      state.revealed = null; // undecided again: the suggestion is withheld again
       // The undo has been recorded: the record is waiting again even if the reload below fails, so count it now.
       state.pending += 1;
       try {
@@ -586,32 +569,27 @@ async function render(root, ctx, stage = "title_abstract", sort = "oldest") {
   keyHandler = handle;
   document.addEventListener("keydown", handle, true);
 
-  const layout = el("div", { className: "screen-layout", children: [el("section", { className: "panel screen-queue", children: [bulkBar, list] }), el("section", { className: "panel", children: [record, actions] }), side] });
+  const queueSection = el("section", { className: "panel screen-queue", children: [bulkBar, list] });
+  const layout = el("div", { className: "screen-layout", children: [queueSection, el("section", { className: "panel", children: [record, actions] }), side] });
   const conflicts = el("section", { className: "panel screen-conflicts" });
   root.replaceChildren(el("div", { className: "screen-controls", children: [stageControl, sortControl] }), header, notice, layout, conflicts, help);
   renderAll();
   const names = new Map((ctx.summary.members || []).map((m) => [String(m.user_id), m.display_name || m.email]));
-  // Owners and supervisors may rule on a conflict (M2.4.3) while screening is open under dual-screen.
-  const ruler =
-    (ctx.role === "owner" || ctx.role === "supervisor") && queue.dual_screen_enabled && !queue.locked
-      ? {
-          userId: String(ctx.user?.id),
-          exclusions,
-          rule: async (sourceId, decision, reasonCode = null, note = null) => {
-            try {
-              await request(api("/decisions/adjudicate"), {
-                method: "POST",
-                body: JSON.stringify({ source_id: sourceId, stage, decision, reason_code: reasonCode, note }),
-              });
-              toast(`Ruling recorded: ${label(decision)}. Both reviewers' decisions stay in the audit file.`);
-              await ctx.refresh();
-            } catch (error) {
-              toast(error.message);
-            }
-          },
-        }
-      : null;
-  renderConflicts(conflicts, await loadAgreement(api, stage), names, ruler);
+  // Under dual screening each conflict shows its discussion thread; the two reviewers write in it and an independent
+  // owner or supervisor rules with a written reason (X.227). The server enforces who may do what (X.225).
+  const who = queue.dual_screen_enabled
+    ? {
+        userId: String(ctx.user?.id),
+        canWrite: ctx.canWrite,
+        canRule: ctx.role === "owner" || ctx.role === "supervisor",
+        locked: queue.locked,
+        criteria,
+        api,
+        stage,
+        refresh: ctx.refresh,
+      }
+    : null;
+  await renderConflicts(conflicts, await loadAgreement(api, stage), names, who);
 }
 
 export default { render };

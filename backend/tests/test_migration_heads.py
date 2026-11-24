@@ -4,6 +4,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+import pytest
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 
@@ -50,6 +51,7 @@ def test_alembic_has_a_single_head():
     assert len(heads) == 1, f"Alembic has multiple heads {sorted(heads)}; add a merge revision."
 
 
+@pytest.mark.slow  # starts a Python subprocess
 def test_alembic_heads_cli_loads_every_migration():
     """`alembic heads` imports each migration without running env.py, so `app` must come from prepend_sys_path.
 

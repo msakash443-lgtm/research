@@ -1,5 +1,8 @@
+import pytest
 import sqlalchemy as sa
 from alembic import command
+
+pytestmark = pytest.mark.slow  # walks the Alembic chain
 
 _CLAIM_GUARDS = {
     "claims_keep_evidence_delete",

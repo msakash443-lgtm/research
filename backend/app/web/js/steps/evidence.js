@@ -343,7 +343,14 @@ async function render(root, ctx) {
   }
   scroll.append(table);
   workspace.append(scroll, panel);
+  const showSource = async (url) => {
+    panel.replaceChildren(el("p", { text: "Loading source text…" }));
+    panel.scrollIntoView?.({ block: "nearest" });
+    try { sourcePanel(panel, await request(url)); }
+    catch (error) { panel.replaceChildren(el("p", { text: error.message })); }
+  };
   root.append(workspace, el("p", { className: "muted small", text: "* Critical field. Export includes values, review status, quotes, pages and sections." }));
+  root.append(await comparisonPanel(ctx, base, selected, showSource));
 }
 
 export default { render };

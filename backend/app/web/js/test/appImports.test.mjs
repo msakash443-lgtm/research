@@ -83,7 +83,7 @@ test("app.js imports every js/ module function it calls", () => {
 
 test("the check catches the X.73 mistake: a call with its import removed", () => {
   const appSrc = readFileSync(join(webDir, "app.js"), "utf8");
-  const broken = appSrc.replace(/^import \{ parseInboxRoute \} from "\.\/js\/inboxLogic\.js";\n/m, "");
+  const broken = appSrc.replace(/^import \{ parseInboxRoute \} from "\.\/js\/inboxLogic\.js";\r?\n/m, "");
   assert.notEqual(broken, appSrc, "the parseInboxRoute import line was not found to remove");
   assert.deepEqual(unresolvedCalls(broken, allExportedNames()), ["parseInboxRoute"]);
 });

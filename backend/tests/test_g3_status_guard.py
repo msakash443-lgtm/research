@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 PLAN = Path(__file__).resolve().parents[2] / "plan.md"
+DECISIONS = Path(__file__).resolve().parents[2] / "docs" / "decisions.md"  # the Decisions log moved out of plan.md (X.232)
 GUARDED = ("M2.8", "M2.8.1", "M2.10")
 
 _CLOSED_LINE = re.compile(r"^\s*- \[x\] \*\*(M2\.8\.1|M2\.8|M2\.10)\*\*", re.MULTILINE)
@@ -23,9 +24,10 @@ def _has_task_id(row: str, task: str) -> bool:
     return re.search(rf"(?<![\d.]){re.escape(task)}(?![\d.])", row) is not None
 
 
-def closed_without_g3(plan_text: str) -> list[str]:
-    """Guarded tasks marked `[x]` with no Decisions-log row that names them and records G3 as approved."""
-    decisions = _section(plan_text, "## 3. Decisions log", "## 4.")
+def closed_without_g3(plan_text: str, decisions_text: str | None = None) -> list[str]:
+    """Guarded tasks marked `[x]` with no Decisions-log row that names them and records G3 as approved.
+    `decisions_text` is the Decisions log file; without it the log is read from a `## 3.` section of `plan_text`."""
+    decisions = decisions_text if decisions_text is not None else _section(plan_text, "## 3. Decisions log", "## 4.")
     rows = [line for line in decisions.splitlines() if line.startswith("|")]
     flagged = []
     for task in dict.fromkeys(m.group(1) for m in _CLOSED_LINE.finditer(plan_text)):
@@ -36,7 +38,7 @@ def closed_without_g3(plan_text: str) -> list[str]:
 
 
 def test_the_current_plan_has_no_guarded_task_closed_without_g3_approval():
-    assert closed_without_g3(PLAN.read_text(encoding="utf-8")) == []
+    assert closed_without_g3(PLAN.read_text(encoding="utf-8"), DECISIONS.read_text(encoding="utf-8")) == []
 
 
 def test_a_decisions_row_recording_g3_approval_clears_the_flag():

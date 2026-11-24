@@ -14,6 +14,7 @@ def test_review_type_uses_review_design_even_for_a_quantitative_goal():
 
 
 def test_review_causal_recommendations_do_not_accumulate_primary_study_analyses():
+    before = list(methodology_advisor.REVIEW_ANALYSIS)
     first = methodology_advisor.recommend(
         "literature_review", "test_causal", human_participants=False, can_randomize=False
     )
@@ -22,7 +23,9 @@ def test_review_causal_recommendations_do_not_accumulate_primary_study_analyses(
     )
     ordinary = methodology_advisor.recommend("literature_review", "relate", human_participants=False)
 
+    assert len(first["analysis"]) == len(second["analysis"]) == len(before)
     assert first["analysis"] == second["analysis"] == ordinary["analysis"]
+    assert methodology_advisor.REVIEW_ANALYSIS == before
     assert "Difference-in-differences" not in [item["technique"] for item in ordinary["analysis"]]
 
 

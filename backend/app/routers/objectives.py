@@ -76,7 +76,7 @@ def amend_objective(
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    """Correct an objective. The earlier statement and rationale are kept in its history; the audit event
+    """Correct an objective. Every earlier field value is kept in its history; the audit event
     records which fields changed, never the text (X.193)."""
     objective = _live_objective(db, project, objective_id)
     changes = {}
@@ -93,7 +93,13 @@ def amend_objective(
     actor = audit.user_actor(user)
     objective.history = [
         *(objective.history or []),
-        {"statement": objective.statement, "rationale": objective.rationale, "changed_by": actor, "changed_at": utcnow().isoformat()},
+        {
+            "statement": objective.statement, "rationale": objective.rationale, "measure": objective.measure,
+            "deliverable": objective.deliverable,
+            "target_date": objective.target_date.isoformat() if objective.target_date else None,
+            "research_question_id": str(objective.research_question_id) if objective.research_question_id else None,
+            "changed_by": actor, "changed_at": utcnow().isoformat(),
+        },
     ]
     for field, value in changes.items():
         setattr(objective, field, value)

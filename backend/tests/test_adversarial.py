@@ -159,6 +159,7 @@ def test_the_padding_attack_is_cut_off_by_the_length_cap(fake_llm):
 
 # ---- 2. the response shape does not change ---------------------------------------------------------------------
 
+@pytest.mark.slow
 def test_a_hostile_run_has_exactly_the_same_response_shape_as_a_benign_run(fake_llm):
     _c, _p, benign = _manual_run("adv-shape-ok@example.com", REAL_FINDING)
     hostile_keys = set()

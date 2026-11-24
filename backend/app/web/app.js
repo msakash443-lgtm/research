@@ -268,7 +268,7 @@ async function loadSummary() {
   const endpoints = {
     stage: "/stage", gates: "/gates", context: "/context", criteria: "/criteria", seeds: "/seeds",
     searches: "/searches", sources: "/sources", runs: "/research-runs", members: "/members",
-    knownItems: "/known-items", prisma: "/prisma", staleArtifacts: "/artifacts?status=stale",
+    knownItems: "/known-items", prisma: "/prisma", staleArtifacts: "/artifacts?status=stale", objectives: "/objectives",
   };
   const keys = Object.keys(endpoints);
   const settled = await Promise.allSettled(keys.map((key) => request(projectApi(projectId, endpoints[key]))));
@@ -278,7 +278,7 @@ async function loadSummary() {
     const result = settled[index];
     if (result.status === "fulfilled") summary[key] = result.value;
     else {
-      summary[key] = key === "staleArtifacts" || key === "gates" || key === "context" || key === "seeds" || key === "sources" || key === "members" ? [] : null;
+      summary[key] = key === "staleArtifacts" || key === "gates" || key === "context" || key === "objectives" || key === "seeds" || key === "sources" || key === "members" ? [] : null;
       summary.errors[key] = result.reason.message;
     }
   });
@@ -863,5 +863,25 @@ async function endSession(message) {
   if (message) toast(message);
   authenticate();
 }
+
+// Theme and light/dark choice (X.245). js/theme-init.js already applied the saved choice before first paint; these
+// controls change it and keep it in this browser (js/theme-init.js owns the storage).
+function setupThemeControls() {
+  const html = document.documentElement;
+  const select = $("#theme-select");
+  const toggle = $("#mode-toggle");
+  const theme = window.RaTheme.page;
+  select.replaceChildren(...theme.available().map((name) => el("option", { text: name[0].toUpperCase() + name.slice(1), attrs: { value: name } })));
+  const sync = () => {
+    select.value = html.getAttribute("data-theme");
+    const dark = html.getAttribute("data-mode") === "dark";
+    toggle.setAttribute("aria-pressed", String(dark));
+    toggle.textContent = dark ? "Light mode" : "Dark mode";
+  };
+  select.addEventListener("change", () => { theme.setTheme(select.value); sync(); });
+  toggle.addEventListener("click", () => { theme.setMode(html.getAttribute("data-mode") === "dark" ? "light" : "dark"); sync(); });
+  sync();
+}
+setupThemeControls();
 
 authenticate().catch((error) => toast(error.message));

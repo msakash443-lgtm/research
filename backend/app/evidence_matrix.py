@@ -19,6 +19,7 @@ from app.extraction_schema import schema_version
 from app.models import Extraction, Project, Task, TaskStatus
 from app.project_schemas import resolve
 from app.screening import included_sources, rows_for_stage
+from app.source_flags import PREPRINT_LABEL, is_preprint
 from app.thematic_clusters import clusterable_sources
 
 
@@ -31,7 +32,17 @@ def original_url(source) -> str | None:
     return source.url.strip() if parts.scheme in ("http", "https") and parts.netloc else None
 
 
+def _version_number(stored: str) -> int:
+    try:
+        return int(stored.rpartition("@")[2])
+    except ValueError:
+        return 0
+
+
 def build(db: Session, project: Project, name: str = "default") -> dict:
+    """Papers by fields view. Extractions made under an older version of the same schema name stay in the
+    view (a bumped schema must not hide existing human work); their cells are read by field key, and each
+    paper reports the `extraction_schema_version` it actually came from."""
     schema = resolve(db, project.id, name)
     version = schema_version(schema)
     task_rows = db.scalars(select(Task).where(Task.project_id == project.id, Task.type.in_(("fulltext_fetch", "ai_extraction")))).all()
@@ -57,13 +68,14 @@ def build(db: Session, project: Project, name: str = "default") -> dict:
     task_for = lambda source_id, has_pdf: tasks_by_source.get(
         (str(source_id), name if has_pdf else None)
     ) or tasks_by_source.get((str(source_id), None))
+    same_schema = Extraction.schema_version.startswith(name + "@", autoescape=True)
     screening_rows = rows_for_stage(db, project, "title_abstract")
     screening_rows.update(rows_for_stage(db, project, "full_text"))
     if screening_rows:
         included_ids = {source.id for source in included_sources(db, project)}
         extracted_ids = {
             row.source_id for row in db.scalars(select(Extraction).where(
-                Extraction.project_id == project.id, Extraction.schema_version == version
+                Extraction.project_id == project.id, same_schema
             ))
         }
         source_rows = [
@@ -75,12 +87,15 @@ def build(db: Session, project: Project, name: str = "default") -> dict:
     sources = {source.id: source for source in source_rows}
     chosen = {}
     for row in db.scalars(select(Extraction).where(
-        Extraction.project_id == project.id, Extraction.schema_version == version
+        Extraction.project_id == project.id, same_schema
     )):
         if row.source_id not in sources:
             continue
         previous = chosen.get(row.source_id)
-        rank = lambda item: (item.verified_by_human, item.updated_at or item.created_at, str(item.id))
+        rank = lambda item: (
+            item.verified_by_human, item.schema_version == version, _version_number(item.schema_version),
+            item.updated_at or item.created_at, str(item.id),
+        )
         if previous is None or rank(row) > rank(previous):
             chosen[row.source_id] = row
     papers = []
@@ -105,7 +120,10 @@ def build(db: Session, project: Project, name: str = "default") -> dict:
             }
         papers.append({
             "source_id": str(source_id), "title": source.title, "coverage": fulltext_coverage.coverage(source),
+            "publication_status": PREPRINT_LABEL if is_preprint(source) else None,
+            "peer_reviewed_only_excluded": bool(project.peer_reviewed_only and is_preprint(source)),
             "extraction_id": str(row.id) if row else None,
+            "extraction_schema_version": row.schema_version if row else None,
             "verified_by_human": row.verified_by_human if row else False,
             "extracted_by": row.extracted_by if row else None,
             "model_id": row.model_id if row else None,
@@ -138,7 +156,7 @@ def tabular(matrix: dict) -> tuple[list[str], list[list[str]]]:
     rows = []
     for paper in matrix["papers"]:
         row = [paper["source_id"], paper["title"], paper["extraction_id"],
-               matrix["schema_version"], str(paper["verified_by_human"]).lower()]
+               paper.get("extraction_schema_version") or matrix["schema_version"], str(paper["verified_by_human"]).lower()]
         for field in matrix["fields"]:
             cell = paper["cells"][field["key"]]
             row.extend(_safe(cell[part]) for part in ("value", "status", "quote", "page", "section"))

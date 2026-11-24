@@ -8,6 +8,8 @@ from urllib.parse import parse_qs, urlsplit
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.ui_themes import registered_themes
+
 _LOCAL_NAME_SUFFIXES = (".localhost", ".local", ".internal")
 # A single-label name such as a Docker service (`ollama`). It must start with a letter, so numeric
 # shorthands like `2130706433` or `0x7f000001`, which resolvers may turn into any IPv4 address, don't count.
@@ -241,6 +243,9 @@ class Settings(BaseSettings):
     # Analysis sandbox (M5.3.3): a Docker image pinned by digest (name@sha256:...). Unset = runs answer 503.
     analysis_sandbox_image: str | None = None
     analysis_sandbox_timeout_seconds: int = 120
+    # Default UI theme (X.245): one of the files in web/css/themes/ (not the `_` templates). Each user can still
+    # pick another theme and light/dark in the topbar; that choice is kept in their browser.
+    ui_theme: str = "scholarly"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -271,6 +276,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_production_settings(self) -> "Settings":
+        if self.ui_theme not in registered_themes():
+            raise ValueError(f"UI_THEME must be one of: {', '.join(registered_themes())}")
         if bool(self.local_llm_api_base_url) != bool(self.local_llm_model):
             raise ValueError("LOCAL_LLM_API_BASE_URL and LOCAL_LLM_MODEL must be set together")
         if self.local_llm_api_base_url and not self.local_llm_allow_public_host:

@@ -143,6 +143,9 @@ class Project(Timestamped, Base):
     # (`GET .../screening/queue?sort=relevance`) can rank unscreened records by a classifier trained
     # fresh, each request, on the project's current human decisions (`app.active_learning`).
     active_learning_enabled: Mapped[bool] = mapped_column(default=False, server_default=false())
+    # Publication status (X.196): when on, a source flagged `preprint` is not citable in synthesis and is
+    # listed separately in screening. Off by default: a preprint is then cited with its preprint label.
+    peer_reviewed_only: Mapped[bool] = mapped_column(default=False, server_default=false())
     # Project-wide AI controls (X.31.7). Default Suggestions only for new and existing projects (Q14).
     ai_involvement: Mapped[AiInvolvement] = mapped_column(
         Enum(AiInvolvement, name="ai_involvement"), default=AiInvolvement.suggestions_only, server_default=AiInvolvement.suggestions_only.value
@@ -332,6 +335,20 @@ class ResearchObjective(Timestamped, Base):
 
 
 
+class ProjectResponsibility(Timestamped, Base):
+    """Who leads or supports one area of the project's work (X.226, `app.responsibilities`). Not an
+    authorisation and not a CRediT role: nothing reads this row to allow or refuse an action."""
+
+    __tablename__ = "project_responsibilities"
+    __table_args__ = (UniqueConstraint("project_id", "area", "user_id", name="uq_project_responsibility"),)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    area: Mapped[str] = mapped_column(String(30))
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    level: Mapped[str] = mapped_column(String(10))  # "lead" or "support"
+    assigned_by: Mapped[str] = mapped_column(String(100))
+
+
 class Source(Timestamped, Base):
     __tablename__ = "sources"
     # `ingest_key` makes automated ingestion idempotent: a retried task derives the same key for the
@@ -449,6 +466,31 @@ class ScreeningDecision(Base):
 @event.listens_for(ScreeningDecision, "before_delete")
 def _reject_screening_change(mapper, connection, target) -> None:
     raise ValueError("screening_decisions is append-only: rows cannot be updated or deleted")
+
+
+class ScreeningDiscussionNote(Base):
+    """One note in the reviewers' documented discussion of a conflict on one source and stage (X.225). Append-only.
+
+    `decision_seq` is the highest decision row number at the moment of writing, so a note can be told apart from
+    the discussion of an earlier, since-changed disagreement: only notes written after the latest reviewer
+    decision count towards ruling on the conflict.
+    """
+
+    __tablename__ = "screening_discussion_notes"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    source_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sources.id"), index=True)
+    stage: Mapped[str] = mapped_column(String(20))
+    decision_seq: Mapped[int]
+    author: Mapped[str] = mapped_column(String(100))
+    body: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+@event.listens_for(ScreeningDiscussionNote, "before_update")
+@event.listens_for(ScreeningDiscussionNote, "before_delete")
+def _reject_discussion_note_change(mapper, connection, target) -> None:
+    raise ValueError("screening_discussion_notes is append-only: rows cannot be updated or deleted")
 
 
 class AutoExcludeAudit(Base):
@@ -1368,6 +1410,7 @@ class JournalCandidate(Timestamped, Base):
     source_url: Mapped[str] = mapped_column(String(2000))
     checked_at: Mapped[str] = mapped_column(String(64))
     official_predatory: Mapped[bool] = mapped_column(default=False, server_default=false())
+    issns: Mapped[list] = mapped_column(JSON, default=list)  # ISSNs the owner supplied for this journal (X.201)
     created_by: Mapped[str] = mapped_column(String(100))
 class Submission(Timestamped, Base):
     """A project submission and its explicit lifecycle state (M7.5)."""

@@ -1,6 +1,12 @@
 """Archive completed plan detail and old log rows.
 
-Usage: python scripts/plan_archive.py [--write] [--file PATH] [--archive-dir DIR]
+Usage: python scripts/plan_archive.py [--write] [--file PATH] [--archive-dir DIR] [--collapse M0,M1,X]
+
+`--collapse` (X.229, X.230) removes the one-line `[x]` stubs of the named closed milestones from plan.md and
+leaves one pointer line under each milestone heading that lists their IDs, so a dependency such as `deps: M2.8`
+can still be read as closed. Every collapsed ID must already be in `docs/plan-archive/tasks-done.md`; a stub whose
+ID is missing there is appended to it first, so no ID is ever lost. Open, review, blocked and dropped lines, and
+a stub that still has an open child under it, stay where they are. Running it again changes nothing.
 """
 import argparse
 import datetime
@@ -18,6 +24,70 @@ KEEP_LOG_ROWS = 25
 ANSWERED_PREFIX = "**answered**"
 BLOCKER_NOTE = "> Answered questions (Status cell starting **answered**) are archived verbatim in `docs/plan-archive/blockers-answered.md`."
 Q_RE = re.compile(r"^\| (~~)?Q\d+(~~)? \|")
+
+
+POINTER_MARK = "> Closed `[x]` tasks of this milestone are archived one line each in `docs/plan-archive/tasks-done.md`"
+POINTER_RE = re.compile(r"^" + re.escape(POINTER_MARK) + r" \((\d+)\)\. IDs: (.*)$")
+
+
+@dataclass(frozen=True)
+class CollapseResult:
+    plan_text: str
+    collapsed_ids: list[str]
+    missing_from_archive: list[str]  # stub lines whose ID is not in the archive yet: append them there before writing
+
+
+def _indent(line: str) -> int:
+    return len(line) - len(line.lstrip())
+
+
+def collapse(plan_text: str, archive_text: str, milestones: tuple[str, ...]) -> CollapseResult:
+    """See the module docstring. `milestones` are heading codes such as "M0" or "X" (`### M0 — ...`, `### X — ...`)."""
+    lines = plan_text.split("\n")
+    collapsed_ids: list[str] = []
+    missing: list[str] = []
+    for code in milestones:
+        start = next((i for i, line in enumerate(lines) if re.match(rf"^### {re.escape(code)}( |$)", line)), None)
+        if start is None:
+            raise ValueError(f"Missing milestone heading: ### {code}")
+        end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ") or lines[i].startswith("### ")), len(lines))
+        body = list(range(start + 1, end))
+        stub = {}
+        for i in body:
+            match = TASK_RE.match(lines[i])
+            if match and match.group(2) == "x" and STUB_MARK in lines[i]:
+                stub[i] = match.group(3)
+        removable: set[int] = set()
+        for i in sorted(stub, reverse=True):  # children first, so a parent is kept while any child stays
+            j = i + 1
+            keep = False
+            while j < end and lines[j].strip() and _indent(lines[j]) > _indent(lines[i]):
+                if j not in removable:
+                    keep = True
+                    break
+                j += 1
+            if not keep:
+                removable.add(i)
+        old_pointer = next((i for i in body if POINTER_RE.match(lines[i])), None)
+        known = POINTER_RE.match(lines[old_pointer]).group(2).split(", ") if old_pointer is not None else []
+        new_ids = [stub[i] for i in sorted(removable)]
+        for i in sorted(removable):
+            if f"**{stub[i]}**" not in archive_text:
+                missing.append(lines[i])
+        if not removable:
+            continue
+        collapsed_ids.extend(new_ids)
+        ids = list(dict.fromkeys(known + new_ids))
+        pointer = f"{POINTER_MARK} ({len(ids)}). IDs: {', '.join(ids)}"
+        rebuilt = []
+        for i in range(start + 1, end):
+            if i in removable:
+                continue
+            if i == old_pointer:
+                continue
+            rebuilt.append(lines[i])
+        lines[start + 1:end] = ["", pointer, *rebuilt] if lines[start + 1].strip() else [pointer, *rebuilt]
+    return CollapseResult("\n".join(lines), collapsed_ids, missing)
 
 
 @dataclass(frozen=True)
@@ -105,12 +175,20 @@ def main(argv=None):
     parser.add_argument("--archive-dir", type=Path, default=DEFAULT_ARCHIVE)
     parser.add_argument("--keep-log", type=int, default=KEEP_LOG_ROWS)
     parser.add_argument("--write", action="store_true")
+    parser.add_argument("--collapse", default="", help="comma-separated closed milestone codes, e.g. M0,M1,M2,M4,M6")
     args = parser.parse_args(argv)
     with args.file.open(encoding="utf-8", newline="\n") as source:
         text = source.read()
     if not args.archive_dir.is_dir():
         raise FileNotFoundError(args.archive_dir)
     result = archive(text, args.keep_log)
+    collapsed = None
+    if args.collapse:
+        archive_file = args.archive_dir / "tasks-done.md"
+        archive_text = archive_file.read_text(encoding="utf-8") + "\n" + "\n".join(result.task_blocks)
+        collapsed = collapse(result.plan_text, archive_text, tuple(code.strip() for code in args.collapse.split(",") if code.strip()))
+        print(f"Collapsed stubs: {len(collapsed.collapsed_ids)}; appended to the archive first: {len(collapsed.missing_from_archive)}")
+        result = ArchiveResult(collapsed.plan_text, result.task_blocks, result.log_rows, result.blocker_rows)
     print(f"Task blocks: {len(result.task_blocks)}; work log rows: {len(result.log_rows)}; blocker rows: {len(result.blocker_rows)}")
     print(f"Plan bytes: {len(text.encode('utf-8'))} -> {len(result.plan_text.encode('utf-8'))}")
     if args.write:
@@ -118,6 +196,10 @@ def main(argv=None):
             with (args.archive_dir / "tasks-done.md").open("a", encoding="utf-8", newline="\n") as target:
                 target.write(f"\n## Moved {datetime.date.today().isoformat()} by scripts/plan_archive.py\n\n")
                 target.write("\n".join(result.task_blocks) + "\n")
+        if collapsed and collapsed.missing_from_archive:
+            with (args.archive_dir / "tasks-done.md").open("a", encoding="utf-8", newline="\n") as target:
+                target.write(f"\n## Collapsed {datetime.date.today().isoformat()} by scripts/plan_archive.py --collapse (stub lines not archived before)\n\n")
+                target.write("\n".join(collapsed.missing_from_archive) + "\n")
         if result.log_rows:
             with (args.archive_dir / "work-log-2026-10-01_to_archive.md").open("a", encoding="utf-8", newline="\n") as target:
                 target.write("\n".join(result.log_rows) + "\n")

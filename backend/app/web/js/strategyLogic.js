@@ -7,12 +7,27 @@ export const FEASIBILITY_FIELDS = [
 
 export const FEASIBILITY_STATUSES = ["ok", "concern", "blocker", "unsure"];
 
-export function splitScopeContext(context = []) {
-  const active = (context || []).filter((item) => item.retired_at == null && item.kind !== "idea");
+// Objectives are their own records (X.193) and come from `/objectives`; a legacy `objective` context
+// item is never shown as active, so a retired-by-migration copy cannot reappear next to its successor.
+export function splitScopeContext(context = [], objectives = []) {
   return {
-    objectives: active.filter((item) => item.kind === "objective"),
-    context: active.filter((item) => item.kind !== "objective"),
+    objectives: (objectives || []).filter((item) => item.retired_at == null),
+    context: (context || []).filter((item) => item.retired_at == null && item.kind !== "idea" && item.kind !== "objective"),
   };
+}
+
+// The request body for an objective form: everything for a new objective, only the changed fields for a
+// correction (the API rejects an unchanged correction). Blank optional fields are sent as null.
+export function objectiveBody(existing, values) {
+  const next = {
+    statement: values.statement.trim(),
+    rationale: values.rationale.trim() || null,
+    measure: values.measure.trim() || null,
+    deliverable: values.deliverable.trim() || null,
+    target_date: values.target_date || null,
+  };
+  if (!existing) return next;
+  return Object.fromEntries(Object.entries(next).filter(([key, value]) => value !== (existing[key] ?? null)));
 }
 
 export function feasibilityByItem(feasibility = []) {

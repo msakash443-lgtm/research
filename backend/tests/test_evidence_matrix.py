@@ -41,7 +41,7 @@ def _row(project, source, value, *, verified=False, hours=0, version="default@2"
     return str(row_id)
 
 
-def test_matrix_chooses_verified_record_and_keeps_schema_versions_separate():
+def test_matrix_prefers_the_verified_record_over_newer_unverified_ones_across_schema_versions():
     client, project, source = _world()
     selected = _row(project, source, "Verified", verified=True)
     _row(project, source, "Newer", hours=1)
@@ -156,3 +156,38 @@ def test_every_cell_links_to_the_original_paper_by_doi_then_page_and_never_a_scr
     assert _link_for(client, project, source, url="javascript:alert(1)") is None
     assert _link_for(client, project, source, url="https://publisher.example/paper/1") == "https://publisher.example/paper/1"
     assert _link_for(client, project, source, doi="https://doi.org/10.1234/ABC.5") == "https://doi.org/10.1234/abc.5"
+
+
+def test_an_extraction_made_under_an_older_schema_version_stays_in_the_matrix_and_says_which_version():
+    client, project, source = _world()
+    old = _row(project, source, "Old schema answer", verified=True, version="default@1")
+    data = client.get(f"/api/projects/{project}/evidence-matrix").json()
+    paper = data["papers"][0]
+    assert paper["extraction_id"] == old
+    assert paper["extraction_schema_version"] == "default@1"
+    assert paper["cells"]["research_question"]["value"] == "Old schema answer"
+
+
+def test_a_current_version_extraction_wins_over_an_older_version_one_when_neither_is_verified():
+    client, project, source = _world()
+    _row(project, source, "Old", hours=5, version="default@1")
+    current = _row(project, source, "Current", hours=0)
+    paper = client.get(f"/api/projects/{project}/evidence-matrix").json()["papers"][0]
+    assert paper["extraction_id"] == current
+
+
+def test_a_verified_older_schema_finding_is_counted_unstructured_by_the_contradictions_endpoint():
+    client, project, source = _world()
+    when = datetime(2026, 10, 1, tzinfo=timezone.utc)
+    with SessionLocal() as db:
+        db.add(Extraction(
+            project_id=uuid.UUID(project), source_id=uuid.UUID(source), schema_version="default@1",
+            fields_json={"key_findings": [{"statement": "Training increases retention", "effect_size": None, "p_or_ci": None}]},
+            evidence_spans={"key_findings": {"quote": "Retention rose", "page": 2}},
+            verified_by_human=True, verified_by="tester", verified_at=when, extracted_by="human", extractor="tester",
+            created_at=when, updated_at=when,
+        ))
+        db.commit()
+    body = client.get(f"/api/projects/{project}/evidence-matrix/contradictions").json()
+    assert body["unstructured_findings"] == 1
+    assert body["conflicts"] == body["inconsistent"] == body["agreements"] == []

@@ -72,3 +72,40 @@ def test_ec_1_2_is_met_by_a_research_objective_alone(world):
     with SessionLocal() as db:
         project = db.get(Project, uuid.UUID(world["pid"]))
         assert ec_1_2(db, project).met is True
+
+
+def test_a_correction_keeps_every_earlier_field_value_in_the_history(world):
+    objective = _add(world, measure="Self-rated output", deliverable="A report", target_date="2027-06-30")
+    amended = world["owner"].patch(
+        _url(world, f"/{objective['id']}"),
+        json={"measure": "Payroll output", "deliverable": "A paper", "target_date": "2027-09-01"},
+    ).json()
+    earlier = amended["history"][0]
+    assert (earlier["measure"], earlier["deliverable"], earlier["target_date"]) == ("Self-rated output", "A report", "2027-06-30")
+    assert earlier["research_question_id"] is None
+
+
+def test_a_structured_research_question_alone_meets_ec_1_2(world):
+    pid = world["pid"]
+    created = world["owner"].post(f"/api/projects/{pid}/research-questions", json={"text": "Does remote work raise output?", "type": "descriptive"})
+    assert created.status_code == 201, created.text
+    with SessionLocal() as db:
+        assert ec_1_2(db, db.get(Project, uuid.UUID(pid))).met is True
+
+
+def test_an_objective_cannot_be_written_as_a_context_item(world):
+    response = world["owner"].post(f"/api/projects/{world['pid']}/context", json={"kind": "objective", "content": "An aim"})
+    assert response.status_code == 422
+
+
+def test_a_live_objective_is_given_to_the_agent_and_a_retired_one_is_not(world):
+    from app.agent.context import select_agent_context
+    from app.objective_context import live_objective_items
+
+    kept = _add(world, statement="Kept aim", measure="Output per hour")
+    gone = _add(world, statement="Retired aim")
+    world["owner"].post(_url(world, f"/{gone['id']}/retire"))
+    with SessionLocal() as db:
+        chosen = select_agent_context(live_objective_items(db, uuid.UUID(world["pid"])))
+    assert [(item.kind.value, item.content, str(item.id)) for item in chosen] == [("objective", "Kept aim", kept["id"])]
+    assert "Success is judged by: Output per hour" in chosen[0].rationale

@@ -4,6 +4,8 @@ import pytest
 import sqlalchemy as sa
 from alembic import command
 
+pytestmark = pytest.mark.slow  # walks the Alembic chain
+
 
 def test_conceptual_paths_downgrade_refuses_to_drop_researcher_paths(migrator):
     """A downgrade must not silently destroy person-drawn conceptual paths (M4.2 review)."""

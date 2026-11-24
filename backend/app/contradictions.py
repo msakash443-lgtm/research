@@ -7,7 +7,8 @@ never had these fields - is skipped and counted in `unstructured_findings` inste
 
 Structured findings are grouped by the normalised `(exposure, outcome)` pair, using the same Unicode
 normalisation as `dedupe.normalise_title` so wording, case and punctuation differences do not split a
-pair that means the same comparison; at most one finding is kept per paper per pair. `mixed` findings
+pair that means the same comparison. A paper may hold several findings for one pair (for example one per
+population); every one is kept, but findings are only ever compared across different papers. `mixed` findings
 are left out of every comparison (never a conflict, inconsistency or agreement) but still count as
 structured, since they do carry the new fields.
 
@@ -25,10 +26,12 @@ from app.dedupe import normalise_title
 _DIRECTIONS = {"positive", "negative", "mixed"}
 
 
-def _citation(paper: dict, finding: dict, quote: str) -> dict:
+def _citation(paper: dict, finding: dict, cell: dict) -> dict:
     return {
         "source_id": paper["source_id"], "title": paper["title"], "extraction_id": paper["extraction_id"],
-        "quote": quote, "direction": finding.get("direction"), "population": finding.get("population"),
+        "quote": cell["quote"], "page": cell.get("page"), "statement": finding.get("statement"),
+        "field_key": "key_findings", "source_text_url": cell.get("source_text_url"),
+        "direction": finding.get("direction"), "population": finding.get("population"),
     }
 
 
@@ -66,7 +69,7 @@ def _structured_findings(matrix: dict) -> tuple[list[dict], int]:
                 continue
             structured.append({
                 "key": key, "exposure": exposure, "outcome": outcome, "direction": direction,
-                "citation": _citation(paper, finding, cell["quote"]),
+                "citation": _citation(paper, finding, cell),
             })
     return structured, unstructured
 
@@ -94,30 +97,33 @@ def detect(matrix: dict) -> dict:
     Returns `{"conflicts": [...], "inconsistent": [...], "agreements": [...], "unstructured_findings": N}`.
     """
     structured, unstructured = _structured_findings(matrix)
-    by_key: dict[tuple[str, str], dict[str, dict]] = {}
+    by_key: dict[tuple[str, str], list[dict]] = {}
     for finding in structured:
         if finding["direction"] == "mixed":
             continue
-        per_paper = by_key.setdefault(finding["key"], {})
-        per_paper.setdefault(finding["citation"]["source_id"], finding)
+        by_key.setdefault(finding["key"], []).append(finding)
+
+    def _other_papers(a: dict, b: dict) -> bool:
+        return a["citation"]["source_id"] != b["citation"]["source_id"]
 
     conflicts: list[dict] = []
     inconsistent: list[dict] = []
     agreements: list[dict] = []
-    for members in by_key.values():
-        papers = list(members.values())
+    for papers in by_key.values():
         exposure, outcome = papers[0]["exposure"], papers[0]["outcome"]
         positives = [p for p in papers if p["direction"] == "positive"]
         negatives = [p for p in papers if p["direction"] == "negative"]
         nulls = [p for p in papers if p["direction"] is None]
         for a in positives:
             for b in negatives:
-                conflicts.append(_group(exposure, outcome, [a, b]))
+                if _other_papers(a, b):
+                    conflicts.append(_group(exposure, outcome, [a, b]))
         for a in positives + negatives:
             for b in nulls:
-                inconsistent.append(_group(exposure, outcome, [a, b]))
+                if _other_papers(a, b):
+                    inconsistent.append(_group(exposure, outcome, [a, b]))
         for same_direction in (positives, negatives, nulls):
-            if len(same_direction) >= 2:
+            if len({m["citation"]["source_id"] for m in same_direction}) >= 2:
                 agreements.append(_group(exposure, outcome, same_direction))
     return {
         "conflicts": conflicts, "inconsistent": inconsistent, "agreements": agreements,

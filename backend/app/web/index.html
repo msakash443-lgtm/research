@@ -1,10 +1,15 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="__UI_THEME__" data-themes="__UI_THEMES__" data-mode="light">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#fcfcfa" />
+    <meta name="theme-color" content="#fbf9f4" />
     <title>Research AI</title>
+    <script src="/assets/js/theme-init.js"></script>
+    <link rel="stylesheet" href="/assets/css/tokens.primitive.css" />
+    <link rel="stylesheet" href="/assets/css/themes/scholarly.css" />
+    <link rel="stylesheet" href="/assets/css/themes/modern.css" />
+    <link rel="stylesheet" href="/assets/css/themes/dense.css" />
     <link rel="stylesheet" href="/assets/styles.css" />
     <link rel="manifest" href="/manifest.webmanifest" />
 </head>
@@ -16,17 +21,25 @@
           <a class="brand" href="/">Research <span>AI</span></a>
           <span id="crumb" class="crumb muted"></span>
         </div>
-        <div id="account" class="account" hidden>
-          <span id="role-chip" class="role-chip" hidden></span>
-          <span id="ai-chip" class="role-chip" hidden></span>
-          <a id="inbox-button" class="quiet-button" href="#/inbox">Inbox</a>
-          <a id="privacy-button" class="quiet-button" href="#/privacy">Privacy</a>
-          <button id="notes-button" class="quiet-button" type="button" aria-controls="notes-dialog" aria-haspopup="dialog">Notes</button>
-          <button id="capture-button" class="quiet-button" type="button" aria-controls="capture-dialog" aria-haspopup="dialog">Capture</button>
-          <button id="assistant-button" class="assistant-launcher" type="button" aria-controls="assistant-panel" aria-expanded="false" hidden><img src="/assets/assistant-mascot.png" alt="" /><span><strong>Research Assistant</strong><small>Stage help</small></span></button>
-          <button id="memory-toggle" class="quiet-button" type="button" aria-controls="memory-sidebar" aria-expanded="false" hidden>Memory</button>
-          <span id="account-name"></span>
-          <button id="logout" class="quiet-button">Sign out</button>
+        <div class="topbar-end">
+          <div class="theme-controls">
+            <label class="sr-only" for="theme-select">Theme</label>
+            <select id="theme-select"></select>
+            <button id="mode-toggle" class="quiet-button" type="button" aria-pressed="false">Dark mode</button>
+          </div>
+          <div id="account" class="account" hidden>
+            <span id="role-chip" class="role-chip" hidden></span>
+            <span id="ai-chip" class="role-chip" hidden></span>
+            <a id="inbox-button" class="quiet-button" href="#/inbox">Inbox</a>
+            <a id="privacy-button" class="quiet-button" href="#/privacy">Privacy</a>
+            <button id="notes-button" class="quiet-button" type="button" aria-controls="notes-dialog" aria-haspopup="dialog">Notes</button>
+            <button id="capture-button" class="quiet-button" type="button" aria-controls="capture-dialog" aria-haspopup="dialog">Capture</button>
+            <button id="assistant-button" class="assistant-launcher" type="button" aria-controls="assistant-panel" aria-expanded="false" hidden><img src="/assets/assistant-mascot.png" alt="" /><span><strong>Research Assistant</strong><small>Stage help</small></span></button>
+            <button id="memory-toggle" class="quiet-button" type="button" aria-controls="memory-sidebar" aria-expanded="false" hidden>Memory</button>
+            <span id="account-name"></span>
+            <button id="logout" class="quiet-button">Sign out</button>
+          </div>
+        </div>
         </div>
       </header>
 
@@ -119,7 +132,7 @@
 
     <dialog id="project-dialog"><form id="project-form" method="dialog"><div class="dialog-heading"><h2>New research project</h2><button type="button" class="close" data-close>×</button></div><label>Project title<input name="title" placeholder="e.g. Gender Wage Inequality in Kerala" required maxlength="200" /></label><label>Description<textarea name="description" placeholder="What do you want to investigate?"></textarea></label><div class="dialog-actions"><button type="button" class="quiet-button" data-close>Cancel</button><button type="submit">Create project</button></div></form></dialog>
 
-    <dialog id="context-dialog"><form id="context-form" method="dialog"><div class="dialog-heading"><h2>Add research context</h2><button type="button" class="close" data-close>×</button></div><label>Type<select name="kind"><option value="question">Research question</option><option value="objective">Objective</option><option value="hypothesis">Hypothesis</option><option value="methodology">Methodology</option><option value="variable">Variable</option><option value="decision">Research decision</option></select></label><label>Statement<textarea name="content" required placeholder="Write the question, decision, or methodological choice."></textarea></label><label>Why does this matter? <span class="optional">Optional</span><textarea name="rationale" placeholder="Preserve the reasoning behind it."></textarea></label><div class="dialog-actions"><button type="button" class="quiet-button" data-close>Cancel</button><button type="submit">Save context</button></div></form></dialog>
+    <dialog id="context-dialog"><form id="context-form" method="dialog"><div class="dialog-heading"><h2>Add research context</h2><button type="button" class="close" data-close>×</button></div><label>Type<select name="kind"><option value="question">Research question</option><option value="hypothesis">Hypothesis</option><option value="methodology">Methodology</option><option value="variable">Variable</option><option value="decision">Research decision</option></select></label><label>Statement<textarea name="content" required placeholder="Write the question, decision, or methodological choice."></textarea></label><label>Why does this matter? <span class="optional">Optional</span><textarea name="rationale" placeholder="Preserve the reasoning behind it."></textarea></label><div class="dialog-actions"><button type="button" class="quiet-button" data-close>Cancel</button><button type="submit">Save context</button></div></form></dialog>
 
     <dialog id="source-dialog" class="wide-dialog"><form id="source-form" method="dialog"><div class="dialog-heading"><h2>Add evidence source</h2><button type="button" class="close" data-close>×</button></div>
       <div class="form-grid">

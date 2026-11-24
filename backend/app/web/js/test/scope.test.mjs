@@ -90,19 +90,24 @@ test("Save research type is disabled with a visible reason when the picked type 
   const note = descendants(root).find((n) => n.tagName === "span" && n.textContent === "Already saved.");
   assert.ok(note, "expected a visible 'Already saved.' reason next to the disabled button");
 });
-test("Scope separates objectives from structured context and exposes the existing objective writer", async () => {
+test("Scope lists objectives from the objectives records, apart from structured context", async () => {
   globalThis.fetch = fetchFor();
   const root = new Node("main");
-  await scopeStep.render(root, ctxFor("full_journey", {
+  const ctx = ctxFor("full_journey", {
     context: [
-      { id: "objective-1", kind: "objective", content: "Measure the outcome" },
+      { id: "legacy-1", kind: "objective", content: "Legacy copy" },
       { id: "method-1", kind: "methodology", content: "Use interviews" },
     ],
-  }));
+  });
+  ctx.summary.objectives = [{ id: "objective-1", statement: "Measure the outcome", measure: "Papers per year" }];
+  await scopeStep.render(root, ctx);
   const objectivePanel = descendants(root).find((node) => node.className?.includes("objectives-panel"));
   const contextPanel = descendants(root).find((node) => node.className?.includes("context-panel"));
   const panelText = (panel) => descendants(panel).map((node) => node.textContent || "").join(" ");
   assert.match(panelText(objectivePanel), /Measure the outcome/);
+  assert.match(panelText(objectivePanel), /Success is judged by: Papers per year/);
+  assert.doesNotMatch(panelText(objectivePanel), /Legacy copy/);
+  assert.doesNotMatch(panelText(contextPanel), /Legacy copy/);
   assert.doesNotMatch(panelText(contextPanel), /Measure the outcome/);
   assert.match(panelText(contextPanel), /Use interviews/);
   assert.ok(descendants(objectivePanel).some((node) => node.textContent === "Add objective"));

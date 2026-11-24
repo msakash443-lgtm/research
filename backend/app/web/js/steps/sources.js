@@ -61,6 +61,12 @@ export function verificationText(source) {
   const verdict = source.verification?.verdict;
   const parts = [];
   if ((source.quality_flags || []).includes("retracted")) parts.push("RETRACTED — do not cite");
+  if ((source.quality_flags || []).includes("preprint")) parts.push("Preprint, not peer reviewed");
+  if ((source.quality_flags || []).includes("predatory_venue_match")) {
+    const match = source.verification?.venue_check;
+    const how = match?.reason === "issn" ? `ISSN ${match.issn}` : "venue name";
+    parts.push(`WARNING: venue matches a supplied predatory list${match ? ` (${match.list}; ${how})` : ""} — a person should judge it`);
+  }
   if (human) parts.push(`Metadata verified by a person${when}`);
   else if (automatic) parts.push(`Metadata verified by an automatic check${when}; not reviewed by a person`);
   else parts.push("Metadata not verified; the agent can't cite this source");

@@ -15,6 +15,8 @@ and DOI. This is the **only automated path** to `metadata_verified` (the other i
   `source.verification_revoked`). `not_found`/`unavailable` change nothing - a service not knowing a
   work, or being down, is no reason to take verification away. A person's verification is never revoked.
 * A `retracted` flag from a service is added to the source's `quality_flags`.
+* The venue/ISSN is compared with the owner-supplied predatory list (X.201): a match sets the
+  `predatory_venue_match` flag and `verification["venue_check"]` (list, journal, reason). A warning only.
 * This confirms the metadata matches a scholarly record. Where the source was itself retrieved from
   one of the consulted services, that service agreeing with itself adds little; the verdict lists
   which services answered so a person can judge.
@@ -30,9 +32,20 @@ from sqlalchemy.orm import Session
 from app import audit
 from app.citation_verifier import Reference, VerificationResult, Verdict, verify_citation
 from app.connectors.base import Connector
-from app.models import Claim, ClaimEvidence, Project, Source, utcnow
+from app.models import Claim, ClaimEvidence, JournalCandidate, Project, Source, utcnow
+from app.venue_check import PREDATORY_FLAG, ListedVenue, match_venue, source_issns
 
 AGENT_VERIFIER = "agent:citation-verifier"
+
+
+def _venue_check(db: Session, project: Project, source: Source) -> dict | None:
+    """X.201: the source's venue/ISSN against the predatory list the owner supplied (journal candidates marked
+    `official_predatory`). No list supplied means no match and no error. A match is a warning for a person to judge."""
+    rows = db.scalars(select(JournalCandidate).where(
+        JournalCandidate.project_id == project.id, JournalCandidate.official_predatory.is_(True)
+    ).order_by(JournalCandidate.name, JournalCandidate.id)).all()
+    listed = [ListedVenue(name=row.name, issns=tuple(row.issns or ()), list_name=row.source_url) for row in rows]
+    return match_venue(source.venue, source_issns(source.source_ids), listed) if listed else None
 
 
 def verify_source(db: Session, *, project: Project, source: Source, connectors: Sequence[Connector], requested_by: str) -> VerificationResult:
@@ -48,7 +61,13 @@ def verify_source(db: Session, *, project: Project, source: Source, connectors: 
     result = verify_citation(reference, connectors)
     summary = result.summary()
     now = utcnow()
-    source.verification = {**summary, "checked_at": now.isoformat()}
+    venue_match = _venue_check(db, project, source)
+    source.verification = {**summary, "checked_at": now.isoformat(), "venue_check": venue_match}
+    flags = [flag for flag in (source.quality_flags or []) if flag != PREDATORY_FLAG]
+    if venue_match:
+        flags.append(PREDATORY_FLAG)
+    if flags != list(source.quality_flags or []):
+        source.quality_flags = flags
 
     if result.verdict is Verdict.verified and not source.metadata_verified:
         source.metadata_verified = True

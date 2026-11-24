@@ -68,5 +68,13 @@
   "stage_coach@1": {
     "eval": "none",
     "reason": "Stage coaching explains authoritative workflow state; no gold dataset exists and it cannot mutate project state."
+  },
+  "gap_suggestions@1": {
+    "eval": "none",
+    "reason": "Gap proposals the researcher accepts or rejects one by one; every cited source id is checked in code against the verified project sources, and there is no gold dataset type for gaps."
+  },
+  "rq_suggestions@1": {
+    "eval": "none",
+    "reason": "Research-question proposals the researcher edits before use; cited source ids are checked in code, and there is no gold dataset type for research questions."
   }
 }

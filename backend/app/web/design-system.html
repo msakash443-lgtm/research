@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en" data-theme="scholarly" data-mode="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Design system reference (X.242)</title>
+    <link rel="stylesheet" href="/assets/css/themes/scholarly.css" />
+    <link rel="stylesheet" href="/assets/css/themes/modern.css" />
+    <link rel="stylesheet" href="/assets/css/themes/dense.css" />
+    <link rel="stylesheet" href="/assets/css/ds-preview.css" />
+  </head>
+  <body class="ds">
+    <main class="ds-page">
+      <header>
+        <p class="eyebrow">Design system, direction D0</p>
+        <h1>Pick a direction</h1>
+        <p class="muted">Static reference. Each theme is one file in <code>css/themes/</code> defining only semantic tokens; components never use raw colours. Every text pair is checked for WCAG AA (4.5:1).</p>
+      </header>
+      <section class="ds-controls" aria-label="Preview controls">
+        <label>Theme
+          <select id="theme"><option value="scholarly">scholarly</option><option value="modern">modern</option><option value="dense">dense</option></select>
+        </label>
+        <label>Mode
+          <select id="mode"><option value="light">light</option><option value="dark">dark</option></select>
+        </label>
+      </section>
+      <section aria-labelledby="stage-h"><h2 id="stage-h">Selected theme</h2><div id="stage"></div></section>
+      <section aria-labelledby="tokens-h"><h2 id="tokens-h">Semantic tokens (selected theme)</h2><div id="tokens" class="ds-tokens"></div></section>
+      <section aria-labelledby="compare-h"><h2 id="compare-h">All themes, both modes</h2><div id="compare" class="ds-compare"></div></section>
+    </main>
+    <template id="sample">
+      <div class="ds-sample">
+        <div class="stack">
+          <div class="card stack">
+            <div>
+              <p class="eyebrow">Screening</p>
+              <h2>Include or exclude this source</h2>
+              <p class="muted">The AI proposes; you decide. Every decision is recorded with who, when and why.</p>
+            </div>
+            <div class="row">
+              <button class="btn" type="button">Include</button>
+              <button class="btn quiet" type="button">Exclude</button>
+              <button class="btn" type="button" disabled>Approve gate</button>
+              <a href="#">View source</a>
+            </div>
+            <div class="row">
+              <span class="chip">Draft</span><span class="chip accent">Selected</span><span class="chip success">Verified</span>
+              <span class="chip warning">Needs review</span><span class="chip danger">Failed</span><span class="chip info">Queued</span>
+            </div>
+          </div>
+          <div class="notice info">Auto-retrieved, unverified. Check the record before citing.</div>
+          <div class="notice warning">Gate G3 is pending a supervisor decision.</div>
+          <div class="notice danger">Run failed. No result was written.</div>
+          <div class="notice success">Citation matched a verified record.</div>
+          <div class="card stack">
+            <label class="field">Research question<input type="text" value="Does spaced practice improve retention?" /></label>
+            <label class="field">Criteria<select><option>Peer-reviewed only</option><option>All sources</option></select></label>
+            <table>
+              <thead><tr><th>Source</th><th>Year</th><th>Status</th></tr></thead>
+              <tbody>
+                <tr><td>Cepeda et al.</td><td>2006</td><td><span class="chip success">Included</span></td></tr>
+                <tr><td>Rohrer &amp; Taylor</td><td>2007</td><td><span class="chip warning">Maybe</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </template>
+    <script type="module" src="/assets/design-system.js"></script>
+  </body>
+</html>

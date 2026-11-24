@@ -2,7 +2,8 @@
 
 Additive: one new table, `research_objectives`. Every live (not retired) `objective` context item is copied in
 with its wording, rationale and history. The original context items are left unchanged: `ContextKind.objective`
-is kept until the owner decides otherwise (plan rule 44). Downgrading refuses to drop a table that has rows.
+is kept (owner decision). Downgrading drops rows that are still verbatim copies of a context item and refuses
+when any other row remains.
 """
 
 from typing import Sequence, Union
@@ -67,6 +68,18 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     connection = op.get_bind()
+    # Rows that are still verbatim copies of a context item lose nothing when dropped (the context item
+    # stays); any other row (written or amended through the objectives route) refuses the downgrade.
+    connection.execute(
+        sa.text(
+            """
+            DELETE FROM research_objectives o
+            USING research_context_items c
+            WHERE c.kind = 'objective' AND c.project_id = o.project_id AND c.content = o.statement
+              AND c.created_at = o.created_at AND o.retired_at IS NULL AND o.history::text IS NOT DISTINCT FROM c.history::text
+            """
+        )
+    )
     if connection.execute(sa.text("SELECT EXISTS (SELECT 1 FROM research_objectives)")).scalar():
         raise RuntimeError("research_objectives still has rows; the downgrade would destroy objectives (X.193)")
     op.drop_index("ix_research_objectives_research_question_id", table_name="research_objectives")

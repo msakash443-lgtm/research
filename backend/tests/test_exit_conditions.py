@@ -1,5 +1,6 @@
 import uuid
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -57,6 +58,7 @@ def test_a_target_is_blocked_while_an_earlier_gate_is_unapproved():
     assert _by_id(_conditions(pid, ProjectStage.search_planned))["EC-0.3"].met is True
 
 
+@pytest.mark.slow
 def test_no_row_that_needs_an_unbuilt_task_ever_reports_met():
     _, pid = _owner_project()
     for leave in ProjectStage:

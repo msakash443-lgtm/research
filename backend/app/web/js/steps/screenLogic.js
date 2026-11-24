@@ -6,8 +6,8 @@ const KEY_ACTIONS = {
   i: "include",
   e: "exclude",
   m: "maybe",
-  j: "next",
-  k: "previous",
+  j: "previous",
+  k: "next",
   u: "undo",
   a: "toggle-ai",
   o: "open",
@@ -106,19 +106,64 @@ export function typedReason(digits, count) {
   return { index: n - 1 };
 }
 
-// Where the AI's evidence quote sits in the record text (X.77): [before, match, after], or null when the words are
-// not there. Case and line breaks are ignored, as on the server, so a wrapped abstract still highlights.
-export function splitAtQuote(text, quote) {
-  const words = String(quote ?? "").trim().split(/\s+/).filter(Boolean);
-  if (!text || words.length === 0) return null;
-  const pattern = words.map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+");
-  const found = new RegExp(pattern, "i").exec(text);
-  return found ? [text.slice(0, found.index), found[0], text.slice(found.index + found[0].length)] : null;
-}
-
 // "High confidence (90%)" next to a suggestion; empty when the server gave no level.
 export function confidenceText(level, confidence) {
   if (!level) return "";
   const percent = typeof confidence === "number" ? ` (${Math.round(confidence * 100)}%)` : "";
   return `${level[0].toUpperCase()}${level.slice(1)} confidence${percent}`;
+}
+
+// X.196: with peer-reviewed-only on, preprint-flagged records are listed apart from the rest. Returns groups of
+// positions into `items` (positions, so the reviewer's current index still points at the same record). With the
+// setting off there is one untitled group and nothing moves.
+export function groupByPreprint(items, peerReviewedOnly) {
+  const all = items.map((_, i) => i);
+  if (!peerReviewedOnly) return [{ title: null, indices: all }];
+  const preprint = all.filter((i) => items[i].preprint);
+  const rest = all.filter((i) => !items[i].preprint);
+  const groups = [];
+  if (rest.length) groups.push({ title: null, indices: rest });
+  if (preprint.length) groups.push({ title: "Preprints: not peer reviewed, not citable in synthesis", indices: preprint });
+  return groups;
+}
+
+// What the Screen step shows when this person's queue is not a list of records to decide (X.219).
+// "active": records to screen · "unloaded": the server counts waiting records that did not load ·
+// "completed": nothing waiting, and there is work behind it (decided, or other reviewers still screening) ·
+// "empty": nothing at this stage at all. Only a view rule: it never touches a decision.
+export function completionMode({ items, pending, counts }) {
+  if (items.length > 0) return "active";
+  if (pending > 0) return "unloaded";
+  const total = Object.values(counts || {}).reduce((sum, n) => sum + (Number(n) || 0), 0);
+  return total > 0 ? "completed" : "empty";
+}
+
+// The heading, sentence and one primary route for a non-active mode. `primary.action` is "stage" (open `stage`)
+// or "approvals"; null when there is nothing to do here.
+export function completionView(mode, stage, { locked = false, othersPending = false } = {}) {
+  if (mode === "unloaded") return { title: "Some records could not be loaded", text: null, primary: null };
+  if (mode === "empty") {
+    return {
+      title: "No records at this stage yet",
+      text: stage === "full_text"
+        ? "Records appear here once they pass title/abstract screening."
+        : "Add sources by searching or importing them, then screen them here.",
+      primary: null,
+    };
+  }
+  const wait = othersPending ? " Other reviewers are still screening or a conflict is open; see the disagreement panel below." : "";
+  if (stage === "title_abstract") {
+    return {
+      title: "Title and abstract screening is complete for you",
+      text: `Every record at this stage has your decision.${wait}`,
+      primary: { label: "Continue to full-text screening", action: "stage", stage: "full_text" },
+    };
+  }
+  return {
+    title: "Full-text screening is complete for you",
+    text: locked
+      ? `G3 is approved. Reopen it on Approvals to change a decision.${wait}`
+      : `Every record at this stage has your decision. Review the included set, then approve G3 on Approvals.${wait}`,
+    primary: { label: locked ? "Open Approvals" : "Review and approve G3", action: "approvals" },
+  };
 }

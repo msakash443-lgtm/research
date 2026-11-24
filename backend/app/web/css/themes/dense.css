@@ -1,0 +1,36 @@
+/* Theme: dense. Instrument feel: compact, high contrast, square corners, data first. Semantic tokens only. */
+[data-theme="dense"] {
+  --font-body: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", sans-serif;
+  --font-heading: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --font-size-base: 13px; --font-size-sm: 12px; --font-size-h1: 26px; --font-size-h2: 18px; --font-size-h3: 14px;
+  --line-height: 1.4; --heading-weight: 700; --heading-tracking: 0;
+  --radius-sm: 2px; --radius-md: 3px; --radius-lg: 4px;
+  --pad-y: 5px; --pad-x: 10px; --gap: 10px;
+  --color-bg: #ffffff; --color-surface: #ffffff; --color-surface-alt: #f1f3f4;
+  --color-text: #0b0f14; --color-text-muted: #44505c;
+  --color-border: #b8c0c8; --color-border-strong: #5c6874;
+  --color-accent: #0b5cad; --color-accent-hover: #084a8c; --color-accent-fg: #ffffff; --color-accent-soft: #e3effb;
+  --color-focus: #0b5cad;
+  --color-danger-fg: #a40e0e; --color-danger-bg: #fde8e8;
+  --color-warning-fg: #6b4300; --color-warning-bg: #fff1c9;
+  --color-success-fg: #0d5c2e; --color-success-bg: #def3e5;
+  --color-info-fg: #0b4a8f; --color-info-bg: #e1edfa;
+  --shadow-md: 0 1px 3px rgba(0, 0, 0, .18);
+  --color-overlay: rgba(11, 14, 18, .5);
+  color-scheme: light;
+}
+[data-theme="dense"][data-mode="dark"] {
+  --color-bg: #0b0e12; --color-surface: #11151a; --color-surface-alt: #181d24;
+  --color-text: #e6e9ed; --color-text-muted: #9ba6b2;
+  --color-border: #2c343d; --color-border-strong: #7a8795;
+  --color-accent: #5aa9f0; --color-accent-hover: #82bdf5; --color-accent-fg: #07121f; --color-accent-soft: #12263a;
+  --color-focus: #5aa9f0;
+  --color-danger-fg: #ffb0b0; --color-danger-bg: #3a1212;
+  --color-warning-fg: #f5cb7e; --color-warning-bg: #382a08;
+  --color-success-fg: #8fdcae; --color-success-bg: #0f2f1c;
+  --color-info-fg: #a6c9f2; --color-info-bg: #102840;
+  --shadow-md: 0 1px 3px rgba(0, 0, 0, .7);
+  --color-overlay: rgba(0, 0, 0, .7);
+  color-scheme: dark;
+}
