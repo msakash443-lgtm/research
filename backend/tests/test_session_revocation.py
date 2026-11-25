@@ -54,3 +54,33 @@ def test_new_users_start_at_epoch_zero():
 
 def test_session_lifetime_is_configurable_with_fourteen_day_default():
     assert Settings(_env_file=None).session_max_age_seconds == 14 * 24 * 60 * 60
+
+
+def test_a_session_older_than_the_max_age_is_refused_even_while_in_use(monkeypatch):
+    import time
+    from types import SimpleNamespace
+
+    from app import dependencies
+    from app.config import get_settings
+
+    client = _signed_in("absolute-lifetime@example.com")
+    assert client.get("/api/auth/me").status_code == 200
+    later = time.time() + get_settings().session_max_age_seconds + 1
+    monkeypatch.setattr(dependencies, "time", SimpleNamespace(time=lambda: later))
+
+    assert client.get("/api/auth/me").status_code == 401
+
+
+def test_logout_everywhere_is_audited():
+    from sqlalchemy import select
+
+    from app.models import AuditEvent
+
+    client = _signed_in("audited-signout@example.com")
+    user_id = client.get("/api/auth/me").json()["id"]
+
+    assert client.post("/api/auth/logout-everywhere").status_code == 204
+
+    with SessionLocal() as db:
+        actions = db.scalars(select(AuditEvent.action).where(AuditEvent.actor == user_id)).all()
+    assert "user.signed_out_everywhere" in actions

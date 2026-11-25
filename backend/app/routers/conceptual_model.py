@@ -123,11 +123,11 @@ def create_path(payload: PathIn, project: Project = Depends(project_access(WRITE
     construct_ids = {payload.from_construct_id, payload.to_construct_id} | ({payload.via_construct_id} if payload.via_construct_id else set())
     known = set(db.scalars(select(Construct.id).where(Construct.project_id == project.id, Construct.id.in_(construct_ids))))
     if known != construct_ids:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Every construct must belong to this project")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Every construct must belong to this project")
     sources = set(db.scalars(select(Source.id).where(
         Source.project_id == project.id, Source.id.in_(payload.source_ids), Source.merged_into.is_(None))))
     if sources != set(payload.source_ids):
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Every source must belong to this project and not be merged into another source")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Every source must belong to this project and not be merged into another source")
     # The unique constraint can't catch a repeated direct path: its via_construct_id is NULL, and NULLs never collide.
     duplicate = db.scalar(select(ConceptualPath.id).where(
         ConceptualPath.project_id == project.id, ConceptualPath.from_construct_id == payload.from_construct_id,

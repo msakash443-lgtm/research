@@ -88,7 +88,7 @@ def _store_raw(db: Session, project: Project, user: User, name: str, csv_text: s
     try:
         text, columns, rows = datasets.parse(csv_text.encode("utf-8"))
     except ValueError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     version = DatasetVersion(
         project_id=project.id,
         version_no=_next_version_no(db, project),
@@ -156,10 +156,15 @@ def import_google_forms(
     if not token.strip():
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
                             "Google Forms import is not configured: set GOOGLE_FORMS_ACCESS_TOKEN.")
+    if project.id not in settings.google_forms_allowed_project_ids:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Google Forms import is not enabled for this project: add its id to GOOGLE_FORMS_ALLOWED_PROJECT_IDS.",
+        )
     try:
         form_id = survey_google_forms.check_form_id(body.form_id)
     except survey_google_forms.SurveyError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     try:
         columns, rows = survey_google_forms.fetch_table(form_id, token)
     except survey_google_forms.SurveyError as exc:
@@ -187,7 +192,7 @@ def quality(
             grid_columns=body.grid_columns, start_column=body.start_column,
         )
     except ValueError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     return {"dataset_id": str(version.id), "sha256": version.sha256, **report}
 
 
@@ -242,7 +247,7 @@ def clean(
             columns, rows, [s.model_dump(exclude_none=True) for s in body.steps], pseudonym_key=key_bytes
         )
     except ValueError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     text = datasets.serialise(columns, rows)
     version = DatasetVersion(
         project_id=project.id,
@@ -321,7 +326,7 @@ def propose_rule(
     try:
         rule_json = exclusion_rules.normalise(body.model_dump(exclude_none=True), version.column_names)
     except ValueError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     rule = ExclusionRule(
         project_id=project.id,
         dataset_id=version.id,
@@ -395,7 +400,7 @@ def exclude(
     if not _intact(parent):
         raise HTTPException(status.HTTP_409_CONFLICT, "This dataset no longer matches its hash, so it cannot be cleaned.")
     if len(set(body.rule_ids)) != len(body.rule_ids):
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "The same exclusion rule was listed more than once.")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "The same exclusion rule was listed more than once.")
     approved: list[dict[str, Any]] = []
     for rule_id in body.rule_ids:
         rule = _rule(db, project, dataset_id, rule_id)
@@ -408,7 +413,7 @@ def exclude(
         _, columns, rows = datasets.parse(parent.content.encode("utf-8"))
         rows, log = exclusion_rules.apply(columns, rows, approved)
     except ValueError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     text = datasets.serialise(columns, rows)
     version = DatasetVersion(
         project_id=project.id,

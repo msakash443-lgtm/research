@@ -31,7 +31,7 @@ def create_institution(
     try:
         ror_id = normalize_ror(body.ror_id)
     except ValueError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     row = ResearchInstitution(project_id=project.id, name=body.name, ror_id=ror_id, created_by=audit.user_actor(user))
     db.add(row)
     db.flush()
@@ -59,7 +59,7 @@ def create_person(
     try:
         orcid = normalize_orcid(body.orcid)
     except ValueError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     if body.institution_id is not None:
         # Same-project check; a foreign or unknown id reads as 404 so existence is not leaked.
         institution = db.scalar(

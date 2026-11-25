@@ -1,3 +1,4 @@
+import time
 import uuid
 
 from fastapi import Depends, Header, HTTPException, Request, status
@@ -11,9 +12,15 @@ from app.models import Project, ProjectMember, ProjectRole, User
 
 def session_user(request: Request, db: Session) -> User | None:
     """The signed-in user, or None. A session pointing at a missing user, or issued before the user's
-    session epoch was last bumped ("sign out everywhere"), is cleared. Cookies with no epoch count as 0."""
+    session epoch was last bumped ("sign out everywhere"), is cleared. Cookies with no epoch count as 0.
+    A session older than `session_max_age_seconds` since sign-in (`issued_at`), or without `issued_at`, is
+    cleared: the lifetime is absolute, activity does not extend it."""
     session_user_id = request.session.get("user_id")
     if not session_user_id:
+        return None
+    issued_at = request.session.get("issued_at")
+    if not isinstance(issued_at, int) or time.time() - issued_at > get_settings().session_max_age_seconds:
+        request.session.clear()
         return None
     try:
         user = db.get(User, uuid.UUID(session_user_id))

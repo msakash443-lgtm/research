@@ -52,7 +52,7 @@ def create_review_comment(
     try:
         severity, comment_status, text = review_comments.validate_comment(severity=body.severity, status="open", body=body.body)
     except ValueError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     row = ReviewComment(project_id=project.id, document_id=body.document_id, persona=body.persona.strip(), severity=severity,
                         status=comment_status, body=text, created_by=audit.user_actor(user))
     db.add(row)
@@ -106,7 +106,7 @@ def create_review_issue(
 ):
     project_document_or_404(db, project, body.document_id)
     if body.severity not in {"info", "minor", "major", "blocking"}:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "unknown issue severity")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "unknown issue severity")
     row = ReviewIssue(project_id=project.id, document_id=body.document_id, title=body.title.strip(),
                       severity=body.severity, assignee=body.assignee, redline_json=body.redline,
                       created_by=audit.user_actor(user))
@@ -131,7 +131,7 @@ def update_review_issue(
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Review issue not found")
     if body.status is not None and body.status not in {"open", "accepted", "resolved", "rejected"}:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "unknown issue status")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "unknown issue status")
     for field in ("status", "assignee", "response_text"):
         value = getattr(body, field)
         if value is not None:

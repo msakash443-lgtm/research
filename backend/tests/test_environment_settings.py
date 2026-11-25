@@ -47,3 +47,16 @@ def test_runtime_refuses_a_non_postgresql_database_in_every_environment():
     for environment in ("development", "production"):
         with pytest.raises(ValueError, match="DATABASE_URL must use PostgreSQL"):
             Settings(**{**PRODUCTION, "environment": environment, "database_url": "mysql+pymysql://u:p@db/research"})
+
+
+def test_a_wildcard_cors_origin_is_refused_in_every_environment():
+    for environment in ("development", "production"):
+        with pytest.raises(ValueError, match="CORS_ORIGINS must list explicit origins"):
+            Settings(**{**PRODUCTION, "environment": environment, "cors_origins": ["*"]})
+
+
+def test_a_plain_http_cors_origin_is_refused_in_production_only():
+    with pytest.raises(ValueError, match="CORS_ORIGINS must use HTTPS in production"):
+        Settings(**{**PRODUCTION, "cors_origins": ["http://ui.example"]})
+    assert Settings(**{**PRODUCTION, "environment": "development", "cors_origins": ["http://localhost:5173"]}).cors_origins
+    assert Settings(**{**PRODUCTION, "cors_origins": ["https://ui.example"]}).cors_origins == ["https://ui.example"]

@@ -20,7 +20,7 @@ def _require_question_in_project(db: Session, project: Project, question_id: uui
         return
     found = db.scalar(select(ResearchQuestion.id).where(ResearchQuestion.id == question_id, ResearchQuestion.project_id == project.id))
     if found is None:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="The linked research question is not in this project")
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="The linked research question is not in this project")
 
 
 def _live_objective(db: Session, project: Project, objective_id: uuid.UUID) -> ResearchObjective:
@@ -83,11 +83,11 @@ def amend_objective(
     for field in payload.model_fields_set:
         value = getattr(payload, field)
         if field == "statement" and value is None:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="The statement cannot be blank")
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="The statement cannot be blank")
         if value != getattr(objective, field):
             changes[field] = value
     if not changes:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Nothing changed")
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Nothing changed")
     if "research_question_id" in changes:
         _require_question_in_project(db, project, changes["research_question_id"])
     actor = audit.user_actor(user)

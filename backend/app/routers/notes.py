@@ -298,9 +298,9 @@ async def capture_voice(
     async for chunk in request.stream():
         body.extend(chunk)
         if len(body) > max_bytes:
-            raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Voice note is too large")
+            raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Voice note is too large")
     if not body:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Voice note cannot be empty")
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Voice note cannot be empty")
     note = Note(
         owner_id=user.id, project_id=None, client_id=client_id, kind=NoteKind.voice, body="",
         revision=1, captured_at=datetime.now(timezone.utc),
@@ -343,9 +343,9 @@ async def capture_photo(
     async for chunk in request.stream():
         body.extend(chunk)
         if len(body) > max_bytes:
-            raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Photo is too large")
+            raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Photo is too large")
     if not body:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Photo cannot be empty")
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Photo cannot be empty")
     note = Note(
         owner_id=user.id, project_id=None, client_id=client_id, kind=NoteKind.photo, body="",
         revision=1, captured_at=datetime.now(timezone.utc),
@@ -492,7 +492,7 @@ def promote_note(
     if payload.related_item_id is not None:
         related = db.get(ResearchContextItem, payload.related_item_id)
         if related is None or related.project_id != project.id:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="related item is not in this project")
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="related item is not in this project")
 
     item = ResearchContextItem(
         project_id=project.id,

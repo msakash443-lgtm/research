@@ -45,13 +45,21 @@ class ZoteroQueued(BaseModel):
     blocked_by_gate: str | None = None
 
 
-def _require_configured() -> None:
+def _require_configured(project: Project) -> None:
     if not zotero_configured(get_settings()):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
                 "Zotero sync is not configured on this server. Set ZOTERO_SYNC_ENABLED=true with "
                 "ZOTERO_API_KEY and ZOTERO_USER_ID (and ZOTERO_COLLECTION_KEY for pushes) in the server settings."
+            ),
+        )
+    if project.id not in get_settings().zotero_allowed_project_ids:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Zotero sync is not enabled for this project. Add the project id to "
+                "ZOTERO_ALLOWED_PROJECT_IDS in the server settings."
             ),
         )
 
@@ -99,7 +107,7 @@ def queue_zotero_pull(
     db: Session = Depends(get_db),
 ):
     """Queue the pull: the Zotero library's items enter as unverified sources (behind gate G2)."""
-    _require_configured()
+    _require_configured(project)
     return _queue(project, user, db, ZOTERO_PULL)
 
 
@@ -110,5 +118,5 @@ def queue_zotero_push(
     db: Session = Depends(get_db),
 ):
     """Queue the push: this project's verified sources become Zotero items (no gate)."""
-    _require_configured()
+    _require_configured(project)
     return _queue(project, user, db, ZOTERO_PUSH)

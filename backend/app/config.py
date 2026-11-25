@@ -2,6 +2,7 @@ import ipaddress
 import os
 import re
 from functools import lru_cache
+import uuid
 from typing import Any, Literal, get_args
 from urllib.parse import parse_qs, urlsplit
 
@@ -69,6 +70,9 @@ class Settings(BaseSettings):
     session_secret: SecretStr = SecretStr("development-only-change-me")
     # Browser session lifetime (X.4.3). Starlette's own default is 14 days.
     session_max_age_seconds: int = Field(default=14 * 24 * 60 * 60, gt=0)
+    # Google accounts may sign in only from these email domains (case-insensitive, exact match on the part after
+    # `@`; JSON list). Empty = any verified Google account may sign up.
+    allowed_sign_in_domains: list[str] = []
     public_origin: str = "http://localhost:8000"
     allowed_hosts: list[str] = ["localhost", "127.0.0.1", "testserver"]
     cors_origins: list[str] = []
@@ -242,10 +246,15 @@ class Settings(BaseSettings):
     zotero_api_key: SecretStr | None = None
     zotero_user_id: str | None = None
     zotero_collection_key: str | None = None
+    # The Zotero library is one server-wide credential. Only the projects listed here (JSON list of project
+    # UUIDs) may pull from or push to it. Empty = no project may use it.
+    zotero_allowed_project_ids: list[uuid.UUID] = []
     # Google Forms connector (M5.2): a short-lived OAuth access token the owner obtains for their own Google
     # account (scope: Forms responses read). Env-only; never stored in the database or echoed in errors.
     # Unset = the import route answers 503.
     google_forms_access_token: SecretStr | None = None
+    # Only the projects listed here (JSON list of project UUIDs) may import with that token. Empty = none may.
+    google_forms_allowed_project_ids: list[uuid.UUID] = []
     # Analysis sandbox (M5.3.3): a Docker image pinned by digest (name@sha256:...). Unset = runs answer 503.
     analysis_sandbox_image: str | None = None
     analysis_sandbox_timeout_seconds: int = 120
@@ -330,6 +339,8 @@ class Settings(BaseSettings):
             raise ValueError(str(exc)) from None
         if not self.database_url.startswith("postgresql"):
             raise ValueError("DATABASE_URL must use PostgreSQL")
+        if "*" in self.cors_origins:
+            raise ValueError("CORS_ORIGINS must list explicit origins; '*' would let any site use a signed-in session")
         if self.environment != "production":
             return self
         problem = residency_problem(privacy, self.data_residency_region)
@@ -344,6 +355,8 @@ class Settings(BaseSettings):
             raise ValueError("AUTO_CREATE_SCHEMA must be false in production; use Alembic migrations")
         if not self.public_origin.startswith("https://"):
             raise ValueError("PUBLIC_ORIGIN must use HTTPS in production")
+        if any(not origin.startswith("https://") for origin in self.cors_origins):
+            raise ValueError("CORS_ORIGINS must use HTTPS in production")
         if not self.google_client_id or not self.google_client_secret:
             raise ValueError("Google OAuth credentials are required in production")
         if not self.google_redirect_uri.startswith(self.public_origin):

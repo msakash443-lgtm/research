@@ -79,11 +79,17 @@ def make_library(initial_items=(), get_failures=(), post_failures=()):
     return ZoteroClient("test-key", USER_ID, http=http), state, seen
 
 
+def _allow(monkeypatch, *project_ids):
+    monkeypatch.setenv("ZOTERO_ALLOWED_PROJECT_IDS", json.dumps(list(project_ids)))
+    get_settings.cache_clear()
+
+
 @pytest.fixture
 def world(zotero, monkeypatch):
     """A project with its owner, a fake library wired into the task handlers, and a gate-approved pull."""
     client, owner_id = sign_in_user(f"zot-{uuid.uuid4().hex[:8]}@example.com")
     project_id = client.post("/api/projects", json={"title": "Zotero sync"}).json()["id"]
+    _allow(monkeypatch, project_id)
     lib_client, state, seen = make_library()
     monkeypatch.setattr("app.task_handlers.build_zotero_client", lambda: lib_client)
     approve_earlier_gates(project_id, "G2")
@@ -439,3 +445,35 @@ def test_source_to_zotero_item_places_venue_by_type():
     ):
         assert rows[source_type].get(field) == "V"
     assert all("date" not in item for item in rows.values())  # no year -> no date field
+
+
+def test_zotero_routes_refuse_a_project_not_on_the_allow_list(zotero, monkeypatch):
+    client, _ = sign_in_user(f"zot-deny-{uuid.uuid4().hex[:8]}@example.com")
+    project_id = client.post("/api/projects", json={"title": "Not listed"}).json()["id"]
+    _allow(monkeypatch, str(uuid.uuid4()))
+
+    pulled = client.post(f"/api/projects/{project_id}/zotero/pull")
+    pushed = client.post(f"/api/projects/{project_id}/zotero/push")
+
+    assert pulled.status_code == 403 and pushed.status_code == 403
+    assert "ZOTERO_ALLOWED_PROJECT_IDS" in pulled.json()["detail"]
+    with SessionLocal() as db:
+        assert db.scalars(select(Task).where(Task.project_id == uuid.UUID(project_id))).all() == []
+
+
+def test_a_queued_zotero_pull_for_a_project_removed_from_the_allow_list_fails_permanently(world, monkeypatch):
+    world["library"]["items"] = [zotero_item("K1")]
+    assert queue_pull(world).status_code == 202
+    _allow(monkeypatch)  # the operator removes the project before the worker looks at the task
+
+    assert task_runner.run_one_task() is True
+
+    task = task_after_run(world["project"], "zotero_pull")
+    assert task.status == TaskStatus.failed and "not enabled for this project" in task.error
+    assert sources_of(world["project"]) == []
+
+
+def test_a_zotero_item_whose_url_is_not_an_http_link_gets_no_url():
+    assert zotero_item_to_record(zotero_item("K1", url="javascript:alert(1)"))["url"] is None
+    assert zotero_item_to_record(zotero_item("K2", URL="ftp://example.org/x"))["url"] is None
+    assert zotero_item_to_record(zotero_item("K3", URL="https://example.org/x"))["url"] == "https://example.org/x"

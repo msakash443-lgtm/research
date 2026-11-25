@@ -1,6 +1,7 @@
 import uuid
 from datetime import date, datetime
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, HttpUrl, StringConstraints, field_validator, model_validator
 
@@ -505,6 +506,16 @@ class NoteCreate(BaseModel):
             return None
         stripped = value.strip()
         return stripped or None
+
+    @field_validator("source_url")
+    @classmethod
+    def _web_link_only(cls, value: str | None) -> str | None:
+        # The link is rendered as <a href>; `javascript:` and similar schemes would run when it is clicked.
+        if value is not None:
+            parts = urlsplit(value)
+            if parts.scheme.lower() not in ("http", "https") or not parts.netloc:
+                raise ValueError("source_url must be an http(s) link")
+        return value
 
     @model_validator(mode="after")
     def _kind_requirements(self) -> "NoteCreate":

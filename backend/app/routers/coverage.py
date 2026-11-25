@@ -29,6 +29,6 @@ def coverage_matrix(
     try:
         result = build_matrix(papers, rows, cols, layer or None)
     except ValueError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     result["verified_only"] = verified_only
     return result

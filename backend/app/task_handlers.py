@@ -452,6 +452,8 @@ def handle_zotero_pull(task: ClaimedTask) -> None:
         project = db.get(Project, project_id)
         if project is None:
             raise PermanentTaskError("The project for this Zotero pull no longer exists.")
+        if project.id not in get_settings().zotero_allowed_project_ids:
+            raise PermanentTaskError("Zotero sync is not enabled for this project.")
         try:
             result = sync_pull(db, project, build_zotero_client(), collection_key=get_settings().zotero_collection_key,
                                 before_write=task.ensure_owned)
@@ -480,6 +482,8 @@ def handle_zotero_push(task: ClaimedTask) -> None:
         project = db.get(Project, project_id)
         if project is None:
             raise PermanentTaskError("The project for this Zotero push no longer exists.")
+        if project.id not in get_settings().zotero_allowed_project_ids:
+            raise PermanentTaskError("Zotero sync is not enabled for this project.")
         try:
             result = sync_push(db, project, build_zotero_client(), collection_key=get_settings().zotero_collection_key,
                                 before_write=task.ensure_owned)

@@ -190,3 +190,154 @@ def test_a_lock_set_while_pre_screening_runs_stops_the_next_item_from_being_sent
     with SessionLocal() as db:
         decided = {r.source_id for r in db.scalars(select(ScreeningDecision))}
     assert uuid.UUID(locked_target) not in decided
+
+
+def test_front_matter_for_a_locked_section_is_refused_and_nothing_is_sent(fake_llm):
+    from types import SimpleNamespace
+
+    from app import front_matter_task
+    from app.models import Document
+    from app.task_registry import PermanentTaskError
+    from tests.test_front_matter_integration import _task, _world
+
+    client, pid, doc, version, _ = _world()
+    with SessionLocal() as db:
+        db.get(Document, uuid.UUID(doc)).ai_locked = True
+        db.commit()
+
+    refused = client.post(f"/api/projects/{pid}/documents/{doc}/front-matter", json={"kind": "abstract"})
+
+    assert refused.status_code == 409 and refused.json()["detail"]["code"] == "ai_locked"
+    # A request queued before the lock was set still stops at the worker.
+    with pytest.raises(PermanentTaskError, match="ai_locked"):
+        front_matter_task.run_front_matter(_task(pid, doc, version), _task(pid, doc, version).payload)
+    assert fake_llm.requests == []
+
+
+def test_ai_extraction_of_a_locked_source_is_refused_by_the_route_and_the_worker(fake_llm):
+    from app.models import Source, Task, TaskStatus
+    from app.object_storage import fulltext_key
+    from app.task_runner import run_one_task
+    from tests.api_helpers import create_included_source, create_project, sign_in
+
+    client = sign_in(f"lock-extract-{uuid.uuid4().hex}@example.com")
+    pid = create_project(client, "Locked extraction")
+    source_id = create_included_source(client, pid, "Secret paper")
+    with SessionLocal() as db:
+        db.get(Source, uuid.UUID(source_id)).fulltext_path = fulltext_key(uuid.UUID(pid), uuid.UUID(source_id), "pdf")
+        db.commit()
+    body = {"source_id": source_id, "schema_name": "default"}
+    queued = client.post(f"/api/projects/{pid}/extractions/ai", json=body)
+    assert queued.status_code == 202, queued.text
+
+    assert client.put(f"/api/projects/{pid}/ai-locks/source/{source_id}").status_code == 200
+    refused = client.post(f"/api/projects/{pid}/extractions/ai", json=body)
+    assert refused.status_code == 409 and refused.json()["detail"]["code"] == "ai_locked"
+    assert run_one_task(task_id=uuid.UUID(queued.json()["task_id"]))
+
+    with SessionLocal() as db:
+        task = db.get(Task, uuid.UUID(queued.json()["task_id"]))
+        assert task.status == TaskStatus.failed and "never send to AI" in task.error
+    assert fake_llm.requests == []
+
+
+def test_auto_extraction_reports_a_locked_source_as_ai_locked_and_queues_nothing_for_it():
+    from app.models import Task
+    from tests.api_helpers import create_included_source, create_project, sign_in
+
+    client = sign_in(f"lock-auto-{uuid.uuid4().hex}@example.com")
+    pid = create_project(client, "Locked auto extraction")
+    locked = create_included_source(client, pid, "Secret paper", doi="10.5555/locked")
+    open_one = create_included_source(client, pid, "Open paper", doi="10.5555/open")
+    assert client.put(f"/api/projects/{pid}/ai-locks/source/{locked}").status_code == 200
+
+    response = client.post(f"/api/projects/{pid}/extractions/ai/auto", json={"schema_name": "default"})
+
+    assert response.status_code == 202, response.text
+    outcomes = {o["source_id"]: o for o in response.json()["outcomes"]}
+    assert outcomes[locked]["status"] == "ai_locked" and outcomes[locked]["task_id"] is None
+    assert outcomes[open_one]["status"] == "fetch_queued"
+    with SessionLocal() as db:
+        queued = db.scalars(select(Task).where(Task.project_id == uuid.UUID(pid))).all()
+    assert all((t.payload or {}).get("source_id") != locked for t in queued)
+
+
+def test_clustering_never_embeds_a_locked_source(world):
+    from app.thematic_clusters import run_clustering
+
+    assert _lock(world, "source", world["ids"][1]).status_code == 200
+
+    class Embedder:
+        model = "test-embedding"
+
+        def __init__(self):
+            self.texts = []
+
+        def embed(self, texts):
+            self.texts.extend(texts)
+            return [[1.0, 0.0] if index == 0 else [0.0, 1.0] for index, _ in enumerate(texts)]
+
+    embedder = Embedder()
+    with SessionLocal() as db:
+        project = db.get(Project, uuid.UUID(world["pid"]))
+        run = run_clustering(db, project, embedder=embedder, k=2, seed=0, actor="tester", batch_size=64, max_sources=100)
+        db.commit()
+        assert run.n_sources == 2
+    assert len(embedder.texts) == 2 and not any("Paper 1" in text for text in embedder.texts)
+
+
+def test_semantic_novelty_skips_locked_ideas_and_sources(world):
+    from app.routers.idea_brief import get_embedder
+
+    owner, pid = world["owner"], world["pid"]
+    kept = owner.post(f"/api/projects/{pid}/context", json={"kind": "idea", "content": "Open idea"}).json()
+    secret = owner.post(f"/api/projects/{pid}/context", json={"kind": "idea", "content": "Private idea"}).json()
+    assert _lock(world, "context_item", secret["id"]).status_code == 200
+    assert _lock(world, "source", world["ids"][1]).status_code == 200
+    seen = []
+
+    class Embedder:
+        model = "test-embed"
+
+        def embed(self, texts):
+            seen.extend(texts)
+            return [[1.0, 1.0 + index] for index, _ in enumerate(texts)]
+
+    app.dependency_overrides[get_embedder] = lambda: Embedder()
+    try:
+        body = owner.get(f"/api/projects/{pid}/idea-brief/semantic-novelty").json()
+    finally:
+        app.dependency_overrides.pop(get_embedder, None)
+
+    assert not any("Private idea" in text or "Paper 1" in text for text in seen)
+    scored = {i["id"]: i for i in body["ideas"]}
+    assert scored[secret["id"]]["distinctiveness"] is None and scored[secret["id"]]["comparators"] == []
+    assert scored[kept["id"]]["distinctiveness"] is not None
+    assert all(c["title"] != "Paper 1" for c in scored[kept["id"]]["comparators"])
+
+
+def test_gap_suggestions_never_send_a_locked_source(fake_llm):
+    import json
+
+    from app.models import Extraction
+    from tests.api_helpers import create_project, insert_source, sign_in
+
+    client = sign_in(f"lock-gaps-{uuid.uuid4().hex}@example.com")
+    pid = create_project(client, "Locked gaps")
+    ids = []
+    for title, method, population in (("Open A", "survey", "teachers"), ("Open B", "interview", "nurses"), ("Hidden Z", "survey", "nurses")):
+        sid = insert_source(pid, title=title, year=2020, abstract=f"{title} abstract", metadata_verified=True)
+        ids.append(sid)
+        with SessionLocal() as db:
+            db.add(Extraction(project_id=uuid.UUID(pid), source_id=uuid.UUID(sid), schema_version="default@1",
+                              fields_json={"method": {"design": method}, "sample": {"population": population, "country": "UK"}},
+                              evidence_spans={}, extracted_by="human", extractor="test"))
+            db.commit()
+    assert client.put(f"/api/projects/{pid}/ai-locks/source/{ids[2]}").status_code == 200
+    fake_llm.handler = lambda r: {"choices": [{"message": {"content": json.dumps({"gaps": []})}}]}
+
+    response = client.post(f"/api/projects/{pid}/gaps/suggest")
+
+    assert response.status_code == 200, response.text
+    sent = fake_llm.requests[0].content.decode()
+    assert "Open A" in sent and "Hidden Z" not in sent and ids[2] not in sent

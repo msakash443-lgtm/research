@@ -91,7 +91,7 @@ def save_brief(
         try:
             BooleanQuery(blocks=tuple(body.keyword_groups))  # refuse groups the builder cannot use, now
         except QueryError as exc:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     groups = [g.model_dump(mode="json") for g in body.keyword_groups]
     item = db.scalar(select(ResearchBrief).where(ResearchBrief.project_id == project.id))
     created = item is None
@@ -119,5 +119,5 @@ def brief_query(project: Project = Depends(project_access(READ_ROLES)), db: Sess
         query = BooleanQuery(blocks=tuple(ConceptBlock.model_validate(g) for g in item.keyword_groups))
         text = render(query)
     except (QueryError, ValueError) as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     return BriefQuery(blocks=item.keyword_groups, query_string=text, min_citations=item.min_citations)

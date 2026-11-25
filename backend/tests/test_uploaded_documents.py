@@ -256,3 +256,40 @@ def test_a_quote_from_an_uploaded_pdf_is_located_by_find_quote():
     text = extract_text(format_for(PDF_MEDIA_TYPE), PDF, max_pdf_pages=100, max_docx_paragraphs=100)
 
     assert len(text.find_quote("Uploaded research document body text.")) == 1
+
+
+def test_a_docx_that_expands_to_over_a_hundred_megabytes_is_refused_with_code_unreadable():
+    from tests.test_docx_text import _zip_with_zeros
+
+    client = sign_in("uploaded-docx-bomb@example.com")
+    project_id = create_project(client, "Uploads")
+
+    response = _upload(client, project_id, _zip_with_zeros(101), content_type=DOCX_MEDIA_TYPE, filename="bomb.docx")
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "unreadable"
+    assert client.get(f"/api/projects/{project_id}/uploaded-documents").json() == []
+
+
+def test_uploaded_document_text_extraction_runs_off_the_event_loop(monkeypatch):
+    import asyncio
+
+    from app.routers import uploaded_documents
+
+    real = uploaded_documents.extract_text
+    on_event_loop = []
+
+    def spy(*args, **kwargs):
+        try:
+            asyncio.get_running_loop()
+            on_event_loop.append(True)
+        except RuntimeError:
+            on_event_loop.append(False)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(uploaded_documents, "extract_text", spy)
+    client = sign_in("uploaded-offloop@example.com")
+    project_id = create_project(client, "Uploads")
+
+    assert _upload(client, project_id, PDF).status_code == 201
+    assert on_event_loop == [False]

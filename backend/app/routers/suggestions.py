@@ -158,7 +158,7 @@ def _run(db: Session, action):
         raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from None
     except ValueError as error:
         db.rollback()
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(error)) from None
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from None
 
 
 @router.get("", response_model=list[SuggestionRead])

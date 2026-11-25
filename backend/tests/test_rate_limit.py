@@ -98,3 +98,14 @@ def test_the_counter_forgets_ended_windows_once_it_is_large():
     now["t"] = 61
     counter.hit("auth", "addr:new", 1)
     assert len(counter._windows) == 1
+
+
+def test_a_refused_request_is_logged_without_the_callers_address(limits, caplog):
+    for _ in range(3):
+        _dev_login(TestClient(main.app))
+
+    with caplog.at_level("WARNING"):
+        assert _dev_login(TestClient(main.app), "x@example.com").status_code == 429
+
+    assert "Rate limit refused POST /api/auth/development/login (addr caller)" in caplog.text
+    assert "testclient" not in caplog.text

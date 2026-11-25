@@ -92,7 +92,7 @@ def create_claim(payload: ClaimIn, project: Project = Depends(project_access(WRI
         Document.id == payload.section_id, Document.project_id == project.id)) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Section not found")
     if len({item.source_id for item in payload.evidence}) != len(payload.evidence):
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Use one evidence link per source")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Use one evidence link per source")
     for item in payload.evidence:
         source = db.scalar(select(Source).where(
             Source.id == item.source_id, Source.project_id == project.id, Source.merged_into.is_(None)
@@ -100,7 +100,7 @@ def create_claim(payload: ClaimIn, project: Project = Depends(project_access(WRI
         row = db.scalar(select(SourceExcerpt).where(
             SourceExcerpt.id == item.excerpt_id, SourceExcerpt.source_id == item.source_id))
         if row is None or source is None or item.quote not in row.content:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                                 "Evidence must quote an excerpt from an active project source")
         _refuse_retracted_source(source)
     claim = Claim(project_id=project.id, extraction_id=payload.extraction_id, section_id=payload.section_id,

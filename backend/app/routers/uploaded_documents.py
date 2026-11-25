@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app import audit
 from app.config import get_settings
@@ -73,20 +74,20 @@ async def _read_capped(request: Request, max_bytes: int) -> bytes:
     if declared is not None:
         try:
             if int(declared) > max_bytes:
-                raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="File is too large")
+                raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="File is too large")
         except ValueError:
             pass
     body = bytearray()
     async for chunk in request.stream():
         body.extend(chunk)
         if len(body) > max_bytes:
-            raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="File is too large")
+            raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="File is too large")
     return bytes(body)
 
 
 def _extraction_error(exc: FullTextError) -> HTTPException:
     return HTTPException(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         detail={"code": error_code(exc), "message": str(exc)},
     )
 
@@ -105,7 +106,7 @@ async def upload_document(
     _require_enabled()
     name = filename.strip()
     if not name:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="filename must not be blank")
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="filename must not be blank")
     media_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
     try:
         fmt = format_for(media_type)
@@ -116,10 +117,11 @@ async def upload_document(
     try:
         check_signature(fmt, data)
     except NotThatFormat as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"The uploaded file is not a {exc}") from exc
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"The uploaded file is not a {exc}") from exc
     try:
-        extract_text(
-            fmt, data, max_pdf_pages=settings.fulltext_max_pages, max_docx_paragraphs=settings.uploaded_docx_max_paragraphs
+        await run_in_threadpool(
+            extract_text, fmt, data,
+            max_pdf_pages=settings.fulltext_max_pages, max_docx_paragraphs=settings.uploaded_docx_max_paragraphs,
         )
     except FullTextError as exc:
         raise _extraction_error(exc) from exc

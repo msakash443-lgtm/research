@@ -88,7 +88,7 @@ def create_plan(
     try:
         spec = rules.validate(body.model_dump(), dataset.column_names)
     except rules.PlanError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     row = AnalysisPlan(
         project_id=project.id,
         dataset_id=dataset.id,
@@ -359,23 +359,23 @@ def create_robustness_check(
         compare_dataset, spec, label = base_dataset, base_plan.spec_json, "unchanged re-run"
     elif body.kind == "alternative_spec":
         if not body.drop_variable:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Name the variable to drop.")
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Name the variable to drop.")
         label = f"drop {body.drop_variable}"
         alternatives = {alt["label"]: alt["spec"] for alt in suite.leave_one_out_specs(base_plan.spec_json)}
         if label not in alternatives:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                                  f"{body.drop_variable!r} is not a variable this plan can drop and still run a test.")
         compare_dataset, spec = base_dataset, alternatives[label]
     else:
         if body.compare_dataset_id is None:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Name the dataset version to compare against.")
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Name the dataset version to compare against.")
         compare_dataset = _dataset(db, project, body.compare_dataset_id)
         if compare_dataset.id == base_dataset.id:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                                  "Compare against a different dataset version than the run's own.")
         missing = [v for v in base_plan.spec_json["variables"] if v not in compare_dataset.column_names]
         if missing:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                                  f"The comparison dataset is missing column(s): {', '.join(missing)}.")
         spec = base_plan.spec_json
         kind_label = "outlier" if body.kind == "outlier_sensitivity" else "missing-data"
@@ -506,7 +506,7 @@ def create_deviation_log(
             planned.spec_json, actual_plan.spec_json, planned_dataset.sha256, actual_run.dataset_sha256, body.reasons,
         )
     except deviation_log.DeviationError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     row = DeviationLog(
         project_id=project.id,
         planned_plan_id=planned.id,

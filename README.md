@@ -97,6 +97,10 @@ Two local virtualenvs exist on the dev machine; both are git-ignored (`.venv*/`)
 
 The two are kept separate so ARC's dependencies stay out of this app (ARC is called over HTTP only). Recreate either with `python -m venv <path>` and the install commands above.
 
+### Git hooks
+
+`scripts/hooks/pre-push` refuses a push while Alembic has more than one head (see `plan.md` rules 50 and 69). Enable it once per clone with `git config core.hooksPath scripts/hooks`; on Linux or macOS also run `chmod +x scripts/hooks/pre-push`. It uses `.venv` when present, otherwise `python` on `PATH` (needs `alembic`). Bypass for one push with `git push --no-verify`.
+
 ## Configure a model
 
 The backend uses a deliberately small adapter for an OpenAI-compatible `chat/completions` endpoint. Add these deployment secrets—never commit them:

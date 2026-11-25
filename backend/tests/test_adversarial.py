@@ -259,7 +259,9 @@ def test_another_projects_data_never_reaches_the_request(fake_llm):
 
 def test_the_front_end_never_renders_output_as_html():
     web = Path(__file__).resolve().parents[1] / "app" / "web"
-    code = "\n".join(path.read_text(encoding="utf-8") for path in web.glob("*.js"))
+    code = "\n".join(
+        path.read_text(encoding="utf-8") for path in web.rglob("*.js") if "vendor" not in path.parts
+    )
 
     for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval("):
         assert sink not in code, f"{sink} would let model or ARC output run as markup"

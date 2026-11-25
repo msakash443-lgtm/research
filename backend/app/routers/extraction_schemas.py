@@ -118,7 +118,7 @@ def copy_schema(
     try:
         source = project_schemas.resolve(db, project.id, payload.based_on)
     except SchemaError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     actor = audit.user_actor(user)
     row = ProjectExtractionSchema(
         project_id=project.id, name=payload.name, version=1,
@@ -160,7 +160,7 @@ def edit_schema(
     try:
         fields = project_schemas.validate_fields(payload.fields)
     except SchemaError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     if (fields, payload.label, payload.description) == (current.fields, current.label, current.description):
         return _detail(project_schemas.to_schema(current), "project", **_row_extra(current))
     actor = audit.user_actor(user)

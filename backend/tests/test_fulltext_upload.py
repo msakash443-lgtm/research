@@ -228,3 +228,27 @@ def test_reading_full_text_for_an_unknown_source_404s():
     response = client.get(f"/api/projects/{project_id}/sources/{uuid.uuid4()}/fulltext")
 
     assert response.status_code == 404
+
+
+def test_fulltext_pdf_extraction_runs_off_the_event_loop(monkeypatch):
+    import asyncio
+
+    from app.routers import sources
+
+    real = sources.extract_pdf_text
+    on_event_loop = []
+
+    def spy(*args, **kwargs):
+        try:
+            asyncio.get_running_loop()
+            on_event_loop.append(True)
+        except RuntimeError:
+            on_event_loop.append(False)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(sources, "extract_pdf_text", spy)
+    client = sign_in("upload-offloop@example.com")
+    project_id, source_id = _project_and_source(client)
+
+    assert _upload(client, project_id, source_id, PDF).status_code == 201
+    assert on_event_loop == [False]

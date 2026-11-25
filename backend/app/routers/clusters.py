@@ -22,7 +22,7 @@ from app.dependencies import READ_ROLES, WRITE_ROLES, current_user, project_acce
 from app.models import Artifact, Cluster, ClusterRun, Project, Source, User, utcnow
 from app.task_handlers import THEMATIC_CLUSTERING
 from app.task_queue import enqueue_task
-from app.thematic_clusters import ARTIFACT_KIND, MAX_K, MIN_K, clusterable_sources
+from app.thematic_clusters import ARTIFACT_KIND, MAX_K, MIN_K, ai_clusterable_sources
 
 router = APIRouter(prefix="/projects/{project_id}/clusters", tags=["clusters"])
 
@@ -125,14 +125,14 @@ def request_clustering(
     require_ai_on(project, embeddings=True)
     if not settings.embedding_model:
         raise HTTPException(status.HTTP_409_CONFLICT, "Thematic clustering is off: no embedding model is configured (EMBEDDING_MODEL).")
-    n = len(clusterable_sources(db, project))
+    n = len(ai_clusterable_sources(db, project))
     if n < payload.k:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, f"Clustering into {payload.k} groups needs at least {payload.k} sources; the project has {n}."
+            status.HTTP_422_UNPROCESSABLE_CONTENT, f"Clustering into {payload.k} groups needs at least {payload.k} sources; the project has {n}."
         )
     if n > settings.cluster_max_sources:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, f"The project has {n} sources; clustering is limited to {settings.cluster_max_sources}."
+            status.HTTP_422_UNPROCESSABLE_CONTENT, f"The project has {n} sources; clustering is limited to {settings.cluster_max_sources}."
         )
     actor = audit.user_actor(user)
     run_id = uuid.uuid4()

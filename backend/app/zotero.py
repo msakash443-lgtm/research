@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import re
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -31,6 +32,15 @@ from app.connectors.http import ConnectorHttpClient, HttpPolicy
 from app.doi import normalize_doi
 from app.models import SOURCE_ORIGIN_RETRIEVED, Project, Source
 from app.refmanager import _clean, _year
+
+
+def _web_url(value: str | None) -> str | None:
+    """A Zotero URL field is free text; only an http(s) link may reach a source record (it becomes an <a href>)."""
+    if not value:
+        return None
+    parts = urlsplit(value)
+    return value if parts.scheme.lower() in ("http", "https") and parts.netloc else None
+
 
 BASE_URL = "https://api.zotero.org"
 AGENT_ZOTERO_SYNC = "agent:zotero-sync"
@@ -167,7 +177,7 @@ def zotero_item_to_record(item: dict) -> dict | None:
     if not title:
         return None
     doi = _doi(item.get("DOI") or item.get("doi"))
-    url = _clean(item.get("URL") or item.get("url"))
+    url = _web_url(_clean(item.get("URL") or item.get("url")))
     venue = _clean(item.get("publicationTitle") or item.get("bookTitle") or item.get("proceedingsTitle"))
     abstract = _clean(item.get("abstractNote"))
     return {

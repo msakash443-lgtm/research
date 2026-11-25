@@ -17,7 +17,7 @@ from app.stage_order import StageNotInChain
 from app.config import get_settings
 from app.ui_themes import registered_themes
 from app.logging_config import configure_logging
-from app.middleware import ContentLengthLimitMiddleware, FixedWindowCounter, RateLimitMiddleware
+from app.middleware import ContentLengthLimitMiddleware, FixedWindowCounter, OriginCheckMiddleware, RateLimitMiddleware
 from app.pagination import NEXT_CURSOR_HEADER
 from app.routers import accuracy, ai_locks, ai_settings, audit, provenance_reports, workspace_ai, auth, bibliometrics, claims, clusters, connectors, coverage, criteria, design_tools, evidence_matrix, exports, literature_summary, extraction_schemas, extractions, gates, guide, integrity, members, responsibilities, notes, documents, prisma, profile, projects, replication, research_runs, scholar_metrics, screening, searches, alerts, seeds, snowball, sources, stage, suggestions, usage, zotero, reviews
 from app.routers import journals, submissions
@@ -55,6 +55,7 @@ app = FastAPI(
     # API docs are helpful locally but should not expose an exploration surface on the public deployment.
     docs_url=None if settings.environment == "production" else "/docs",
     redoc_url=None if settings.environment == "production" else "/redoc",
+    openapi_url=None if settings.environment == "production" else "/openapi.json",
 )
 
 
@@ -68,6 +69,8 @@ UPLOAD_PATH_SUFFIXES = ("/fulltext/upload", "/api/notes/voice", "/api/notes/phot
 # X.143. Added first, so it runs innermost: inside the session middleware, where the caller's user id is known.
 rate_limit_counter = FixedWindowCounter()
 app.add_middleware(RateLimitMiddleware, upload_path_suffix=UPLOAD_PATH_SUFFIXES, counter=rate_limit_counter)
+# Refuses cross-origin state-changing requests (SameSite=Lax alone does not stop same-site forgeries).
+app.add_middleware(OriginCheckMiddleware, trusted_origins=[settings.public_origin, *settings.cors_origins])
 app.add_middleware(
     ContentLengthLimitMiddleware,
     max_body_bytes=settings.max_request_body_bytes,

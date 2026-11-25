@@ -122,14 +122,14 @@ def decide_gate(
             },
         )
     if outcome == GateStatus.rejected and not note:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Rejecting a gate needs a note explaining why")
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Rejecting a gate needs a note explaining why")
     if code == GateCode.G7 and outcome == GateStatus.approved:
         from app.research_types import human_participants  # local: research_types imports GATE_STAGES from this module's sibling
 
         if not human_participants(project):
             if not confirm_no_human_participants:
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail="This research type has no human participants. Approving G7 needs an explicit "
                     "'no human participants' confirmation instead of a full ethics pack.",
                 )

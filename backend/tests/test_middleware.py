@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from app.middleware import ContentLengthLimitMiddleware
+from tests.api_helpers import sign_in
 
 LIMIT = 100
 
@@ -108,3 +109,55 @@ def test_a_declared_length_over_the_limit_is_still_refused_before_the_body_is_re
 
     assert response.status_code == 413
     assert seen == []
+
+
+def _signed_in_client():
+    return sign_in("origin-check@example.com")
+
+
+def test_a_cross_origin_post_is_refused_and_the_session_survives():
+    client = _signed_in_client()
+
+    refused = client.post("/api/auth/logout", headers={"Origin": "https://evil.example"})
+
+    assert refused.status_code == 403
+    assert refused.json() == {"detail": "Cross-origin request refused."}
+    assert client.get("/api/auth/me").status_code == 200
+
+
+def test_a_same_origin_post_without_or_with_a_matching_origin_is_allowed():
+    assert _signed_in_client().post("/api/auth/logout", headers={"Origin": "http://testserver"}).status_code == 204
+    assert _signed_in_client().post("/api/auth/logout").status_code == 204
+
+
+def test_a_referer_from_another_site_is_refused_when_there_is_no_origin_header():
+    client = _signed_in_client()
+
+    assert client.post("/api/auth/logout", headers={"Referer": "https://evil.example/x"}).status_code == 403
+    assert client.post("/api/auth/logout", headers={"Referer": "http://testserver/page"}).status_code == 204
+
+
+def test_an_opaque_null_origin_is_refused():
+    assert _signed_in_client().post("/api/auth/logout", headers={"Origin": "null"}).status_code == 403
+
+
+def test_a_get_with_a_foreign_origin_is_not_refused():
+    assert _signed_in_client().get("/api/auth/me", headers={"Origin": "https://evil.example"}).status_code == 200
+
+
+def test_a_configured_public_origin_is_trusted_even_when_the_host_differs():
+    from fastapi.testclient import TestClient
+
+    inner = FastAPI()
+
+    @inner.post("/x")
+    def post_x():
+        return {"ok": True}
+
+    from app.middleware import OriginCheckMiddleware
+
+    inner.add_middleware(OriginCheckMiddleware, trusted_origins=["https://app.example.org/"])
+    client = TestClient(inner)
+
+    assert client.post("/x", headers={"Origin": "https://APP.example.org"}).status_code == 200
+    assert client.post("/x", headers={"Origin": "https://other.example.org"}).status_code == 403
