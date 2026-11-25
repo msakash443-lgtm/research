@@ -162,10 +162,10 @@ def _question_read(item: ResearchQuestion) -> ResearchQuestionRead:
 
 def _require_selected_gaps(db: Session, project: Project, gap_ids: list[uuid.UUID]) -> None:
     if len(set(gap_ids)) != len(gap_ids):
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "A gap may be linked only once")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "A gap may be linked only once")
     selected = set(db.scalars(select(Gap.id).where(Gap.project_id == project.id, Gap.selected.is_(True), Gap.id.in_(gap_ids))).all())
     if selected != set(gap_ids):
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Every linked gap must be selected in this project")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Every linked gap must be selected in this project")
 
 
 @router.get("/research-questions", response_model=list[ResearchQuestionRead])

@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from app import audit, suggestion_store
 from app.agent.llm import LLMConfigurationError, LLMResponseError
 from app.ai_controls import llm_for_project, require_ai_on
+from app.ai_item_locks import locked_ids, locked_uuids
 from app.config import get_settings
 from app.coverage_matrix import papers_for_project
 from app.database import get_db
@@ -58,7 +59,10 @@ def _verified_sources(db: Session, project: Project) -> list[SourceView]:
     """Active, metadata-verified, non-retracted sources that have an extraction, in a stable order."""
     ids = [paper.source_id for paper in papers_for_project(db, project)]
     rows = db.scalars(
-        select(Source).where(Source.project_id == project.id, Source.id.in_(ids), Source.metadata_verified.is_(True), Source.merged_into.is_(None))
+        select(Source).where(
+            Source.project_id == project.id, Source.id.in_(ids), Source.id.not_in(locked_uuids(db, project.id, "source")),
+            Source.metadata_verified.is_(True), Source.merged_into.is_(None),
+        )
     ).all()
     rows = [row for row in rows if "retracted" not in (row.quality_flags or [])]
     rows.sort(key=lambda row: (row.title.casefold(), str(row.id)))
@@ -69,8 +73,11 @@ def _inputs(db: Session, project: Project):
     try:
         matrix = build_evidence_matrix(db, project)
     except SchemaError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
-    candidates = gap_candidates(papers=papers_for_project(db, project), matrix=matrix)
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    locked = locked_ids(db, project.id, "source")
+    papers = [paper for paper in papers_for_project(db, project) if str(paper.source_id) not in locked]
+    candidates = gap_candidates(papers=papers, matrix=matrix)
+    candidates = [c for c in candidates if not (set(map(str, c["paper_ids"])) & locked)]
     sources = _verified_sources(db, project)
     if not candidates or len(sources) < 2:
         raise HTTPException(status.HTTP_409_CONFLICT, NOTHING_TO_SUGGEST)

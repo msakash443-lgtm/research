@@ -105,3 +105,28 @@ def test_a_storage_failure_while_erasing_an_unfiled_note_attachment_is_logged_an
     with SessionLocal() as db:
         assert db.get(NoteAttachment, attachment_id) is None
         assert db.get(Note, note_id).body == ""
+
+
+def test_connector_api_keys_never_reach_the_logs(monkeypatch, caplog):
+    import httpx
+    from pydantic import SecretStr
+
+    from app.connectors import SearchRequest
+    from app.connectors.http import ConnectorHttpClient, HttpPolicy
+    from app.connectors.openalex import OpenAlexConnector
+
+    monkeypatch.setattr(logging.getLogger("httpx"), "level", logging.NOTSET)
+    monkeypatch.setattr(logging.getLogger("httpcore"), "level", logging.NOTSET)
+    configure_logging()
+
+    def handler(request):
+        return httpx.Response(200, json={"meta": {"count": 0}, "results": []})
+
+    http = ConnectorHttpClient(
+        "openalex", "https://api.openalex.org", HttpPolicy(max_retries=0), transport=httpx.MockTransport(handler)
+    )
+    connector = OpenAlexConnector(http, api_key=SecretStr("k-secret-123"))
+    with caplog.at_level(logging.DEBUG):
+        connector.search(SearchRequest(query="labour"))
+
+    assert "k-secret-123" not in caplog.text

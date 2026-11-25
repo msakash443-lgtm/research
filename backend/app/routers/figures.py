@@ -179,7 +179,7 @@ def edit_figure(
             db, figure, body.spec, origin=figure_store.ORIGIN_HUMAN_EDITED, created_by=actor
         )
     except figure_spec.SpecError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     previous = figure_store.version_by_number(db, figure, version.number - 1) if version.number > 1 else None
     changed = figure_spec.diff(previous.spec_json if previous else {"nodes": [], "edges": []}, version.spec_json)
     audit.record(
@@ -203,7 +203,7 @@ def _render_version(figure: Figure, version: FigureVersion) -> bytes:
         return render_svg(dot, dot_path=settings.graphviz_dot_path, timeout_seconds=settings.figure_render_timeout_seconds)
     except figure_spec.SpecError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"code": "figure_spec_invalid", "message": str(exc)},
         ) from exc
     except RendererUnavailable as exc:
@@ -263,7 +263,7 @@ def export_figure_version(
         full = figure_store.document_full_text(get_settings(), document)
     except FullTextError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"code": error_code(exc), "message": str(exc)},
         ) from exc
     errors = [
@@ -400,7 +400,7 @@ def get_figure_check(
         full = figure_store.document_full_text(get_settings(), document)
     except FullTextError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"code": error_code(exc), "message": str(exc)},
         ) from exc
     findings = figure_checks.check_figure(version.spec_json, full, figure.kind)

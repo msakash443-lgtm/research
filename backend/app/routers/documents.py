@@ -19,6 +19,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import audit, ledger, manuscript_guard, number_citation, overclaim_check, provenance_store, section_approval, section_draft_task, suggestions
+from app.ai_item_locks import is_locked
+from app.workspace_ai_task import DOCUMENT_KIND
 from app.database import get_db
 from app.front_matter import OUTPUT_KINDS
 from app.lookups import project_document_or_404
@@ -211,7 +213,7 @@ def _conflict(latest: DocumentVersion | None) -> HTTPException:
 def _refuse(problems: list[ledger.Problem]) -> None:
     first = problems[0]
     raise HTTPException(
-        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status.HTTP_422_UNPROCESSABLE_CONTENT,
         detail={"code": first.code, "message": first.message, "codes": sorted({p.code for p in problems})},
     )
 
@@ -506,7 +508,7 @@ def paragraph_from_note(
     lines = [line.strip() for line in note.body.splitlines() if line.strip()]
     if not lines:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"code": "note_has_no_text", "message": "This note has none of your own words to turn into a paragraph"},
         )
     span_id = str(uuid.uuid4())
@@ -610,6 +612,11 @@ def request_front_matter(
     if project.ai_involvement.value == "off":
         raise HTTPException(status.HTTP_409_CONFLICT, detail={"code": "ai_off", "message": "AI is disabled for this project."})
     document = project_document_or_404(db, project, document_id)
+    if document.ai_locked or is_locked(db, project.id, DOCUMENT_KIND, document.id):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={"code": "ai_locked", "message": "This section is marked 'never send to AI', so nothing was sent."},
+        )
     version = latest_version(db, document.id)
     if version is None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail={"code": "no_saved_version", "message": "Save the document before generating front matter."})

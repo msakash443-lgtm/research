@@ -23,7 +23,7 @@ def method_recommendation(
     try:
         return design_tools.recommend_method(goal, can_randomize=can_randomize, accessible_population=accessible_population)
     except ValueError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
 
 @router.get("/methodology-recommendation")
 def methodology_recommendation(
@@ -45,7 +45,7 @@ def methodology_recommendation(
             sensitive_topic=sensitive_topic,
         )
     except ValueError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
 
 
 @router.get("/saturation-guidance")
@@ -58,7 +58,7 @@ def saturation(
     try:
         return saturation_guidance.saturation_guidance(design, homogeneous=homogeneous, narrow_objective=narrow_objective)
     except ValueError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
 
 
 @router.get("/sample-size")
@@ -97,11 +97,11 @@ def sample_size(
         "regression": {"f2", "predictors", "alpha", "power"},
     }
     if test not in allowed:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"test must be one of: {', '.join(design_tools.TESTS)}")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"test must be one of: {', '.join(design_tools.TESTS)}")
     stray = sorted(k for k, v in values.items() if v is not None and k not in allowed[test])
     if stray:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"{test} does not use: {', '.join(stray)}")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"{test} does not use: {', '.join(stray)}")
     try:
         return design_tools.sample_size(test, values, attrition)
     except ValueError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc

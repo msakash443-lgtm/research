@@ -11,6 +11,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
+from starlette.concurrency import run_in_threadpool
 
 from app import audit, citation_rank, fulltext_coverage, own_paper
 from app.config import get_settings
@@ -357,21 +358,21 @@ async def upload_fulltext(
     if declared is not None:
         try:
             if int(declared) > max_bytes:
-                raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="File is too large")
+                raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="File is too large")
         except ValueError:
             pass
     body = bytearray()
     async for chunk in request.stream():
         body.extend(chunk)
         if len(body) > max_bytes:
-            raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="File is too large")
+            raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="File is too large")
     data = bytes(body)
     if not data.startswith(PDF_SIGNATURE):
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="The uploaded file is not a PDF")
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="The uploaded file is not a PDF")
     try:
-        extract_pdf_text(data, max_pages=settings.fulltext_max_pages)
+        await run_in_threadpool(extract_pdf_text, data, max_pages=settings.fulltext_max_pages)
     except FullTextError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"The uploaded PDF could not be read: {exc}") from exc
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"The uploaded PDF could not be read: {exc}") from exc
     store = get_object_store(settings)
     key = fulltext_key(project.id, source.id, "pdf")
     try:
@@ -477,7 +478,7 @@ def get_fulltext(
     try:
         parsed = extract_pdf_text(data, max_pages=settings.fulltext_max_pages)
     except FullTextError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"The stored full text could not be read: {exc}") from exc
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"The stored full text could not be read: {exc}") from exc
     return FullTextRead(
         text=parsed.text,
         pages=[FullTextPageRead(number=p.number, label=p.label, start=p.start, end=p.end) for p in parsed.pages],
@@ -553,19 +554,19 @@ def add_own_paper(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=own_paper.LOCKED_MESSAGE)
     if "bibtex" in payload:
         if len(payload) != 1 or not isinstance(payload["bibtex"], str):
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Give either one BibTeX entry or the paper's fields, not both")
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Give either one BibTeX entry or the paper's fields, not both")
         parsed = parse_bibtex(payload["bibtex"])
         if len(parsed.records) != 1 or parsed.skipped:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="The BibTeX text must hold exactly one entry with a title")
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="The BibTeX text must hold exactly one entry with a title")
         fields = parsed.records[0]
     elif payload:
         fields = payload
     else:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Give either one BibTeX entry or the paper's fields")
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Give either one BibTeX entry or the paper's fields")
     try:
         item = SourceCreate(**fields)
     except (ValidationError, ValueError) as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     if item.doi and db.scalar(select(Source.id).where(Source.project_id == project.id, Source.doi == item.doi, Source.merged_into.is_(None))):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This DOI is already in the project")
     actor = audit.user_actor(user)
@@ -615,13 +616,13 @@ def queue_own_paper_lookup(
     if screening_locked(db, project):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=own_paper.LOCKED_MESSAGE)
     if bool(payload.doi) == bool(payload.title):
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Give exactly one of doi or title, not both or neither")
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Give exactly one of doi or title, not both or neither")
     doi = None
     if payload.doi:
         try:
             doi = normalize_doi(payload.doi)
         except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
         if doi and db.scalar(select(Source.id).where(Source.project_id == project.id, Source.doi == doi, Source.merged_into.is_(None))):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This DOI is already in the project")
     actor = audit.user_actor(user)
@@ -730,7 +731,7 @@ def add_excerpt(
     source = live_source_or_404(db, project, source_id)
     content = payload.content.strip()
     if not content:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="The passage is empty")
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="The passage is empty")
     actor = audit.user_actor(user)
     excerpt = SourceExcerpt(
         source_id=source.id,

@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import audit, fulltext_coverage, project_schemas
+from app.ai_item_locks import is_locked, locked_uuids
 from app.artifacts import refresh_artifact, register_artifact
 from app.ai_controls import require_ai_on
 from app.database import get_db
@@ -111,15 +112,15 @@ def _checked(
     try:
         schema = project_schemas.resolve(db, project.id, schema_name)
     except SchemaError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     payload_bytes = json.dumps(
         {"fields": fields, "evidence": evidence}, default=str, ensure_ascii=False
     ).encode("utf-8")
     if len(payload_bytes) > MAX_PAYLOAD_BYTES:
-        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Extraction is too large")
+        raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Extraction is too large")
     problems = check_extraction(schema, fields, evidence)
     if problems:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=problems)
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=problems)
     if not any(value is not None for value in fields.values()):
         return schema_version(schema)
     if not source.fulltext_path:
@@ -138,12 +139,12 @@ def _checked(
         ) from exc
     except FullTextError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="The source's stored full-text PDF could not be read for quote verification",
         ) from exc
     problems = check_evidence_spans(fulltext, fields, evidence)
     if problems:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=problems)
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=problems)
     return schema_version(schema)
 
 
@@ -250,11 +251,11 @@ def verify_extraction(
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     required = {field.key for field in schema.fields if field.critical}
     if len(payload.confirmed_critical_fields) != len(required) or set(payload.confirmed_critical_fields) != required:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                             f"Confirm every critical field: {', '.join(sorted(required))}")
     not_reported = {key for key in required if row.fields_json.get(key) is None}
     if len(payload.confirmed_not_reported_fields) != len(not_reported) or set(payload.confirmed_not_reported_fields) != not_reported:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                             "Confirm each critical field the paper does not report, and only those: "
                             f"{', '.join(sorted(not_reported)) or 'none'}")
     source = db.get(Source, row.source_id)
@@ -318,7 +319,7 @@ def request_auto_extractions(
         schema = project_schemas.resolve(db, project.id, payload.schema_name)
         version = schema_version(schema)
     except SchemaError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     extracted_ids = {
         row.source_id for row in db.scalars(select(Extraction).where(
             Extraction.project_id == project.id, Extraction.schema_version == version,
@@ -332,7 +333,11 @@ def request_auto_extractions(
         Task.status.in_((TaskStatus.queued, TaskStatus.running, TaskStatus.blocked, TaskStatus.paused)),
     )).all()
     outcomes: list[AiAutoExtractionOutcome] = []
+    locked_sources = set(locked_uuids(db, project.id, "source"))
     for source in included:
+        if source.id in locked_sources:
+            outcomes.append(AiAutoExtractionOutcome(source_id=source.id, status="ai_locked", detail="This source is marked 'never send to AI'."))
+            continue
         if source.id in extracted_ids:
             outcomes.append(AiAutoExtractionOutcome(source_id=source.id, status="completed", detail="An extraction already exists for this schema."))
             continue
@@ -387,12 +392,17 @@ def request_ai_extraction(
     if source is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
     _included_or_409(db, project, source)
+    if is_locked(db, project.id, "source", source.id):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={"code": "ai_locked", "message": "This source is marked 'never send to AI', so nothing was sent."},
+        )
     if not source.fulltext_path:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This source has no stored full-text PDF")
     try:
         project_schemas.resolve(db, project.id, payload.schema_name)
     except SchemaError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     actor = audit.user_actor(user)
     open_tasks = db.scalars(select(Task).where(
         Task.project_id == project.id, Task.type == AI_EXTRACTION,
@@ -467,7 +477,7 @@ def update_extraction(
     try:
         current_schema = project_schemas.resolve(db, project.id, name)
     except SchemaError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     version = schema_version(current_schema)
     if version != row.schema_version:
         raise HTTPException(

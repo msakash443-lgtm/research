@@ -18,8 +18,11 @@ def owner():
     return client, pid
 
 
-def _settings(token):
-    return lambda: SimpleNamespace(google_forms_access_token=SecretStr(token) if token else None)
+def _settings(token, allowed=()):
+    return lambda: SimpleNamespace(
+        google_forms_access_token=SecretStr(token) if token else None,
+        google_forms_allowed_project_ids=[uuid.UUID(p) for p in allowed],
+    )
 
 
 def test_google_forms_import_is_503_without_a_token(owner, monkeypatch):
@@ -32,12 +35,12 @@ def test_google_forms_import_is_503_without_a_token(owner, monkeypatch):
 
 
 def test_google_forms_import_stores_a_raw_hashed_version(owner, monkeypatch):
-    monkeypatch.setattr(router_module, "get_settings", _settings("tok"))
+    client, pid = owner
+    monkeypatch.setattr(router_module, "get_settings", _settings("tok", allowed=(pid,)))
     monkeypatch.setattr(gf, "fetch_table", lambda form_id, token, **kw: (
         ["response_id", "created_at", "submitted_at", "Age"],
         [["r1", "2026-10-01T10:00:00Z", "2026-10-01T10:05:00Z", "34"]],
     ))
-    client, pid = owner
     r = client.post(f"/api/projects/{pid}/datasets/google-forms", json={"form_id": "F1", "name": "wave1"})
     assert r.status_code == 201, r.text
     body = r.json()
@@ -46,8 +49,8 @@ def test_google_forms_import_stores_a_raw_hashed_version(owner, monkeypatch):
 
 
 def test_bad_form_id_is_422_and_upstream_failure_is_502(owner, monkeypatch):
-    monkeypatch.setattr(router_module, "get_settings", _settings("tok"))
     client, pid = owner
+    monkeypatch.setattr(router_module, "get_settings", _settings("tok", allowed=(pid,)))
     bad = client.post(f"/api/projects/{pid}/datasets/google-forms", json={"form_id": "../x", "name": "w"})
     assert bad.status_code == 422
 
@@ -56,6 +59,18 @@ def test_bad_form_id_is_422_and_upstream_failure_is_502(owner, monkeypatch):
     monkeypatch.setattr(gf, "fetch_table", boom)
     up = client.post(f"/api/projects/{pid}/datasets/google-forms", json={"form_id": "F1", "name": "w"})
     assert up.status_code == 502 and "token" in up.json()["detail"]
+
+
+def test_google_forms_import_refuses_a_project_not_on_the_allow_list(owner, monkeypatch):
+    client, pid = owner
+    monkeypatch.setattr(router_module, "get_settings", _settings("tok", allowed=(str(uuid.uuid4()),)))
+    monkeypatch.setattr(gf, "fetch_table", lambda *a, **kw: pytest.fail("the Forms API must not be called"))
+
+    r = client.post(f"/api/projects/{pid}/datasets/google-forms", json={"form_id": "F1", "name": "wave1"})
+
+    assert r.status_code == 403
+    assert "GOOGLE_FORMS_ALLOWED_PROJECT_IDS" in r.json()["detail"]
+    assert client.get(f"/api/projects/{pid}/datasets").json() == []
 
 
 def test_quality_route_flags_rows_and_creates_no_version(owner):

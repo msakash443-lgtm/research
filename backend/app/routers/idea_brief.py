@@ -22,6 +22,7 @@ from app import audit
 from app.agent.embeddings import OpenAICompatibleEmbeddings
 from app.agent.llm import LLMConfigurationError, LLMResponseError
 from app.ai_controls import require_ai_on
+from app.ai_item_locks import CONTEXT_ITEM_KIND, locked_ids, locked_uuids
 from app.artifacts import register_artifact
 from app.config import Settings, get_settings
 from app.connectors.access import is_enabled
@@ -271,24 +272,33 @@ def get_semantic_novelty(
         )
         .order_by(ResearchContextItem.created_at.asc(), ResearchContextItem.id.asc())
     ).all()
-    # As in the lexical comparison: merged-away sources are duplicates of a kept record.
-    sources = db.scalars(select(Source).where(Source.project_id == project.id, Source.merged_into.is_(None))).all()
-    if not ideas or not sources:
+    # As in the lexical comparison: merged-away sources are duplicates of a kept record. Locked ideas and sources
+    # ('never send to AI') are never embedded; a locked idea stays in the list with no score.
+    locked_ideas = locked_ids(db, project.id, CONTEXT_ITEM_KIND)
+    locked_sources = set(locked_uuids(db, project.id, "source"))
+    sources = [
+        s for s in db.scalars(select(Source).where(Source.project_id == project.id, Source.merged_into.is_(None))).all()
+        if s.id not in locked_sources
+    ]
+    embeddable = [i for i in ideas if str(i.id) not in locked_ideas]
+    if not embeddable or not sources:
         # Nothing to compare: no embedding call, so no cost and no model output.
         return SemanticNoveltyRead(
             model_id=embedder.model,
             ideas=[SemanticIdeaRead(id=i.id, content=i.content, distinctiveness=None, comparators=[]) for i in ideas],
         )
-    texts = [i.content for i in ideas] + [source_text(s) for s in sources]
+    texts = [i.content for i in embeddable] + [source_text(s) for s in sources]
     try:
         vectors = _embed_all(embedder, texts, settings.embedding_batch_size)
     except LLMConfigurationError as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
     except LLMResponseError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
-    refs = [(Reference(str(s.id), s.title, s.year, ""), v) for s, v in zip(sources, vectors[len(ideas):])]
+    refs = [(Reference(str(s.id), s.title, s.year, ""), v) for s, v in zip(sources, vectors[len(embeddable):])]
     try:
-        scored = [semantic_novelty(v, refs) for v in vectors[: len(ideas)]]
+        scored = {
+            idea.id: semantic_novelty(v, refs) for idea, v in zip(embeddable, vectors[: len(embeddable)])
+        }
     except VectorError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
     return SemanticNoveltyRead(
@@ -297,13 +307,13 @@ def get_semantic_novelty(
             SemanticIdeaRead(
                 id=idea.id,
                 content=idea.content,
-                distinctiveness=result.distinctiveness,
+                distinctiveness=scored[idea.id].distinctiveness if idea.id in scored else None,
                 comparators=[
                     SemanticComparatorRead(source_id=c.source_id, title=c.title, year=c.year, similarity=c.similarity)
-                    for c in result.comparators
+                    for c in (scored[idea.id].comparators if idea.id in scored else [])
                 ],
             )
-            for idea, result in zip(ideas, scored)
+            for idea in ideas
         ],
     )
 
@@ -432,7 +442,7 @@ def post_landscape_scan(
     Only the query, per-service counts/failures and record ids are kept -- never abstracts or titles."""
     text = query.strip()
     if not text:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Give a search phrase.")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Give a search phrase.")
     reviews_since = datetime.now(timezone.utc).year - REVIEW_WINDOW_YEARS
     names = _enabled_landscape_connectors(get_settings())
     if not names:
@@ -489,7 +499,7 @@ def save_idea_brief(
         if idea is None or idea.project_id != project.id:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Idea not found in this project.")
         if idea.kind != ContextKind.idea:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Only a context item of kind idea can be selected.")
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Only a context item of kind idea can be selected.")
     brief = _brief(db, project)
     created = brief is None
     if brief is None:

@@ -96,7 +96,7 @@ def queue_search(
         query = BooleanQuery(blocks=tuple(body.blocks))
         adapt(query, body.database)  # refuses a query the database can't take, now rather than after approval
     except QueryError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     payload = {
         "project_id": str(project.id), "search_id": str(uuid.uuid4()), "version": 1, "database": body.database,
         "blocks": [b.model_dump(mode="json") for b in body.blocks], "filters": body.filters, "max_results": body.max_results,

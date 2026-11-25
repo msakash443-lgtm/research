@@ -74,13 +74,13 @@ def set_area(
     try:
         pairs = validate_assignments(area, [(str(a.user_id), a.level) for a in payload.assignments])
     except InvalidResponsibility as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     member_ids = {
         str(uid) for uid in db.scalars(select(ProjectMember.user_id).where(ProjectMember.project_id == project.id))
     } | {str(project.owner_id)}
     outsiders = [uid for uid, _ in pairs if uid not in member_ids]
     if outsiders:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Only members of this project can hold a responsibility.")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Only members of this project can hold a responsibility.")
     existing = db.scalars(select(ProjectResponsibility).where(
         ProjectResponsibility.project_id == project.id, ProjectResponsibility.area == area)).all()
     before = sorted((str(r.user_id), r.level) for r in existing)

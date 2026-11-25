@@ -28,16 +28,29 @@ export function label(value) {
   return String(value).replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+// A link target from data (a clipped note, a Zotero item) must never run script when clicked. Control characters
+// are stripped before the check because browsers ignore them inside a scheme ("java\tscript:"). A denylist, not an
+// allowlist: blob:, relative /api/... and #/... links are legitimate here.
+export function safeHref(value) {
+  const text = String(value);
+  // eslint-disable-next-line no-control-regex
+  const probe = text.replace(/[\u0000-\u0020\u007f]/g, "");
+  return /^(javascript|data|vbscript):/i.test(probe) ? null : text;
+}
+
 export function el(tag, options = {}) {
   const node = document.createElement(tag);
   if (options.className) node.className = options.className;
   if (options.text !== undefined) node.textContent = options.text;
   if (options.type) node.type = options.type;
-  if (options.href) node.href = options.href;
+  if (options.href && safeHref(options.href) !== null) node.href = options.href;
   if (options.target) node.target = options.target;
   if (options.rel) node.rel = options.rel;
   if (options.attrs) {
-    for (const [name, value] of Object.entries(options.attrs)) node.setAttribute(name, value);
+    for (const [name, value] of Object.entries(options.attrs)) {
+      if (name.toLowerCase() === "href" && safeHref(value) === null) continue;
+      node.setAttribute(name, value);
+    }
   }
   if (options.children) node.append(...options.children);
   return node;

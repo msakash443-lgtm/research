@@ -1,5 +1,8 @@
+import logging
+import time
 from typing import Any
 
+from authlib.integrations.base_client import OAuthError
 from authlib.integrations.starlette_client import OAuth
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -7,12 +10,15 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app import audit
 from app.config import get_settings
 from app.database import get_db
 from app.dependencies import session_user
 from app.erasure import ErasureBlocked, erase_account
 from app.models import ExternalIdentity, User
 from app.personal_data_export import export_personal_data
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
@@ -30,7 +36,7 @@ def google_client() -> Any:
         client_id=settings.google_client_id,
         client_secret=settings.google_client_secret.get_secret_value(),
         server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
-        client_kwargs={"scope": "openid email profile"},
+        client_kwargs={"scope": "openid email profile", "code_challenge_method": "S256"},
     )
     return oauth.google
 
@@ -39,7 +45,12 @@ def user_from_google_claims(claims: dict[str, Any], db: Session) -> User:
     subject = claims.get("sub")
     email = claims.get("email")
     if not subject or not email or claims.get("email_verified") is not True:
+        logger.warning("Google sign-in refused: no verified identity")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Google did not provide a verified identity")
+    allowed = {domain.strip().lower() for domain in get_settings().allowed_sign_in_domains if domain.strip()}
+    if allowed and email.lower().rsplit("@", 1)[-1] not in allowed:
+        logger.warning("Google sign-in refused: email domain not allowed")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This Google account is not allowed to sign in here.")
 
     identity = db.scalar(
         select(ExternalIdentity).where(ExternalIdentity.provider == "google", ExternalIdentity.subject == subject)
@@ -85,13 +96,21 @@ async def login(request: Request):
 @router.get("/callback")
 async def callback(request: Request, db: Session = Depends(get_db)):
     client = google_client()
-    token = await client.authorize_access_token(request)
+    try:
+        token = await client.authorize_access_token(request)
+    except OAuthError as exc:
+        logger.warning("Google sign-in callback refused: %s", exc.error)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Google sign-in failed. Start the sign-in again.") from exc
     claims = token.get("userinfo")
     if claims is None:
-        claims = await client.parse_id_token(request, token)
+        logger.warning("Google sign-in callback refused: no userinfo in the token response")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Google did not provide a verified identity")
     user = user_from_google_claims(claims, db)
     request.session["user_id"] = str(user.id)
     request.session["session_epoch"] = user.session_epoch
+    request.session["issued_at"] = int(time.time())
+    audit.record(db, actor=audit.user_actor(user), action="user.signed_in", payload={"provider": "google"})
+    db.commit()
     return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -115,6 +134,7 @@ def logout_everywhere(request: Request, db: Session = Depends(get_db)):
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not signed in")
     user.session_epoch += 1
+    audit.record(db, actor=audit.user_actor(user), action="user.signed_out_everywhere")
     db.commit()
     request.session.clear()
 
@@ -162,4 +182,5 @@ def development_login(payload: DevelopmentLogin, request: Request, db: Session =
         db.refresh(user)
     request.session["user_id"] = str(user.id)
     request.session["session_epoch"] = user.session_epoch
+    request.session["issued_at"] = int(time.time())
     return profile(user)

@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import logging
 import math
 import threading
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
+from urllib.parse import urlsplit
 
 from starlette.exceptions import HTTPException
 
 ASGIApp = Callable[[dict, Callable[[], Awaitable[dict]], Callable[[dict], Awaitable[None]]], Awaitable[None]]
+
+logger = logging.getLogger(__name__)
 
 
 TOO_LARGE_DETAIL = "Request body is too large."
@@ -156,6 +160,7 @@ class RateLimitMiddleware:
             if bucket and settings.rate_limit_enabled:
                 retry_after = self.counter.hit(bucket, _caller_key(scope), limit)
                 if retry_after is not None:
+                    logger.warning("Rate limit refused %s %s (%s caller)", scope.get("method"), path, _caller_key(scope).split(":", 1)[0])
                     await _send_rate_limited(send, retry_after)
                     return
         await self.app(scope, receive, send)
@@ -191,6 +196,67 @@ async def _send_too_large(send) -> None:
         {
             "type": "http.response.start",
             "status": 413,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode("ascii")),
+            ],
+        }
+    )
+    await send({"type": "http.response.body", "body": body})
+
+
+CROSS_ORIGIN_DETAIL = "Cross-origin request refused."
+_STATE_CHANGING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+class OriginCheckMiddleware:
+    """Refuses a state-changing browser request whose `Origin` (or, without it, `Referer`) is a site we
+    don't serve, answered 403. SameSite=Lax alone lets any same-site origin forge body-less POSTs.
+
+    Allowed: an origin in `trusted_origins`, or one whose host is the request's own `Host` (which
+    TrustedHostMiddleware has already restricted). A request with neither header passes: non-browser
+    clients send neither, and browsers always send `Origin` on a cross-site POST. `Origin: null`
+    (sandboxed frames, some redirects) is refused.
+    """
+
+    def __init__(self, app: ASGIApp, *, trusted_origins: Iterable[str]):
+        self.app = app
+        self.trusted = {origin.rstrip("/").lower() for origin in trusted_origins}
+
+    async def __call__(self, scope: dict, receive, send) -> None:
+        if scope["type"] == "http" and scope.get("method") in _STATE_CHANGING_METHODS:
+            headers = {key.lower(): value for key, value in scope.get("headers", [])}
+            origin = _request_origin(headers)
+            if origin is not None and not self._allowed(origin, headers.get(b"host", b"").decode("latin-1")):
+                logger.warning("Cross-origin %s %s refused", scope.get("method"), scope.get("path"))
+                await _send_cross_origin_refused(send)
+                return
+        await self.app(scope, receive, send)
+
+    def _allowed(self, origin: str, host: str) -> bool:
+        origin = origin.rstrip("/").lower()
+        if origin in self.trusted:
+            return True
+        return origin != "null" and urlsplit(origin).netloc == host.lower()
+
+
+def _request_origin(headers: dict[bytes, bytes]) -> str | None:
+    origin = headers.get(b"origin")
+    if origin is not None:
+        return origin.decode("latin-1")
+    referer = headers.get(b"referer")
+    if referer is None:
+        return None
+    parts = urlsplit(referer.decode("latin-1"))
+    return f"{parts.scheme}://{parts.netloc}" if parts.scheme and parts.netloc else "null"
+
+
+async def _send_cross_origin_refused(send) -> None:
+    body = ('{"detail": "%s"}' % CROSS_ORIGIN_DETAIL).encode("ascii")
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 403,
             "headers": [
                 (b"content-type", b"application/json"),
                 (b"content-length", str(len(body)).encode("ascii")),

@@ -27,6 +27,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import audit
+from app.ai_item_locks import locked_uuids
 from app.artifacts import register_artifact
 from app.models import Cluster, ClusterMember, ClusterRun, Project, ProjectStage, Source, SourceEmbedding
 from app.config import get_settings
@@ -188,6 +189,12 @@ def kmeans(vectors: list[list[float]], k: int, seed: int, max_iterations: int = 
     return assignment, distances
 
 
+def ai_clusterable_sources(db: Session, project: Project) -> list[Source]:
+    """`clusterable_sources` minus every source locked 'never send to AI': the set that may be embedded."""
+    locked = set(locked_uuids(db, project.id, "source"))
+    return [source for source in clusterable_sources(db, project) if source.id not in locked]
+
+
 def run_clustering(
     db: Session,
     project: Project,
@@ -204,7 +211,7 @@ def run_clustering(
     """Embed, group and store one clustering run. Raises `ClusteringError` or an `LLM*Error`. The caller commits."""
     if not embedder.model:
         raise ClusteringError("Thematic clustering is off: no embedding model is configured (EMBEDDING_MODEL).")
-    sources = clusterable_sources(db, project)
+    sources = ai_clusterable_sources(db, project)
     if len(sources) > max_sources:
         raise ClusteringError(f"The project has {len(sources)} sources; clustering is limited to {max_sources}.")
     if len(sources) < max(k, MIN_K):
@@ -234,6 +241,6 @@ def run_clustering(
 
 
 __all__ = [
-    "ARTIFACT_KIND", "ClusteringError", "MAX_K", "MIN_K", "clusterable_sources", "ensure_embeddings", "kmeans",
-    "run_clustering", "source_text",
+    "ARTIFACT_KIND", "ClusteringError", "MAX_K", "MIN_K", "ai_clusterable_sources", "clusterable_sources",
+    "ensure_embeddings", "kmeans", "run_clustering", "source_text",
 ]

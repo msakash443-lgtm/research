@@ -668,7 +668,7 @@ def decide(
     source = live_source_or_404(db, project, payload.source_id)
     problem = check_reason(payload.decision, payload.reason_code, criterion_codes(db, project), payload.note)
     if problem:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=problem)
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=problem)
     if payload.stage == "full_text" and source.id not in passed_title_abstract(db, project):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This source has not passed title/abstract screening, so it can't be screened at full text.")
     if _blocked_by_full_text(db, project, source, payload.stage, payload.decision):
@@ -847,10 +847,10 @@ def adjudicate(
     if not discussion:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="The reviewers must discuss this disagreement first. Record the discussion, then rule.")
     if not (payload.note and payload.note.strip()):
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="A ruling needs a written rationale in the note.")
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="A ruling needs a written rationale in the note.")
     problem = check_reason(payload.decision, payload.reason_code, criterion_codes(db, project), payload.note)
     if problem:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=problem)
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=problem)
     if payload.stage == "full_text" and source.id not in passed_title_abstract(db, project):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This source has not passed title/abstract screening, so it can't be screened at full text.")
     if _blocked_by_full_text(db, project, source, payload.stage, payload.decision):

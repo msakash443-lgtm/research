@@ -169,7 +169,7 @@ def create_retrieval_app(token: str | None = None) -> FastAPI:
             # search_and_extract is synchronous and can block for tens of seconds.
             result = await run_in_threadpool(agent.search_and_extract, payload.topic)
         except Exception as exc:  # noqa: BLE001
-            logger.exception("Retrieval failed for topic %r", payload.topic)
+            logger.exception("Retrieval failed for a topic of %d characters", len(payload.topic))
             raise HTTPException(status_code=502, detail="Retrieval failed") from exc
         return _serialize(result)
 

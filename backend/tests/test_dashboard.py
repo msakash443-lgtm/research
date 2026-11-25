@@ -68,3 +68,15 @@ def test_request_body_limit_rejects_oversized_payloads():
             headers={"Content-Type": "application/json"},
         )
         assert response.status_code == 413
+
+
+def test_a_crafted_range_header_is_answered_quickly():
+    # CVE-2025-62727: Starlette <= 0.49.0 spent O(n^2) in its range regex on this shape (13.8 s for 40k
+    # characters measured on 0.45.3; 0.0 s on 1.3.1), so a single request could pin a CPU on /assets.
+    import time
+
+    crafted = "bytes=" + "0" * 40000 + "a-"
+    with TestClient(app) as client:
+        started = time.perf_counter()
+        client.get("/assets/styles.css", headers={"Range": crafted})
+        assert time.perf_counter() - started < 2

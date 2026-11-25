@@ -36,7 +36,7 @@ def update_research_type(
     try:
         selected = research_types.load_research_type(payload.name)
     except research_types.ResearchTypeError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     project.research_type = selected.name
     project.stage_plan_json = selected.model_dump(mode="json")
     project.touch()
@@ -117,7 +117,7 @@ def add_context(
 ):
     if payload.kind == ContextKind.objective:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Objectives are written through the objectives route, not as context items",
         )
     item = ResearchContextItem(project_id=project.id, created_by=audit.user_actor(user), **payload.model_dump())
@@ -161,7 +161,7 @@ def amend_context(
     if "rationale" in payload.model_fields_set and payload.rationale != item.rationale:
         changes["rationale"] = payload.rationale
     if not changes:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Nothing changed")
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Nothing changed")
     actor = audit.user_actor(user)
     item.history = [
         *(item.history or []),

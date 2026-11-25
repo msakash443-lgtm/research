@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import audit, project_schemas, suggestion_store
+from app.ai_item_locks import is_locked
 from app.answer_guard import check_answer
 from app.extraction_schema import ExtractionSchema, SchemaError, ValueSpec, check_extraction, schema_version
 from app.extraction_spans import check_evidence_spans
@@ -226,6 +227,8 @@ def run_ai_extraction(
         raise AiExtractionError("The stored full-text reference does not identify this source's PDF.")
     if db.scalar(select(Gate.status).where(Gate.project_id == project.id, Gate.code == GateCode.G4)) == GateStatus.approved:
         raise AiExtractionError("Gate G4 is approved; reopen the extraction stage before creating another extraction.")
+    if is_locked(db, project.id, "source", source.id):
+        raise AiExtractionError("This source is marked 'never send to AI', so nothing was sent.")
     try:
         schema = project_schemas.resolve(db, project.id, schema_name)
         version = schema_version(schema)

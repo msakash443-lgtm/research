@@ -81,23 +81,23 @@ def create_report(
 ):
     refuse_if_archived(project)
     if payload.sections is not None and not payload.sections:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="sections needs at least one section")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="sections needs at least one section")
     if payload.scope == "section":
         if payload.document_id is None:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="A section report needs document_id")
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="A section report needs document_id")
         if payload.section_ids is not None:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="A section report takes no section_ids")
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="A section report takes no section_ids")
         document = db.get(Document, payload.document_id)
         if document is None or document.project_id != project.id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
         documents = [document]
     else:
         if payload.document_id is not None:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="A manuscript report takes no document_id")
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="A manuscript report takes no document_id")
         documents = list(db.scalars(select(Document).where(Document.project_id == project.id).order_by(Document.position)).all())
         if payload.section_ids is not None:
             if not payload.section_ids:
-                raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="section_ids needs at least one section")
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="section_ids needs at least one section")
             by_id = {document.id: document for document in documents}
             missing = [str(section_id) for section_id in payload.section_ids if section_id not in by_id]
             if missing:
@@ -167,7 +167,7 @@ def ai_disclosure(
     row = _report(db, project, report_id)
     template = ai_disclosure_formats.load_template()
     if style not in template["styles"]:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"Unknown style. Choose one of: {', '.join(ai_disclosure_formats.style_names(template))}")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"Unknown style. Choose one of: {', '.join(ai_disclosure_formats.style_names(template))}")
     artifact = provenance_store.artifact_for(db, row)
     if artifact is not None and artifact.status == ArtifactStatus.stale:
         raise HTTPException(

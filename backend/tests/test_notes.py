@@ -395,3 +395,13 @@ def test_ordinary_json_requests_keep_the_default_body_cap():
     response = client.post("/api/notes", json={"client_id": "big-json", "kind": "typed", "body": too_big})
 
     assert response.status_code == 413
+
+
+def test_a_clip_note_with_a_javascript_link_is_refused():
+    client = sign_in("clip-scheme@example.com")
+
+    for link in ("javascript:alert(1)", "JaVaScRiPt:alert(1)", "data:text/html,x", "https:///no-host"):
+        refused = client.post("/api/notes", json={"client_id": "bad-" + link[:6], "kind": "clip", "source_url": link})
+        assert refused.status_code == 422, link
+    accepted = client.post("/api/notes", json={"client_id": "good-link", "kind": "clip", "source_url": "https://example.com"})
+    assert accepted.status_code == 201

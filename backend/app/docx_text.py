@@ -12,8 +12,13 @@ Sections come from paragraphs styled Heading 1-3. A heading that names a standar
 still a section, named by its casefolded title, so a quote can be located by its heading.
 
 Failures raise a `FullTextError` subclass, the same classes PDF extraction uses where they apply:
-`DocxUnreadable` (not a readable DOCX), `DocxTooLong` (more paragraphs than the cap) and
-`fulltext.NoExtractableText` (no text at all).
+`DocxUnreadable` (not a readable DOCX, or an archive over the limits below), `DocxTooLong` (more
+paragraphs than the cap) and `fulltext.NoExtractableText` (no text at all).
+
+A DOCX is a zip, so a few kilobytes can declare gigabytes. Before python-docx parses anything the
+archive directory is checked: at most `MAX_DOCX_PARTS` entries and `MAX_DOCX_UNCOMPRESSED_BYTES` of
+declared uncompressed size. The zip reader never inflates past an entry's declared size, so the
+declared sizes are an effective bound.
 """
 
 from __future__ import annotations
@@ -21,12 +26,16 @@ from __future__ import annotations
 import hashlib
 import io
 import re
+import zipfile
 
 from docx import Document
 
 from app.fulltext import FullText, FullTextError, NoExtractableText, Section, _canonical_heading
 
 _HEADING_STYLE = re.compile(r"^heading ([1-3])$", re.IGNORECASE)
+
+MAX_DOCX_PARTS = 1000
+MAX_DOCX_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
 
 
 class DocxError(FullTextError):
@@ -41,7 +50,20 @@ class DocxTooLong(DocxError):
     """The DOCX has more body paragraphs than the configured cap."""
 
 
+def _check_archive(data: bytes) -> None:
+    try:
+        parts = zipfile.ZipFile(io.BytesIO(data)).infolist()
+    except zipfile.BadZipFile as exc:
+        raise DocxUnreadable(f"not a readable DOCX: {exc}") from exc
+    if len(parts) > MAX_DOCX_PARTS:
+        raise DocxUnreadable(f"DOCX has {len(parts)} parts; the limit is {MAX_DOCX_PARTS}")
+    total = sum(part.file_size for part in parts)
+    if total > MAX_DOCX_UNCOMPRESSED_BYTES:
+        raise DocxUnreadable(f"DOCX expands to {total} bytes; the limit is {MAX_DOCX_UNCOMPRESSED_BYTES}")
+
+
 def extract_docx_text(data: bytes, *, max_paragraphs: int) -> FullText:
+    _check_archive(data)
     try:
         document = Document(io.BytesIO(data))
         paragraphs = document.paragraphs

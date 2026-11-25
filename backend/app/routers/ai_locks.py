@@ -51,12 +51,12 @@ def _target(db: Session, project: Project, target_kind: str, target_id: str) -> 
     try:
         kind = canonical_kind(suggestions.validate_target(target_kind))
     except suggestions.ForbiddenTarget as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     if kind == NOTE_KIND:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "A note's lock is set on the note itself (PATCH /api/notes/{id}/lock).")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "A note's lock is set on the note itself (PATCH /api/notes/{id}/lock).")
     target = target_id.strip()
     if not target or len(kind) > MAX_KIND_CHARS or len(target) > MAX_ID_CHARS:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "A lock needs a target kind and id of reasonable length.")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "A lock needs a target kind and id of reasonable length.")
     model = _ROW_KINDS.get(kind)
     if model is not None:
         try:

@@ -33,3 +33,8 @@ def test_every_service_that_uses_the_password_requires_it():
         else:
             assert password_entries, f"{name} should build its DATABASE_URL from POSTGRES_PASSWORD"
             assert all(":?" in str(value) for value in password_entries), name
+
+
+def test_web_is_published_on_loopback_only():
+    ports = _compose()["services"]["web"]["ports"]
+    assert ports == ["127.0.0.1:8000:8080"]

@@ -85,9 +85,9 @@ def queue_snowball(
             raise HTTPException(status.HTTP_404_NOT_FOUND, f"Source(s) not in this project: {', '.join(missing)}")
     seeds = db.scalars(select(SeedPaper.id).where(SeedPaper.project_id == project.id)).all() if body.include_seeds else []
     if not source_ids and not seeds:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Nothing to start from: add seed papers or choose sources")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Nothing to start from: add seed papers or choose sources")
     if len(source_ids) + len(seeds) > MAX_STARTS:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"At most {MAX_STARTS} start papers per run")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"At most {MAX_STARTS} start papers per run")
 
     actor = audit.user_actor(user)
     run_id = uuid.uuid4()

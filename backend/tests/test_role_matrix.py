@@ -567,6 +567,9 @@ def _seed_world(mp):
 
     store = ExtractionStore()
     _patch_matrix_runtime(mp, store, uploads)
+    from app.config import get_settings
+
+    mp.setattr(get_settings(), "zotero_allowed_project_ids", [uuid.UUID(project_id)])  # the shared library is per-project opt-in
     with SessionLocal() as db:
         db.get(Source, uuid.UUID(extraction_source_id)).fulltext_path = source_key
         db.commit()

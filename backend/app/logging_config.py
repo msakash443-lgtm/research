@@ -15,5 +15,8 @@ LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
 
 def configure_logging() -> None:
     """Send `app.*` records to stderr at INFO. Calling it again, or after a host (uvicorn, pytest)
-    has configured the root logger, changes nothing."""
+    has configured the root logger, changes nothing. httpx/httpcore are held at WARNING because
+    their INFO lines carry full request URLs, and connector API keys travel in query strings."""
     logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
+    for name in ("httpx", "httpcore"):
+        logging.getLogger(name).setLevel(logging.WARNING)

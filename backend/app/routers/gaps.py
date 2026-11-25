@@ -87,7 +87,7 @@ def list_gap_candidates(project: Project = Depends(project_access(READ_ROLES)), 
     try:
         matrix_data = build_evidence_matrix(db, project)
     except SchemaError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     return gap_candidates(papers=papers_for_project(db, project), matrix=matrix_data)
 
 
@@ -106,7 +106,7 @@ def create_gap(payload: GapIn, project: Project = Depends(project_access(WRITE_R
             if db.scalar(select(Source.id).where(Source.id == source_id, Source.project_id == project.id, Source.merged_into.is_(None))) is None:
                 raise ValueError("future_research provenance must reference an active project source")
     except ValueError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     gap = Gap(project_id=project.id, type=payload.type, statement=payload.statement.strip(),
               supporting_paper_ids=[str(item) for item in payload.supporting_paper_ids],
               matrix_cell_ids=payload.matrix_cell_ids, future_research=payload.future_research,

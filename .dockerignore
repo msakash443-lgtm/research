@@ -28,3 +28,12 @@ Dockerfile
 .github/
 .vscode/
 .idea/
+
+# More local state that must never reach the build context
+.venv*/
+data/
+backend/data/
+node_modules/
+.claude/
+.agents/
+*.db*

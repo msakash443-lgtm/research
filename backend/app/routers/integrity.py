@@ -96,7 +96,7 @@ def create_check(
         # A connector would be queued here once one exists; until then the request is refused and nothing is written.
         raise HTTPException(status.HTTP_409_CONFLICT, detail={"code": "not_configured", "message": similarity_providers.NOT_CONNECTED_HINT})
     if payload.provider != PROJECT_SOURCES:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"Unknown similarity provider {payload.provider!r}")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"Unknown similarity provider {payload.provider!r}")
 
     document = project_document_or_404(db, project, payload.document_id)
     latest = latest_version(db, document.id)
@@ -222,7 +222,7 @@ def set_credit_contribution(
     try:
         member.credit_roles = credit.validate_roles(payload.roles)
     except credit.InvalidCreditRole as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     audit.record(
         db, actor=audit.user_actor(user), action="manuscript.credit_set", project_id=project.id,
         payload={"member_id": str(member.id), "roles": member.credit_roles},

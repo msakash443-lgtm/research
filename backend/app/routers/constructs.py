@@ -99,7 +99,7 @@ def list_theories(project: Project = Depends(project_access(READ_ROLES)), db: Se
 def create_theory(payload: TheoryIn, project: Project = Depends(project_access(WRITE_ROLES)), user: User = Depends(current_user), db: Session = Depends(get_db)):
     known = set(db.scalars(select(Construct.id).where(Construct.project_id == project.id)).all())
     if any(item not in known for item in payload.construct_ids):
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Every construct must belong to this project")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Every construct must belong to this project")
     values = payload.model_dump(exclude={"construct_ids"})
     item = Theory(project_id=project.id, created_by=str(user.id), **values)
     db.add(item)

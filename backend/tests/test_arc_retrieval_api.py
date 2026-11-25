@@ -234,3 +234,12 @@ def test_agent_failure_is_502_without_leaking_details(client, fake_agent):
     assert response.status_code == 502
     assert response.json() == {"detail": "Retrieval failed"}
     assert "secret" not in response.text
+
+
+def test_a_failed_retrieval_never_logs_the_research_topic(client, fake_agent, caplog):
+    fake_agent.error = RuntimeError("boom")
+    with caplog.at_level("DEBUG"):
+        response = client.post("/v1/retrieve", json=BODY, headers=AUTH)
+    assert response.status_code == 502
+    assert "female labour participation" not in caplog.text
+    assert "Retrieval failed" in caplog.text

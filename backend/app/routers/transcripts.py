@@ -35,7 +35,7 @@ def anonymise(
     try:
         text, log = transcripts.redact(body.text, body.terms)
     except ValueError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     return {
         "text": text,
         "log": log,

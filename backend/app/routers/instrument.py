@@ -47,9 +47,9 @@ def validity_plan(body: ValidityPlanIn, project: Project = Depends(project_acces
     try:
         return build_plan(body.measure_keys, body.own_item_count)
     except KeyError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Unknown measure key: {exc.args[0]}") from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"Unknown measure key: {exc.args[0]}") from exc
     except ValueError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
 
 
 @router.get("/measures")
@@ -70,7 +70,7 @@ def draft_instrument(body: DraftIn, project: Project = Depends(project_access(RE
     try:
         return build_draft(body.measure_keys, [item.strip() for item in body.own_items if item.strip()])
     except KeyError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Unknown measure key: {exc.args[0]}") from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"Unknown measure key: {exc.args[0]}") from exc
 
 
 @router.post("/item-checks")
@@ -80,7 +80,7 @@ def item_checks(body: ItemChecksIn, project: Project = Depends(project_access(RE
         try:
             result = check_item(text)
         except ValueError as exc:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"item {index}: {exc}") from exc
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"item {index}: {exc}") from exc
         results.append(
             {
                 "index": index,

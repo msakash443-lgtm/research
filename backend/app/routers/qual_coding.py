@@ -96,7 +96,7 @@ def suggest(
     """Store one excerpt and ask the local model for pending code suggestions."""
     require_ai_on(project)
     if not body.excerpt.strip():
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "The excerpt is blank; nothing to code.")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "The excerpt is blank; nothing to code.")
     settings = get_settings()
     meter = ProjectMeter(project.id, settings, purpose="qual_suggest", budget_override=project.token_budget_override)
     try:
@@ -176,7 +176,7 @@ def decide(
             # The person's definition wins; the model's rationale is the fallback. Refuse with nothing decided if neither exists.
             definition = supplied or (row.rationale or "").strip()
             if not definition:
-                raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                                     "This suggestion has no rationale, so write the code's definition to accept it.")
             try:
                 qual_codebook_store.accept_code(db, project, user, row.code, definition)

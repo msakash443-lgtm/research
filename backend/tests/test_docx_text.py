@@ -57,3 +57,35 @@ def test_a_docx_whose_body_paragraphs_are_all_blank_has_no_extractable_text():
 
     with pytest.raises(NoExtractableText):
         extract_docx_text(data, max_paragraphs=100)
+
+
+def _zip_with_zeros(megabytes: int) -> bytes:
+    import zipfile
+
+    buffer = io.BytesIO()
+    chunk = b"\0" * (1024 * 1024)
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        with archive.open("word/document.xml", "w", force_zip64=True) as part:
+            for _ in range(megabytes):
+                part.write(chunk)
+    return buffer.getvalue()
+
+
+def test_a_docx_that_expands_past_the_limit_is_refused_before_parsing():
+    data = _zip_with_zeros(101)
+
+    assert len(data) < 1024 * 1024
+    with pytest.raises(DocxUnreadable, match="expands to"):
+        extract_docx_text(data, max_paragraphs=100)
+
+
+def test_a_docx_with_too_many_parts_is_refused():
+    import zipfile
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for index in range(1001):
+            archive.writestr(f"part{index}.xml", "x")
+
+    with pytest.raises(DocxUnreadable, match="1001 parts"):
+        extract_docx_text(buffer.getvalue(), max_paragraphs=100)

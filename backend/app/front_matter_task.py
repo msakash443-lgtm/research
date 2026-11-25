@@ -6,12 +6,14 @@ import uuid
 
 from app import audit
 from app.agent.llm import LLMConfigurationError, LLMResponseError
+from app.ai_item_locks import is_locked
 from app.ai_controls import AIOffError, llm_for_project
 from app.config import get_settings
 from app.database import SessionLocal
 from app.front_matter import FrontMatterError, build
 from app.front_matter_run import run
 from app.models import Document, ManuscriptOutput, Project
+from app.workspace_ai_task import DOCUMENT_KIND
 from app.similarity_task import latest_version
 from app.suggestion_store import create_suggestion
 from app.task_registry import PermanentTaskError
@@ -37,6 +39,8 @@ def run_front_matter(task, payload: dict) -> None:
             raise PermanentTaskError("a saved document version is required")
         if version.id != source_version_id:
             raise PermanentTaskError("the document changed after this front-matter request; request it again")
+        if document.ai_locked or is_locked(db, project.id, DOCUMENT_KIND, document.id):
+            raise PermanentTaskError("ai_locked: this section is marked 'never send to AI', so nothing was sent")
         task.ensure_owned(db)
         try:
             result = run(

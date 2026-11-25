@@ -23,14 +23,12 @@ MAX_REDIRECTS = 5
 
 
 def _is_blocked_addr(addr: ipaddress._BaseAddress) -> bool:
-    return (
-        addr.is_private
-        or addr.is_loopback
-        or addr.is_link_local
-        or addr.is_reserved
-        or addr.is_unspecified
-        or addr.is_multicast
-    )
+    """Block everything that is not a global unicast address (same rule as the app's `safe_fetch`): this
+    includes 100.64.0.0/10 (carrier-grade NAT, which holds cloud metadata such as 100.100.100.200), and an
+    IPv6 address that wraps an IPv4 one (::ffff:a.b.c.d) is judged by the IPv4 address inside it."""
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        addr = addr.ipv4_mapped
+    return not addr.is_global or addr.is_multicast
 
 
 def check_url_ssrf(url: str) -> str | None:
