@@ -1,7 +1,7 @@
 // Run with: node --test backend/app/web/js/test   (no packages; pytest does not run these)
 import test from "node:test";
 import assert from "node:assert/strict";
-import { aiExtractionAction, manualExtractionAction, normalizeOrientation, tableLayout } from "../evidenceTableLogic.js";
+import { aiExtractionAction, aiExtractionPayload, manualExtractionAction, normalizeOrientation, tableLayout } from "../evidenceTableLogic.js";
 
 const matrix = {
   fields: [{ key: "sample" }, { key: "measures" }],
@@ -44,6 +44,12 @@ test("AI extraction reports actionable manual-upload guidance when no stored PDF
   });
   assert.equal(aiExtractionAction({ ...pending, extraction_id: "done" }, true), null);
   assert.equal(aiExtractionAction(pending, false), null);
+});
+
+test("AI extraction payload preserves the selected schema instead of defaulting it", () => {
+  assert.deepEqual(aiExtractionPayload("source-1", "custom@3"), {
+    source_id: "source-1", schema_name: "custom@3",
+  });
 });
 
 test("manual extraction is offered only to writable users for final included stored-PDF papers", () => {

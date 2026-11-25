@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import dataclasses
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import or_, select
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app import artifacts as art
 from app import stage_machine
 from app.database import get_db
+from app.config import get_settings
 from app.dependencies import MANAGE_ROLES, READ_ROLES, WRITE_ROLES, current_user, project_access
 from app.models import Artifact, ArtifactStatus, AuditEvent, Project, ProjectStage, User
 from app.gates import GATE_STAGES
@@ -30,6 +32,9 @@ from app.schemas import (
     SuggestionRead,
 )
 from app import audit
+from app.ai_controls import AIOffError, llm_for_project, require_ai_on
+from app.agent.llm import LLMConfigurationError, LLMResponseError
+from app.stage_coach import StageCoachError, coach
 
 router = APIRouter(prefix="/projects/{project_id}", tags=["stage"])
 
@@ -146,10 +151,54 @@ def get_stage(project: Project = Depends(project_access(READ_ROLES)), db: Sessio
             StageChainItem(stage=step.stage, gate=step.gate, label=step.label)
             for step in research_types.ResearchType(**project.stage_plan_json).stages
         ],
+
         suggestions=[SuggestionRead(**dataclasses.asdict(s)) for s in suggestions],
         human_participants=research_types.human_participants(project),
         research_type=project.research_type,
     )
+
+class StageCoachActionRead(BaseModel):
+    text: str
+    condition_id: str
+
+class StageCoachRead(BaseModel):
+    explanation: str
+    actions: list[StageCoachActionRead]
+    model_id: str
+    prompt_version: str
+
+@router.post("/stage/coach", response_model=StageCoachRead)
+def stage_coach(
+    project: Project = Depends(project_access(READ_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Explain authoritative stage conditions; this endpoint cannot change project state."""
+    require_ai_on(project)
+    options = stage_machine.next_options(db, project)
+    evaluated = [(option, ec.conditions(db, project, option.stage)) for option in options]
+    context = {
+        "stage": project.stage.value,
+        "research_type": project.research_type,
+        "next": [{"stage": option.stage.value, "gate": option.gate.value if option.gate else None, "ready": option.ready}
+                 for option, _ in evaluated],
+        "conditions": [_condition_payload(condition) for _, conditions in evaluated for condition in conditions],
+    }
+    try:
+        result = coach(llm_for_project(get_settings(), project, purpose="stage_coach"), context)
+    except (AIOffError, LLMConfigurationError) as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except (LLMResponseError, StageCoachError) as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    audit.record(
+        db, actor=audit.user_actor(user), action="stage.coach_generated", project_id=project.id,
+        payload={"stage": project.stage.value, "condition_count": len(context["conditions"]),
+                 "action_count": len(result.actions)},
+        model_id=result.model_id, prompt_version=result.prompt_version,
+    )
+    db.commit()
+    return StageCoachRead(explanation=result.explanation, actions=result.actions,
+                          model_id=result.model_id, prompt_version=result.prompt_version)
 
 
 @router.get("/stage/conditions", response_model=list[ConditionRead])

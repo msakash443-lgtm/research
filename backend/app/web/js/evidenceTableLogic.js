@@ -24,6 +24,11 @@ export function autoExtractionAction(canWrite) {
 export function manualExtractionAction(paper, canWrite, includedSourceIds) {
   if (!canWrite || paper.extraction_id || paper.coverage?.level !== "full_text" || !includedSourceIds.has(paper.source_id)) return null;
   return { enabled: true, message: "Create a human-entered, unverified extraction from the stored full-text PDF." };
+
+}
+
+export function aiExtractionPayload(sourceId, schemaName) {
+  return { source_id: sourceId, schema_name: schemaName };
 }
 
 // -> { headers: [{ paper? | field? }], rows: [{ head: { paper? | field? }, cells: [{ paper, field, cell }] }] }

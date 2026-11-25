@@ -85,6 +85,8 @@ class Settings(BaseSettings):
     llm_model: str | None = None
     llm_timeout_seconds: float = 60
     llm_schema_max_attempts: int = 3
+    # The project assistant is opt-in at deployment level; project AI controls still apply.
+    research_assistant_enabled: bool = False
     # Off by default: when the standard provider explicitly reports exhausted credits or quota,
     # retry the same request through the configured local model. Other failures still fail loudly.
     llm_quota_fallback_to_local: bool = False
