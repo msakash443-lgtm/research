@@ -9,9 +9,12 @@ import json
 from typing import Any
 
 from app import figure_checks
+from app.untrusted_text import clean_untrusted
 
 PROMPT = ("figure_correction", 1)
 CODE = "correction_still_invalid"
+MAX_SPEC_CHARS = 24_000
+MAX_MESSAGE_CHARS = 500
 
 
 class CorrectionError(Exception):
@@ -22,12 +25,14 @@ class CorrectionError(Exception):
 
 
 def draft(spec: dict[str, Any], findings: list[figure_checks.Finding]) -> str:
-    """The draft figure and the findings it fails, as the prompt's `draft` placeholder."""
-    lines = [json.dumps(spec, sort_keys=True), "", "Checks it fails:"]
+    """Render the draft and deterministic findings as cleaned model-facing text."""
+    lines = [clean_untrusted(json.dumps(spec, sort_keys=True), MAX_SPEC_CHARS).text, "", "Checks it fails:"]
     if not findings:
         lines.append("none")
     for finding in findings:
-        lines.append(f"- {finding.code} ({finding.element_id}): {finding.message}")
+        element_id = clean_untrusted(str(finding.element_id or ""), 200).text
+        message = clean_untrusted(finding.message, MAX_MESSAGE_CHARS).text
+        lines.append(f"- {finding.code} ({element_id}): {message}")
     return "\n".join(lines)
 
 

@@ -11,8 +11,8 @@ from app import artifacts as art
 from app import stage_machine
 from app.database import get_db
 from app.config import get_settings
-from app.dependencies import MANAGE_ROLES, READ_ROLES, WRITE_ROLES, current_user, project_access
-from app.models import Artifact, ArtifactStatus, AuditEvent, Project, ProjectStage, User
+from app.dependencies import MANAGE_ROLES, READ_ROLES, WRITE_ROLES, current_user, project_access, project_role
+from app.models import Artifact, ArtifactStatus, AuditEvent, Project, ProjectRole, ProjectStage, User
 from app.gates import GATE_STAGES
 from app import guidance, research_types, stage_order
 from app import exit_conditions as ec
@@ -105,19 +105,37 @@ def get_stage_history(
 def list_artifacts(
     state: ArtifactStatus | None = Query(default=None, alias="status"),
     project: Project = Depends(project_access(READ_ROLES)),
+    user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
+    """A non-owner sees screening-decision artifacts only when they made the decision (X.265), the same blinding
+    as `screening.*` audit events: the artifact's `created_by` and `ref_id` would otherwise name the other reviewer."""
     query = select(Artifact).where(Artifact.project_id == project.id)
+    if project_role(db, project, user) != ProjectRole.owner:
+        query = query.where(
+            or_(Artifact.kind != art.SCREENING_DECISION_KIND, Artifact.created_by == audit.user_actor(user))
+        )
     if state is not None:
         query = query.where(Artifact.status == state)
     return db.scalars(query.order_by(Artifact.created_at.asc(), Artifact.id.asc())).all()
 
 
 @router.get("/rerun-path", response_model=list[RerunStep])
-def get_rerun_path(project: Project = Depends(project_access(READ_ROLES)), db: Session = Depends(get_db)):
-    """What has to be redone, in workflow order, with each stage's gate and its status."""
+def get_rerun_path(
+    project: Project = Depends(project_access(READ_ROLES)),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """What has to be redone, in workflow order, with each stage's gate and its status. Screening-decision
+    artifacts are blinded for a non-owner as in `GET /artifacts` (X.265)."""
     steps = art.rerun_path(db, project)
     db.commit()  # rerun_path may create missing gate rows
+    if project_role(db, project, user) != ProjectRole.owner:
+        viewer = audit.user_actor(user)
+        for step in steps:
+            step["artifacts"] = [
+                a for a in step["artifacts"] if a.kind != art.SCREENING_DECISION_KIND or a.created_by == viewer
+            ]
     return [
         RerunStep(
             stage=step["stage"], gate=step["gate"], gate_status=step["gate_status"],

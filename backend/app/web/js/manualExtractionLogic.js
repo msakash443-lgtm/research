@@ -66,7 +66,11 @@ export function buildManualExtractionPayload({ sourceId, schemaName, fields }) {
   return { source_id: sourceId, schema_name: schemaName, fields: values, evidence };
 }
 
+// The API answers 422 with `detail` as a list of problem strings; api.js keeps it on error.detail, but its own message
+// is only "Something went wrong (HTTP 422…)", so the listed problems are read from there.
 export function manualExtractionError(error) {
+  const problems = Array.isArray(error?.detail) ? error.detail.map(String).filter(Boolean) : [];
+  if (problems.length) return problems.join(". ");
   return error?.message || "The manual extraction could not be saved.";
 }
 

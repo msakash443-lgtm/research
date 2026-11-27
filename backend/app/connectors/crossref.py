@@ -103,15 +103,13 @@ def _author(entry: Any) -> str | None:
 
 
 def _has_retraction_update(item: dict[str, Any]) -> bool:
-    """Crossref update metadata marks a retraction notice with type='retraction'."""
-    for key in ("update-to", "updated-by"):
-        relations = item.get(key)
-        if isinstance(relations, list) and any(
-            isinstance(relation, dict) and str(relation.get("type", "")).casefold() == "retraction"
-            for relation in relations
-        ):
-            return True
-    return False
+    """True when a retraction notice updates THIS work. Crossref lists that notice under `updated-by` on the
+    retracted paper; `update-to` is the other direction (this work is the notice), so it never flags the work (X.260)."""
+    relations = item.get("updated-by")
+    return isinstance(relations, list) and any(
+        isinstance(relation, dict) and str(relation.get("type", "")).casefold() == "retraction"
+        for relation in relations
+    )
 
 
 def to_record(item: dict[str, Any]) -> PaperRecord | None:

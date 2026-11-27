@@ -29,6 +29,8 @@ from app.models import Artifact, ArtifactEdge, ArtifactStatus, GateCode, GateSta
 
 from app.stage_order import StageNotInChain, chain as stage_chain, require_stage
 
+SCREENING_DECISION_KIND = "screening_decision"  # one decision artifact; blind it per reviewer (X.265)
+
 
 class ArtifactError(ValueError):
     pass

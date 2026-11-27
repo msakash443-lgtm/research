@@ -45,3 +45,13 @@ test("manual extraction exposes API error messages to the form", () => {
   assert.equal(manualExtractionError(new Error("The quote was not found in the stored PDF")), "The quote was not found in the stored PDF");
   assert.equal(manualExtractionError(), "The manual extraction could not be saved.");
 });
+
+test("a 422 whose detail lists problems shows every listed problem, not the generic HTTP message", () => {
+  const error = Object.assign(new Error("Something went wrong (HTTP 422, POST /api/projects/p/extractions)."), {
+    status: 422, detail: ["sample: quote not found in the stored PDF", "question: page 99 is outside the document"],
+  });
+  const message = manualExtractionError(error);
+  assert.match(message, /sample: quote not found in the stored PDF/);
+  assert.match(message, /question: page 99 is outside the document/);
+  assert.doesNotMatch(message, /Something went wrong/);
+});

@@ -301,6 +301,10 @@ mark { background:var(--color-warning-bg); color:var(--color-text); }
 .evidence-compare-head .quiet-button { margin-left:auto; }
 .evidence-compare-cite { padding:8px 12px; }
 .evidence-compare-cite blockquote { margin:4px 0; font-style:italic; }
+.evidence-compare-kind { font-size:var(--font-size-xs); }
+.evidence-compare-bad { color:var(--color-danger-fg); }
+.evidence-compare-warn { color:var(--color-warning-fg); }
+.evidence-compare-ok { color:var(--color-success-fg); }
 .screen-group { list-style:none; padding:6px 4px; font-weight:600; }
 .evidence-workspace { display:grid; grid-template-columns:minmax(0, 2fr) minmax(250px, 1fr); gap:16px; align-items:start; }
 .evidence-scroll { overflow:auto; }

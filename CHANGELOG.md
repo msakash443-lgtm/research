@@ -6,8 +6,12 @@ All notable user-facing changes to this app are recorded here. Format: [Keep a C
 
 ## [Unreleased]
 
+- **Fixed:** X.265: a reviewer who is not the project owner no longer sees other reviewers' screening-decision artifacts in the artifact list or the re-run path (dual-screen blinding).
+- **Fixed:** X.260: a Crossref retraction notice is no longer flagged `retracted` itself; only the paper that lists the notice under `updated-by` is.
 - **Security:** X.262: dependencies upgraded to FastAPI 0.136.3, Starlette 1.3.1 (fixes CVE-2025-62727, a Range-header denial of service on `/assets`) and Authlib 1.9.1 (the first release OSV lists no advisories for; it pulls in `joserfc`).
 - **Security:** X.262: `pypdf` 6.18.1 → 7.1.1 and `anyio` 4.9.0 → 4.16.0; OSV lists no advisories for the new versions (24 for pypdf 6.18.1, 4 for anyio 4.9.0).
+- **Fixed:** X.258: the Evidence table step no longer shows an error on every load; it now shows the "Conflicts & agreements" panel (conflicting, inconsistent and agreeing verified findings with quotes, source-text links and "Make this a gap").
+- **Fixed:** X.259: the manual extraction form lists every problem the server reports (for example a quote not found in the PDF) instead of "Something went wrong (HTTP 422…)".
 - **Fixed:** X.262: the "never send to AI" lock is now enforced on front-matter proposals (409 `ai_locked`, and again in the worker), AI extraction (route, worker, and `extractions/ai/auto` reports `ai_locked`), thematic clustering, semantic novelty and gap/research-question suggestions. A locked item is never embedded or put in a prompt.
 - **Security:** X.262: DOCX uploads are refused (422 `unreadable`) when they hold more than 1000 parts or declare more than 100 MiB uncompressed, and PDF/DOCX text extraction no longer blocks the event loop.
 - **Changed:** X.262, breaking for operators: the server-wide Zotero library and Google Forms token are per-project opt-in. List project UUIDs in `ZOTERO_ALLOWED_PROJECT_IDS` and `GOOGLE_FORMS_ALLOWED_PROJECT_IDS` (JSON lists, default empty = no project may use them); other projects get 403.

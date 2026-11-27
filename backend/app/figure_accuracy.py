@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from app import answer_guard
 from app.output_schemas import with_abstention
+from app.untrusted_text import clean_untrusted
 
 PROMPT = ("figure_accuracy", 1)
 LABELS = ("supported", "unsupported", "contradicted")
@@ -61,8 +62,16 @@ def elements(spec: dict) -> list[Element]:
     return out
 
 
+MAX_DESCRIPTION_CHARS = 2_000
+
+
 def render(items: list[Element]) -> str:
-    return "\n".join(f"- {item.element_id}: {item.description}" for item in items)
+    """Render model-facing element descriptions after cleaning all figure-derived text."""
+    return "\n".join(
+        f"- {clean_untrusted(item.element_id, 200).text}: "
+        f"{clean_untrusted(item.description, MAX_DESCRIPTION_CHARS).text}"
+        for item in items
+    )
 
 
 def schema(items: list[Element]) -> dict:

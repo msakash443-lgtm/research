@@ -4,6 +4,7 @@ import { provenanceBadge } from "../provenance.js";
 import { coverageBadge } from "./common.js";
 import { PAPERS_AS_COLUMNS, PAPERS_AS_ROWS, aiExtractionAction, aiExtractionPayload, autoExtractionAction, manualExtractionAction, normalizeOrientation, tableLayout } from "../evidenceTableLogic.js";
 import { buildManualExtractionPayload, manualExtractionError, submitManualExtraction, valueShape } from "../manualExtractionLogic.js";
+import { comparisonGroups, directionText, gapPrefill, saveGapPrefill, skippedText } from "../comparisonLogic.js";
 
 function display(value) {
   if (value === null || value === undefined) return "Not reported";
@@ -18,6 +19,59 @@ function sourcePanel(panel, data) {
   passage.append(el("mark", { text: data.text.slice(data.highlight_start, data.highlight_end) }));
   passage.append(document.createTextNode(data.text.slice(data.highlight_end)));
   panel.append(passage);
+}
+
+function findingItem(finding, showSource) {
+  const item = el("div", { className: "evidence-compare-cite" });
+  item.append(el("strong", { text: finding.title }),
+    el("span", { className: "muted small", text: ` · ${directionText(finding.direction)}${finding.page ? ` · page ${finding.page}` : ""}` }),
+    el("blockquote", { text: finding.quote }));
+  if (finding.source_text_url) {
+    const view = el("button", { className: "quiet-button", text: "View source text" });
+    view.addEventListener("click", () => showSource(finding.source_text_url));
+    item.append(view);
+  }
+  return item;
+}
+
+function comparisonGroupCard(ctx, group, showSource) {
+  const card = el("div", { className: "evidence-compare-group" });
+  const head = el("div", { className: "evidence-compare-head" });
+  head.append(el("strong", { className: `evidence-compare-kind evidence-compare-${group.tone}`, text: group.label }),
+    el("span", { text: `${group.exposure} → ${group.outcome}` }));
+  if (ctx.canWrite) {
+    const gap = el("button", { className: "quiet-button", text: "Make this a gap" });
+    gap.title = "Opens the gap form with a draft you must read and save yourself.";
+    gap.addEventListener("click", () => {
+      saveGapPrefill(sessionStorage, ctx.project.id, gapPrefill(group));
+      ctx.navigate("gaps");
+    });
+    head.append(gap);
+  }
+  card.append(head);
+  if (group.populationNote) card.append(el("p", { className: "muted small evidence-compare-cite", text: group.populationNote }));
+  group.findings.forEach((finding) => card.append(findingItem(finding, showSource)));
+  return card;
+}
+
+// Conflicts and agreements between human-verified findings (server: app/contradictions.py). A failure here is shown in
+// the panel and never stops the evidence table from rendering.
+async function comparisonPanel(ctx, base, selected, showSource) {
+  const panel = el("div", { className: "panel" });
+  panel.append(el("h2", { text: "Conflicts & agreements" }));
+  let result;
+  try {
+    result = await request(`${base}/contradictions?schema_name=${encodeURIComponent(selected)}`);
+  } catch (error) {
+    panel.append(el("p", { className: "strategy-error", text: error.message, attrs: { role: "alert" } }));
+    return panel;
+  }
+  const groups = comparisonGroups(result);
+  if (!groups.length) panel.append(el("p", { className: "muted", text: "No conflicts or agreements found between verified key findings yet." }));
+  groups.forEach((group) => panel.append(comparisonGroupCard(ctx, group, showSource)));
+  const skipped = skippedText(result);
+  if (skipped) panel.append(el("p", { className: "muted small", text: skipped }));
+  return panel;
 }
 
 async function requestAutoExtraction(ctx, button, refresh, schemaName) {
